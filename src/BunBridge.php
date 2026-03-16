@@ -142,7 +142,22 @@ class BunBridge
         $registry = app(CallableRegistry::class);
 
         if ($registry->hasCallables()) {
-            return $this->rscWithCallbacks($component, $props, $registry, $layouts);
+            // Retry with callbacks up to 2 times on failure
+            $lastException = null;
+
+            for ($attempt = 0; $attempt < 2; $attempt++) {
+                try {
+                    return $this->rscWithCallbacks($component, $props, $registry, $layouts);
+                } catch (RuntimeException $e) {
+                    $lastException = $e;
+
+                    if ($attempt === 0) {
+                        usleep(100_000); // 100ms before retry
+                    }
+                }
+            }
+
+            throw $lastException;
         }
 
         $response = $this->send(json_encode([

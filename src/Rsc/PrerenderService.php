@@ -338,7 +338,10 @@ class PrerenderService
 
         $process = new Process([PHP_BINARY, base_path('artisan'), 'bun:serve']);
         $process->setTimeout(null);
-        $process->start();
+        $process->start(function ($type, $buffer): void {
+            // Forward worker output to stderr so the user can see startup errors
+            fwrite(STDERR, $buffer);
+        });
 
         $maxWait = 15;
         $waited = 0;
@@ -349,6 +352,8 @@ class PrerenderService
 
             if (file_exists($socketPath)) {
                 try {
+                    // Reset the singleton so it connects to the fresh socket
+                    app()->forgetInstance(BunBridge::class);
                     app(BunBridge::class)->ping();
 
                     return $process;

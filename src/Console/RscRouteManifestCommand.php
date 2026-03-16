@@ -67,7 +67,7 @@ class RscRouteManifestCommand extends Command
             }
 
             if ($domain !== null) {
-                $entry['domain'] = $domain;
+                $entry['baseUrl'] = url()->formatScheme().$domain;
             }
 
             $routes[] = $entry;

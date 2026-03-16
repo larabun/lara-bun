@@ -155,7 +155,7 @@ class BunBridge
                 'props' => $props,
                 'layouts' => $layouts,
                 'callbackSocket' => $callbackPath,
-            ], JSON_THROW_ON_ERROR));
+                ], JSON_THROW_ON_ERROR));
 
             $callbackTimeout = (int) config('bun.rsc.callback_timeout', 5);
             $callbackBuffer = '';
@@ -345,7 +345,7 @@ class BunBridge
                 'props' => $props,
                 'layouts' => $layouts,
                 'callbackSocket' => $callbackPath,
-            ], JSON_THROW_ON_ERROR));
+                ], JSON_THROW_ON_ERROR));
 
             $callbackTimeout = (int) config('bun.rsc.callback_timeout', 5);
             $callbackBuffer = '';
@@ -774,7 +774,7 @@ class BunBridge
                 'props' => $props,
                 'layouts' => $layouts,
                 'callbackSocket' => $callbackPath,
-            ], JSON_THROW_ON_ERROR));
+                ], JSON_THROW_ON_ERROR));
 
             $timeout = (int) config('bun.rsc.callback_timeout', 5);
             $callbackBuffer = '';

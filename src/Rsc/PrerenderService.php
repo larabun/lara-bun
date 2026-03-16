@@ -165,18 +165,11 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
-        // Render the shell — php() is mocked so Suspense shows fallbacks
-        $result = app(BunBridge::class)->rscPprShell(
+        $result = app(BunBridge::class)->rscWithoutCallbacks(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
         );
-
-        if ($result['timedOut']) {
-            throw new \RuntimeException(
-                "PPR shell timed out for {$uri}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
-            );
-        }
 
         $version = $rscResponse->getVersion();
 
@@ -190,7 +183,7 @@ class PrerenderService
 
         $html = view($rootView, [
             ...$rscResponse->getViewData(),
-            'body' => $result['shellHtml'],
+            'body' => $result['body'],
             'initialJson' => $initialJson,
             'scripts' => self::PPR_PAYLOAD_MARKER,
         ])->render();
@@ -233,18 +226,13 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
-        // Render the shell — php() is mocked so Suspense shows fallbacks
-        $result = app(BunBridge::class)->rscPprShell(
+        // Render without callbacks — stub php() returns never-resolving promises,
+        // so Suspense shows fallbacks. The shell HTML has fallback content.
+        $result = app(BunBridge::class)->rscWithoutCallbacks(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
         );
-
-        if ($result['timedOut']) {
-            throw new \RuntimeException(
-                "PPR shell timed out for {$url}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
-            );
-        }
 
         $version = $rscResponse->getVersion();
 
@@ -258,7 +246,7 @@ class PrerenderService
 
         $html = view($rootView, [
             ...$rscResponse->getViewData(),
-            'body' => $result['shellHtml'],
+            'body' => $result['body'],
             'initialJson' => $initialJson,
             'scripts' => self::PPR_PAYLOAD_MARKER,
         ])->render();

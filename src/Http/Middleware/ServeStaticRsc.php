@@ -76,13 +76,12 @@ class ServeStaticRsc
     }
 
     /**
-     * Serve a PPR response: cached shell with streamed Suspense completions.
+     * Serve a PPR response: cached shell + fresh Flight payload.
      *
      * 1. Cached shell (with Suspense fallbacks) sent immediately → fast TTFB
-     * 2. Fresh rscHtmlStream render started with real params
-     * 3. Shell portion of fresh render is discarded (already sent from cache)
-     * 4. Suspense completion chunks streamed to client (swap fallbacks with real content)
-     * 5. Flight payload + scripts sent for hydration
+     * 2. Fresh buffered RSC render generates the Flight payload
+     * 3. Client hydrates from fresh Flight → React reconciles DOM,
+     *    replacing fallback content with real data
      */
     private function servePprResponse(Request $request, string $shellPath, string $metaPath): StreamedResponse
     {
@@ -128,6 +127,7 @@ class ServeStaticRsc
             echo substr($shell, 0, $markerPos);
             flush();
 
+            // Generate fresh Flight payload with real data
             $clientChunks = $meta['clientChunks'] ?? [];
             $rscPayload = '';
 
@@ -137,55 +137,15 @@ class ServeStaticRsc
                 $route = $request->route();
                 $props = $route ? $route->parameters() : [];
 
-                $layoutEntries = [];
-
-                foreach ($layouts as $layout) {
-                    $layoutEntries[] = is_array($layout) ? $layout : ['component' => $layout, 'props' => []];
-                }
-
-                // Start fresh HTML stream render with real data
                 $bridge = app(BunBridge::class);
-                $generator = $bridge->rscHtmlStream($component, $props, $layoutEntries);
+                $result = $bridge->rsc($component, $props, $layouts);
 
-                // Skip first yield (metadata)
-                $generator->current();
-                $generator->next();
-
-                $shellPhase = true;
-
-                while ($generator->valid()) {
-                    $value = $generator->current();
-
-                    if (is_array($value) && isset($value['rscPayload'])) {
-                        $rscPayload = $value['rscPayload'];
-                        $generator->next();
-
-                        continue;
-                    }
-
-                    if (is_string($value)) {
-                        // Detect when we've moved past the shell into completions.
-                        // React's completions contain hidden template divs and $RC scripts.
-                        if ($shellPhase) {
-                            if (str_contains($value, 'hidden id="S:') || str_contains($value, '$RC(') || str_contains($value, '$RS(')) {
-                                $shellPhase = false;
-                            }
-                        }
-
-                        // Only send completion chunks, not the shell (already sent from cache)
-                        if (! $shellPhase) {
-                            echo $value;
-                            flush();
-                        }
-                    }
-
-                    $generator->next();
-                }
+                $rscPayload = $result['rscPayload'] ?? '';
             } catch (\Throwable) {
-                // If streaming fails, the page still works with fallback content
+                // If render fails, hydration will use whatever's in the shell
             }
 
-            // Send scripts with Flight payload for hydration
+            // Send scripts with fresh Flight payload for hydration
             echo BunServiceProvider::renderRscScripts($rscPayload, $clientChunks);
 
             // Send closing tags

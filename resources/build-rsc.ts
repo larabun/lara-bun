@@ -232,7 +232,7 @@ for await (const path of glob.scan(sourceDir)) {
     path.startsWith("entry.") ||
     path.includes(".test.") ||
     path.includes(".spec.") ||
-    path.includes(".generated.")
+    path === "routes.generated.ts"
   ) {
     continue;
   }

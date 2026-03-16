@@ -22,6 +22,7 @@ interface IncomingMessage {
   actionId?: string;
   body?: string;
   contentType?: string;
+  isPrerender?: boolean;
   // Callback response fields
   id?: string;
   result?: unknown;
@@ -280,12 +281,15 @@ async function handleRscMessage(
   try {
     const phpFn = createPhpFn(mainSocket);
 
+    const isPrerender = message.isPrerender ?? false;
+
     const [result, metadata] = await Promise.all([
       rscHandler.withPhp(phpFn, () =>
         rscHandler!.handleRsc(
           message.component!,
           message.props ?? {},
-          message.layouts ?? []
+          message.layouts ?? [],
+          isPrerender
         )
       ),
       rscHandler.withPhp(phpFn, () =>

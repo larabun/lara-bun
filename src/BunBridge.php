@@ -120,19 +120,25 @@ class BunBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
-    public function rsc(string $component, array $props = [], array $layouts = []): array
+    public function rsc(string $component, array $props = [], array $layouts = [], bool $isPrerender = false): array
     {
         $index = $this->currentWorker++ % $this->workerCount;
         $mainSocket = $this->checkout($index);
         $registry = app(CallableRegistry::class);
 
         try {
-            $this->writeFrame($mainSocket, json_encode([
+            $message = [
                 'type' => 'rsc',
                 'component' => $component,
                 'props' => $props,
                 'layouts' => $layouts,
-            ], JSON_THROW_ON_ERROR));
+            ];
+
+            if ($isPrerender) {
+                $message['isPrerender'] = true;
+            }
+
+            $this->writeFrame($mainSocket, json_encode($message, JSON_THROW_ON_ERROR));
 
             // Read frames in a loop — handle callbacks inline, return on final response
             while (true) {

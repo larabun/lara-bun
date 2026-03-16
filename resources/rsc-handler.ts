@@ -654,47 +654,89 @@ export async function handleRsc(
       : emptyManifest;
 
     if (isPrerender) {
-      // Prerender path: use renderRscStream so pending promises (from stub
-      // php()) don't block. The stream emits static parts immediately and
-      // leaves dynamic chunks pending. React's Suspense shows fallbacks.
+      // Prerender: use renderRscStream so pending promises (from stub php())
+      // don't block. Stream emits static parts immediately, dynamic parts pend.
       const flightStream: ReadableStream = clientManifest
         ? rscModule.renderRscStream(component, props, clientManifest, layouts)
         : rscModule.renderRscStream(component, props, layouts);
 
-      // Deserialize Flight → React tree (progressive — doesn't wait for all chunks)
-      const reactTree = await createFromReadableStream(flightStream, consumerManifest);
+      const [flightForHtml, flightForPayload] = flightStream.tee();
 
-      // Render to HTML — DO NOT await allReady. React emits the shell
-      // (with Suspense fallbacks) immediately. Dynamic parts stay pending.
+      // Start collecting Flight payload in parallel
+      const payloadReader = flightForPayload.getReader();
+      const payloadChunks: Uint8Array[] = [];
+      let payloadDone = false;
+      const collectPayload = (async () => {
+        try {
+          while (true) {
+            const { done, value } = await payloadReader.read();
+            if (done) { payloadDone = true; break; }
+            payloadChunks.push(value);
+          }
+        } catch {}
+      })();
+
+      // Deserialize Flight → React tree
+      const reactTree = await createFromReadableStream(flightForHtml, consumerManifest);
+
+      // Render to HTML — don't await allReady
       const htmlStream = await renderToReadableStream(reactTree);
 
-      // Read the shell HTML with a timeout. The shell emits synchronously.
-      // If nothing comes within 5s, the page has async content without Suspense.
+      // Try allReady with timeout to classify: static vs dynamic
       const PRERENDER_TIMEOUT = 5000;
+      const allReadyResult = await Promise.race([
+        htmlStream.allReady.then(() => "ready" as const),
+        new Promise<"timeout">((resolve) =>
+          setTimeout(() => resolve("timeout"), PRERENDER_TIMEOUT)
+        ),
+      ]);
+
+      if (allReadyResult === "ready") {
+        // Page is fully static — collect complete HTML + Flight payload
+        const body = await new Response(htmlStream).text();
+
+        // Wait for Flight payload to finish collecting
+        await Promise.race([collectPayload, Bun.sleep(1000)]);
+        try { payloadReader.cancel(); } catch {}
+
+        const rscPayload = payloadDone
+          ? new TextDecoder().decode(Buffer.concat(payloadChunks))
+          : "";
+
+        return { body, rscPayload, clientChunks: browserChunks, usedDynamicApis };
+      }
+
+      // Page has dynamic content (Suspense with pending promises).
+      // Read just the shell HTML (before completion markers).
       const reader = htmlStream.getReader();
       const decoder = new TextDecoder();
       let body = "";
-      let timedOut = false;
 
       while (true) {
         const result = await Promise.race([
           reader.read(),
           new Promise<{ done: true; value: undefined }>((resolve) =>
-            setTimeout(() => {
-              timedOut = true;
-              resolve({ done: true, value: undefined });
-            }, PRERENDER_TIMEOUT)
+            setTimeout(() => resolve({ done: true, value: undefined }), PRERENDER_TIMEOUT)
           ),
         ]);
 
-        if (result.done) break;
+        if (result.done) {
+          if (body === "") {
+            try { reader.cancel(); } catch {}
+            try { payloadReader.cancel(); } catch {}
+            throw new Error(
+              "Prerender timed out. A component awaits php() without a <Suspense> boundary. " +
+              "Wrap async content in <Suspense> or provide a loading.tsx."
+            );
+          }
+          break;
+        }
 
         const chunk = decoder.decode(result.value, { stream: true });
         body += chunk;
 
-        // Stop once we see Suspense completion markers — shell is complete
+        // Stop at Suspense completion markers — shell is complete
         if (chunk.includes('hidden id="S:') || chunk.includes("$RC(")) {
-          // Remove completion content from shell
           const idx = body.search(/<div hidden id="S:/);
           if (idx !== -1) body = body.slice(0, idx);
           break;
@@ -702,13 +744,7 @@ export async function handleRsc(
       }
 
       try { reader.cancel(); } catch {}
-
-      if (timedOut && body === "") {
-        throw new Error(
-          "Prerender timed out. A component awaits php() without a <Suspense> boundary. " +
-          "Wrap async content in <Suspense> or provide a loading.tsx."
-        );
-      }
+      try { payloadReader.cancel(); } catch {}
 
       return { body, rscPayload: "", clientChunks: browserChunks, usedDynamicApis };
     }

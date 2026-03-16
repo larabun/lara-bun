@@ -146,7 +146,9 @@ class ServeStaticRsc
             echo substr($shell, 0, $markerPos);
             flush();
 
-            // Generate fresh Flight payload with real data
+            // Generate fresh Flight payload with real data.
+            // Try without callbacks first — most PPR pages don't call php().
+            // If the page does call php(), retry with callbacks.
             $clientChunks = $meta['clientChunks'] ?? [];
             $rscPayload = '';
 
@@ -157,7 +159,12 @@ class ServeStaticRsc
                 $props = $route ? $route->parameters() : [];
 
                 $bridge = app(BunBridge::class);
-                $result = $bridge->rsc($component, $props, $layouts);
+                $result = $bridge->rsc($component, $props, $layouts, withCallbacks: false);
+
+                if ($result['usedDynamicApis'] ?? false) {
+                    // Page calls php() — need real callbacks for data
+                    $result = $bridge->rsc($component, $props, $layouts, withCallbacks: true);
+                }
 
                 $rscPayload = $result['rscPayload'] ?? '';
             } catch (\Throwable) {
@@ -207,7 +214,11 @@ class ServeStaticRsc
                 $props = $route ? $route->parameters() : [];
 
                 $bridge = app(BunBridge::class);
-                $result = $bridge->rsc($component, $props, $layouts);
+                $result = $bridge->rsc($component, $props, $layouts, withCallbacks: false);
+
+                if ($result['usedDynamicApis'] ?? false) {
+                    $result = $bridge->rsc($component, $props, $layouts, withCallbacks: true);
+                }
 
                 echo $result['rscPayload'] ?? '';
                 flush();

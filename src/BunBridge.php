@@ -137,11 +137,11 @@ class BunBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
-    public function rsc(string $component, array $props = [], array $layouts = []): array
+    public function rsc(string $component, array $props = [], array $layouts = [], bool $withCallbacks = true): array
     {
         $registry = app(CallableRegistry::class);
 
-        if ($registry->hasCallables()) {
+        if ($withCallbacks && $registry->hasCallables()) {
             // Retry with callbacks up to 2 times on failure
             $lastException = null;
 

@@ -111,6 +111,29 @@ class BunBridge
     }
 
     /**
+     * Render RSC without callback socket — used for build-time prerendering
+     * where php() calls are detected but not executed.
+     *
+     * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
+     * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
+     */
+    public function rscWithoutCallbacks(string $component, array $props = [], array $layouts = []): array
+    {
+        $response = $this->send(json_encode([
+            'type' => 'rsc',
+            'component' => $component,
+            'props' => $props,
+            'layouts' => $layouts,
+        ], JSON_THROW_ON_ERROR));
+
+        if (isset($response['error'])) {
+            throw new RuntimeException("Bun RSC error: {$response['error']}");
+        }
+
+        return $response['result'];
+    }
+
+    /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */

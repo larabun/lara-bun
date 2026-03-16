@@ -76,7 +76,9 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
-        $result = app(BunBridge::class)->rsc(
+        // Use the no-callback path for prerendering — php() calls are detected
+        // via the dynamic API proxy on the Bun side, not executed on the PHP side.
+        $result = app(BunBridge::class)->rscWithoutCallbacks(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),

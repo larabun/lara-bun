@@ -1,8 +1,9 @@
 /**
- * File watcher for RSC development.
+ * File watcher for RSC development with live reload.
  *
- * Watches the RSC source directory and re-runs build-rsc.ts on changes.
- * Uses Bun's native fs.watch with debouncing to avoid redundant rebuilds.
+ * Watches the RSC source directory, re-runs build-rsc.ts on changes,
+ * and notifies connected browsers via WebSocket to re-fetch the page
+ * through RSC navigation (preserving client component state).
  *
  * Usage:
  *   bun <this-script> [source-dir]
@@ -10,11 +11,53 @@
 
 import { watch } from "node:fs";
 import { join } from "node:path";
-import { Glob } from "bun";
+
+import { writeFileSync, unlinkSync } from "node:fs";
 
 const sourceDir = process.argv[2] ?? join(process.cwd(), "resources/js/rsc");
 const buildScript = join(import.meta.dir, "build-rsc.ts");
 const bunPath = process.execPath;
+const HMR_PORT = parseInt(process.env.RSC_HMR_PORT ?? "3001", 10);
+const devFlagPath = join(process.cwd(), "storage/framework/rsc-dev");
+
+// ─── WebSocket Server for Live Reload ───────────────────────────────────────
+
+const clients = new Set<import("bun").ServerWebSocket<unknown>>();
+
+const wsServer = Bun.serve({
+  port: HMR_PORT,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response("RSC HMR", { status: 200 });
+  },
+  websocket: {
+    open(ws) {
+      clients.add(ws);
+    },
+    close(ws) {
+      clients.delete(ws);
+    },
+    message() {
+      // No client → server messages needed
+    },
+  },
+});
+
+// Write dev flag so PHP knows the watcher is running
+writeFileSync(devFlagPath, String(wsServer.port));
+console.log(`HMR WebSocket running on ws://localhost:${wsServer.port}`);
+
+function notifyClients(): void {
+  for (const ws of clients) {
+    try {
+      ws.send("reload");
+    } catch {
+      clients.delete(ws);
+    }
+  }
+}
+
+// ─── Build Runner ───────────────────────────────────────────────────────────
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let building = false;
@@ -35,9 +78,13 @@ async function runBuild(): Promise<void> {
     stderr: "inherit",
   });
 
-  await proc.exited;
+  const exitCode = await proc.exited;
 
   building = false;
+
+  if (exitCode === 0) {
+    notifyClients();
+  }
 
   if (pendingRebuild) {
     pendingRebuild = false;
@@ -45,8 +92,9 @@ async function runBuild(): Promise<void> {
   }
 }
 
+// ─── File Watcher ───────────────────────────────────────────────────────────
+
 function onFileChange(filename: string | null): void {
-  // Ignore generated files and hidden files
   if (
     filename &&
     (filename.includes(".generated.") ||
@@ -66,32 +114,18 @@ function onFileChange(filename: string | null): void {
   }, 100);
 }
 
-// Watch source directory recursively
 const watcher = watch(sourceDir, { recursive: true }, (_event, filename) => {
   onFileChange(filename as string | null);
 });
 
-// Also watch route.php files in the app directory
-const appDir = join(sourceDir, "app");
-const routeGlob = new Glob("**/route.php");
-
-try {
-  for await (const _ of routeGlob.scan(appDir)) {
-    // The recursive watcher on sourceDir already covers these
-    break;
-  }
-} catch {
-  // app/ directory might not exist yet
-}
-
 console.log(`Watching ${sourceDir} for changes...`);
 
-process.on("SIGINT", () => {
+function shutdown(): void {
   watcher.close();
+  wsServer.stop();
+  try { unlinkSync(devFlagPath); } catch {}
   process.exit(0);
-});
+}
 
-process.on("SIGTERM", () => {
-  watcher.close();
-  process.exit(0);
-});
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

@@ -114,13 +114,40 @@ class BunServiceProvider extends ServiceProvider
             $chunkTags .= "\n    <script type=\"module\" src=\"{$escaped}\"></script>";
         }
 
+        $hmrScript = '';
+        $devFlagPath = storage_path('framework/rsc-dev');
+
+        if (file_exists($devFlagPath)) {
+            $hmrPort = (int) (file_get_contents($devFlagPath) ?: 3001);
+            $hmrScript = <<<HMRJS
+
+    <script>
+        (function() {
+            var ws, timer;
+            function connect() {
+                ws = new WebSocket('ws://localhost:{$hmrPort}');
+                ws.onmessage = function(e) {
+                    if (e.data === 'reload' && window.__rsc_navigate) {
+                        window.__rsc_navigate(location.pathname + location.search, { replace: true });
+                    } else {
+                        location.reload();
+                    }
+                };
+                ws.onclose = function() { timer = setTimeout(connect, 1000); };
+            }
+            connect();
+        })();
+    </script>
+HMRJS;
+        }
+
         return new HtmlString(<<<HTML
     <script>
         window.__RSC_PAYLOAD__ = {$encodedPayload};
         window.__RSC_MODULES__ = {};
         window.__webpack_require__ = function(id) { return window.__RSC_MODULES__[id]; };
         window.__webpack_chunk_load__ = function() { return Promise.resolve(); };
-    </script>{$chunkTags}
+    </script>{$chunkTags}{$hmrScript}
 HTML);
     }
 }

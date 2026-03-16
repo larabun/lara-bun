@@ -95,31 +95,14 @@ class RscBuildCommand extends Command
      */
     private function prerenderRoutes(\Illuminate\Support\Collection $routes, PrerenderService $prerender, string $outputPath): array
     {
-        $pprEnabled = (bool) config('bun.rsc.ppr', true);
         $results = [];
 
         foreach ($routes as $route) {
             $component = $route->defaults['_rsc_component'];
             $uri = '/'.ltrim($route->uri(), '/');
-            $forceDynamic = $prerender->isForceDynamic($route);
-            $forceStatic = $prerender->isForceStatic($route);
             $isParameterized = str_contains($route->uri(), '{');
 
-            // forceDynamic() — skip render entirely
-            if ($forceDynamic) {
-                $results[] = [
-                    'url' => $uri,
-                    'uri' => $uri,
-                    'component' => $component,
-                    'type' => 'dynamic',
-                    'reason' => 'forceDynamic',
-                    'generatedPaths' => [],
-                ];
-
-                continue;
-            }
-
-            // Parameterized without staticPaths — mark dynamic
+            // Parameterized without staticPaths — can't prerender, PPR at request time
             if ($isParameterized && ! isset($route->defaults['_static_paths'])) {
                 $results[] = [
                     'url' => $uri,
@@ -135,23 +118,16 @@ class RscBuildCommand extends Command
 
             $urls = $prerender->resolveUrls($route);
 
-            // Parameterized with staticPaths — SSG
+            // Parameterized with staticPaths — prerender each path
             if ($isParameterized && ! empty($urls)) {
                 $generatedPaths = [];
-                $allStatic = true;
 
                 foreach ($urls as $url) {
                     try {
-                        $result = $prerender->prerenderUrl($url, $route, $outputPath, $forceStatic);
-
-                        if ($result['type'] === 'static') {
-                            $generatedPaths[] = $url;
-                        } else {
-                            $allStatic = false;
-                        }
+                        $result = $this->prerenderSingleUrl($url, $route, $outputPath, $prerender);
+                        $generatedPaths[] = $url;
                     } catch (\Throwable $e) {
                         $this->error("  Failed {$url}: {$e->getMessage()}");
-                        $allStatic = false;
                     }
                 }
 
@@ -167,34 +143,20 @@ class RscBuildCommand extends Command
                 continue;
             }
 
-            // Non-parameterized — render and classify
+            // Non-parameterized — prerender
             $url = $urls[0] ?? $uri;
 
             try {
-                $result = $prerender->prerenderUrl($url, $route, $outputPath, $forceStatic);
+                $result = $this->prerenderSingleUrl($url, $route, $outputPath, $prerender);
 
-                // PPR: if page used dynamic APIs and PPR is enabled, prerender as PPR
-                if ($pprEnabled && $result['type'] === 'dynamic') {
-                    $pprResult = $prerender->prerenderPpr($url, $route, $outputPath);
-
-                    $results[] = [
-                        'url' => $url,
-                        'uri' => $uri,
-                        'component' => $component,
-                        'type' => $pprResult['type'],
-                        'reason' => $pprResult['reason'],
-                        'generatedPaths' => [],
-                    ];
-                } else {
-                    $results[] = [
-                        'url' => $url,
-                        'uri' => $uri,
-                        'component' => $component,
-                        'type' => $result['type'],
-                        'reason' => $result['reason'],
-                        'generatedPaths' => [],
-                    ];
-                }
+                $results[] = [
+                    'url' => $url,
+                    'uri' => $uri,
+                    'component' => $component,
+                    'type' => $result['type'],
+                    'reason' => $result['reason'],
+                    'generatedPaths' => [],
+                ];
             } catch (\Throwable $e) {
                 $this->error("  Failed {$url}: {$e->getMessage()}");
 
@@ -215,6 +177,24 @@ class RscBuildCommand extends Command
     /**
      * @param  list<array{url: string, uri: string, component: string, type: string, reason: string|null, generatedPaths: list<string>}>  $results
      */
+    /**
+     * Prerender a single URL — static if no dynamic APIs, PPR otherwise.
+     *
+     * @return array{type: string, reason: string|null}
+     */
+    private function prerenderSingleUrl(string $url, Route $route, string $outputPath, PrerenderService $prerender): array
+    {
+        $result = $prerender->prerenderUrl($url, $route, $outputPath);
+
+        // No dynamic APIs → fully static, already saved
+        if ($result['type'] === 'static') {
+            return $result;
+        }
+
+        // Uses dynamic APIs → PPR (cached shell + fresh Flight per request)
+        return $prerender->prerenderPpr($url, $route, $outputPath);
+    }
+
     private function printRouteSummary(array $results): void
     {
         $this->newLine();

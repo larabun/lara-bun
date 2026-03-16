@@ -68,7 +68,7 @@ class PrerenderService
      *
      * @return array{type: string, reason: string|null}
      */
-    public function prerenderUrl(string $url, Route $route, string $outputPath, bool $forceStatic = false): array
+    public function prerenderUrl(string $url, Route $route, string $outputPath): array
     {
         $rscResponse = $this->resolveRscResponse($route, $url);
 
@@ -82,7 +82,7 @@ class PrerenderService
             $rscResponse->getLayouts(),
         );
 
-        if (! $forceStatic && ($result['usedDynamicApis'] ?? false)) {
+        if ($result['usedDynamicApis'] ?? false) {
             return ['type' => 'dynamic', 'reason' => 'usedDynamicApis'];
         }
 
@@ -127,24 +127,6 @@ class PrerenderService
         return app()->call($action, $params);
     }
 
-    public function isForceStatic(Route $route): bool
-    {
-        $configPaths = $route->defaults['_rsc_config_paths'] ?? [];
-
-        foreach ($configPaths as $path) {
-            if (! file_exists($path)) {
-                continue;
-            }
-
-            $config = require $path;
-
-            if ($config instanceof PageRoute && $config->isForceStatic()) {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     public const PPR_PAYLOAD_MARKER = '<!--__RSC_PPR_PAYLOAD__-->';
 
@@ -212,24 +194,6 @@ class PrerenderService
         return ['type' => 'ppr', 'reason' => null];
     }
 
-    public function isForceDynamic(Route $route): bool
-    {
-        $configPaths = $route->defaults['_rsc_config_paths'] ?? [];
-
-        foreach ($configPaths as $path) {
-            if (! file_exists($path)) {
-                continue;
-            }
-
-            $config = require $path;
-
-            if ($config instanceof PageRoute && $config->isDynamic()) {
-                return true;
-            }
-        }
-
-        return false;
-    }
 
     /**
      * @param  array{body: string, rscPayload: string, clientChunks: string[]}  $result

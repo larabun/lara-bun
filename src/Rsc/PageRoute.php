@@ -20,9 +20,6 @@ class PageRoute
 
     protected ?string $nameValue = null;
 
-    protected bool $forceDynamic = false;
-
-    protected bool $forceStatic = false;
 
     protected ?string $domainValue = null;
 
@@ -76,20 +73,6 @@ class PageRoute
         return $this;
     }
 
-    public function forceDynamic(): static
-    {
-        $this->forceDynamic = true;
-
-        return $this;
-    }
-
-    public function forceStatic(): static
-    {
-        $this->forceStatic = true;
-
-        return $this;
-    }
-
     public function domain(string $domain): static
     {
         $this->domainValue = $domain;
@@ -138,16 +121,6 @@ class PageRoute
     public function getName(): ?string
     {
         return $this->nameValue;
-    }
-
-    public function isDynamic(): bool
-    {
-        return $this->forceDynamic;
-    }
-
-    public function isForceStatic(): bool
-    {
-        return $this->forceStatic;
     }
 
     public function getDomain(): ?string

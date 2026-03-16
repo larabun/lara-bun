@@ -70,22 +70,30 @@ async function runBuild(): Promise<void> {
   }
 
   building = true;
-  console.log("\n--- Rebuilding... ---\n");
 
   const proc = Bun.spawn([bunPath, buildScript], {
     cwd: process.cwd(),
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
 
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
   const exitCode = await proc.exited;
 
   building = false;
 
   if (exitCode === 0) {
+    console.log(`Rebuilt successfully.`);
     // Wait for bun:serve --watch to restart with the new bundle
     await Bun.sleep(500);
     notifyClients();
+  } else {
+    console.error("\n--- Build failed ---\n");
+    if (stdout) console.log(stdout);
+    if (stderr) console.error(stderr);
   }
 
   if (pendingRebuild) {

@@ -146,6 +146,72 @@ class PrerenderService
         return false;
     }
 
+    public const PPR_PAYLOAD_MARKER = '<!--__RSC_PPR_PAYLOAD__-->';
+
+    /**
+     * Pre-render a PPR page — HTML shell with a placeholder for the Flight payload.
+     *
+     * At request time, the shell is served instantly and a fresh RSC render
+     * fills in the Flight payload, giving the client up-to-date data to hydrate with.
+     *
+     * @return array{type: string, reason: string|null}
+     */
+    public function prerenderPpr(string $url, Route $route, string $outputPath): array
+    {
+        $rscResponse = $this->resolveRscResponse($route, $url);
+
+        if (! $rscResponse instanceof RscResponse) {
+            return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
+        }
+
+        $result = app(BunBridge::class)->rsc(
+            $rscResponse->getComponent(),
+            $rscResponse->getProps(),
+            $rscResponse->getLayouts(),
+        );
+
+        $version = $rscResponse->getVersion();
+
+        // Build the HTML but use a marker instead of the real Flight payload.
+        // At request time, the marker gets replaced with a fresh payload.
+        $initialJson = json_encode([
+            'url' => $url,
+            'component' => $rscResponse->getComponent(),
+            'version' => $version,
+        ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
+
+        $rootView = config('bun.rsc.root_view', 'lara-bun::rsc-app');
+
+        $html = view($rootView, [
+            ...$rscResponse->getViewData(),
+            'body' => $result['body'],
+            'initialJson' => $initialJson,
+            'scripts' => self::PPR_PAYLOAD_MARKER,
+        ])->render();
+
+        $path = trim($url, '/') ?: 'index';
+        File::ensureDirectoryExists(dirname("{$outputPath}/{$path}.html"));
+
+        File::put("{$outputPath}/{$path}.ppr.html", $html);
+
+        $meta = [
+            'clientChunks' => $result['clientChunks'],
+            'version' => $version,
+            'component' => $rscResponse->getComponent(),
+            'layouts' => $rscResponse->getLayouts(),
+        ];
+
+        $viewData = $rscResponse->getViewData();
+
+        if (isset($viewData['title'])) {
+            $meta['title'] = $viewData['title'];
+        }
+
+        File::put("{$outputPath}/{$path}.ppr-meta.json", json_encode($meta, JSON_THROW_ON_ERROR));
+
+        return ['type' => 'ppr', 'reason' => null];
+    }
+
     public function isForceDynamic(Route $route): bool
     {
         $configPaths = $route->defaults['_rsc_config_paths'] ?? [];

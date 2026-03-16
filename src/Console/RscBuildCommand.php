@@ -95,6 +95,7 @@ class RscBuildCommand extends Command
      */
     private function prerenderRoutes(\Illuminate\Support\Collection $routes, PrerenderService $prerender, string $outputPath): array
     {
+        $pprEnabled = (bool) config('bun.rsc.ppr', true);
         $results = [];
 
         foreach ($routes as $route) {
@@ -166,20 +167,34 @@ class RscBuildCommand extends Command
                 continue;
             }
 
-            // Non-parameterized — render and let handleRsc classify
+            // Non-parameterized — render and classify
             $url = $urls[0] ?? $uri;
 
             try {
                 $result = $prerender->prerenderUrl($url, $route, $outputPath, $forceStatic);
 
-                $results[] = [
-                    'url' => $url,
-                    'uri' => $uri,
-                    'component' => $component,
-                    'type' => $result['type'],
-                    'reason' => $result['reason'],
-                    'generatedPaths' => [],
-                ];
+                // PPR: if page used dynamic APIs and PPR is enabled, prerender as PPR
+                if ($pprEnabled && $result['type'] === 'dynamic') {
+                    $pprResult = $prerender->prerenderPpr($url, $route, $outputPath);
+
+                    $results[] = [
+                        'url' => $url,
+                        'uri' => $uri,
+                        'component' => $component,
+                        'type' => $pprResult['type'],
+                        'reason' => $pprResult['reason'],
+                        'generatedPaths' => [],
+                    ];
+                } else {
+                    $results[] = [
+                        'url' => $url,
+                        'uri' => $uri,
+                        'component' => $component,
+                        'type' => $result['type'],
+                        'reason' => $result['reason'],
+                        'generatedPaths' => [],
+                    ];
+                }
             } catch (\Throwable $e) {
                 $this->error("  Failed {$url}: {$e->getMessage()}");
 
@@ -209,6 +224,7 @@ class RscBuildCommand extends Command
         $staticCount = 0;
         $ssgCount = 0;
         $dynamicCount = 0;
+        $pprCount = 0;
 
         foreach ($results as $result) {
             $uri = $result['uri'];
@@ -239,6 +255,22 @@ class RscBuildCommand extends Command
                     $connector = $i === $lastIndex ? "\u{2514}" : "\u{251C}";
                     $this->line("   {$connector} {$path}");
                 }
+            } elseif ($type === 'ppr') {
+                $pprCount++;
+                $icon = "\u{25D4}";
+                $pathCount = count($result['generatedPaths']);
+                $label = $pathCount > 1 ? "PPR ({$pathCount} paths)" : 'PPR';
+                $this->line("<fg=magenta>{$icon}</>  {$uri}  <fg=gray>{$label}</>");
+
+                if ($pathCount > 1) {
+                    $paths = $result['generatedPaths'];
+                    $lastIndex = count($paths) - 1;
+
+                    foreach ($paths as $i => $path) {
+                        $connector = $i === $lastIndex ? "\u{2514}" : "\u{251C}";
+                        $this->line("   {$connector} {$path}");
+                    }
+                }
             } elseif ($type === 'dynamic') {
                 $dynamicCount++;
                 $icon = "\u{03BB}";
@@ -258,6 +290,7 @@ class RscBuildCommand extends Command
         $this->newLine();
         $this->line("<fg=green>\u{25CB}</>  Static    prerendered as static HTML");
         $this->line("<fg=blue>\u{25CF}</>  SSG       static with generated params");
+        $this->line("<fg=magenta>\u{25D4}</>  PPR       static shell + streamed dynamic");
         $this->line("<fg=yellow>\u{03BB}</>  Dynamic   server-rendered on demand");
         $this->newLine();
 
@@ -269,6 +302,10 @@ class RscBuildCommand extends Command
 
         if ($ssgCount > 0) {
             $parts[] = "{$ssgCount} SSG";
+        }
+
+        if ($pprCount > 0) {
+            $parts[] = "{$pprCount} PPR";
         }
 
         if ($dynamicCount > 0) {

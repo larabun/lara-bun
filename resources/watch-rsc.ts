@@ -83,6 +83,8 @@ async function runBuild(): Promise<void> {
   building = false;
 
   if (exitCode === 0) {
+    // Wait for bun:serve --watch to restart with the new bundle
+    await Bun.sleep(500);
     notifyClients();
   }
 

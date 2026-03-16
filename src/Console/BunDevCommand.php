@@ -53,8 +53,9 @@ class BunDevCommand extends Command
         }
 
         // Step 2: Start build watcher in background
+        $watchScript = $this->getWatchScript();
         $this->buildProcess = new \Symfony\Component\Process\Process(
-            [$bunPath, '--watch', $buildScript],
+            [$bunPath, $watchScript],
             base_path(),
         );
         $this->buildProcess->setTimeout(null);
@@ -130,6 +131,23 @@ class BunDevCommand extends Command
 
         pcntl_signal(SIGINT, $handler);
         pcntl_signal(SIGTERM, $handler);
+    }
+
+    private function getWatchScript(): string
+    {
+        $vendorPath = base_path('vendor/larabun/lara-bun/resources/watch-rsc.ts');
+
+        if (file_exists($vendorPath)) {
+            return $vendorPath;
+        }
+
+        $packagePath = dirname(__DIR__, 2).'/resources/watch-rsc.ts';
+
+        if (file_exists($packagePath)) {
+            return $packagePath;
+        }
+
+        return $vendorPath;
     }
 
     private function getBuildScript(): string

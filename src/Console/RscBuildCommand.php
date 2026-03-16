@@ -86,6 +86,17 @@ class RscBuildCommand extends Command
         // Step 7: Print route summary
         $this->printRouteSummary($results);
 
+        // Fail the build if any route errored — developer must fix these
+        $hasErrors = collect($results)->contains('type', 'error');
+
+        if ($hasErrors) {
+            $this->newLine();
+            $this->error('Build failed. Fix the errors above and try again.');
+            $this->line('Hint: async content using php() must be wrapped in <Suspense> or provide a loading.tsx.');
+
+            return self::FAILURE;
+        }
+
         return self::SUCCESS;
     }
 

@@ -579,6 +579,22 @@ export async function handleRsc(
         delete (globalThis as any).php;
       }
     };
+  } else {
+    // No callback socket (build-time prerender) — provide a stub that
+    // marks the page as dynamic and throws a clear error.
+    const stubFn = (): never => {
+      usedDynamicApis = true;
+      throw new Error(
+        "php() was called during prerender. Wrap async content in <Suspense> or provide a loading.tsx."
+      );
+    };
+    (globalThis as any).php = stubFn;
+
+    cleanup = () => {
+      if ((globalThis as any).php === stubFn) {
+        delete (globalThis as any).php;
+      }
+    };
   }
 
   // Track dynamic API usage during render.

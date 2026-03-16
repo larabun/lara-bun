@@ -88,6 +88,29 @@ class BunBridge
     }
 
     /**
+     * Render a PPR shell — page with mock php() so async components suspend
+     * and Suspense shows fallback content. Returns just the shell HTML.
+     *
+     * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
+     * @return array{shellHtml: string, clientChunks: string[], timedOut: bool}
+     */
+    public function rscPprShell(string $component, array $props = [], array $layouts = []): array
+    {
+        $response = $this->send(json_encode([
+            'type' => 'rsc-ppr-shell',
+            'component' => $component,
+            'props' => $props,
+            'layouts' => $layouts,
+        ], JSON_THROW_ON_ERROR));
+
+        if (isset($response['error'])) {
+            throw new RuntimeException("Bun PPR shell error: {$response['error']}");
+        }
+
+        return $response['result'];
+    }
+
+    /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */

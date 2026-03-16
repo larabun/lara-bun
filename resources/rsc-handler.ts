@@ -461,6 +461,95 @@ export async function handleAction(
   }
 }
 
+// ─── PPR Shell Handler (build-time: captures shell with Suspense fallbacks) ──
+
+/**
+ * Renders a page with a mock php() that never resolves, so async components
+ * suspend and Suspense shows fallback content. Returns just the shell HTML
+ * (everything before Suspense completion scripts).
+ *
+ * If the page has no Suspense boundaries and calls php(), the render will
+ * hang — we detect this via timeout and report an error.
+ */
+export async function handleRscPprShell(
+  component: string,
+  props: Record<string, unknown>,
+  layouts: LayoutEntry[] = []
+): Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean }> {
+  // Mock php() — returns Promises that never resolve so components suspend
+  const mockPhpFn = (): Promise<never> => new Promise(() => {});
+  const previousPhp = (globalThis as any).php;
+  (globalThis as any).php = mockPhpFn;
+
+  try {
+    // Render Flight payload (mock php causes async components to pend forever)
+    const flightStream: ReadableStream = clientManifest
+      ? rscModule.renderRscStream(component, props, clientManifest, layouts)
+      : rscModule.renderRscStream(component, props, layouts);
+
+    const consumerManifest = ssrManifest
+      ? { serverConsumerManifest: ssrManifest }
+      : emptyManifest;
+
+    const reactTree = await createFromReadableStream(flightStream, consumerManifest);
+
+    // Render to HTML — don't await allReady (completions never come)
+    const htmlStream = await renderToReadableStream(reactTree);
+    const reader = htmlStream.getReader();
+    const decoder = new TextDecoder();
+
+    let shellHtml = "";
+    let timedOut = false;
+
+    // Read chunks with a timeout. The shell (synchronous content + fallbacks)
+    // emits quickly. If nothing comes within 5s, the page likely has async
+    // content without a Suspense boundary.
+    const TIMEOUT = 5000;
+
+    while (true) {
+      const result = await Promise.race([
+        reader.read(),
+        new Promise<{ done: true; value: undefined }>((resolve) =>
+          setTimeout(() => resolve({ done: true, value: undefined }), TIMEOUT)
+        ).then((r) => {
+          timedOut = true;
+          return r;
+        }),
+      ]);
+
+      if (result.done) break;
+
+      const chunk = decoder.decode(result.value, { stream: true });
+      shellHtml += chunk;
+
+      // Stop reading once we see Suspense completion markers —
+      // everything after this is dynamic content we don't want in the shell.
+      // React's completions start with hidden templates: <div hidden id="S:
+      if (chunk.includes('hidden id="S:') || chunk.includes("$RC(") || chunk.includes("$RS(")) {
+        // Remove the completion content from the shell
+        const completionStart = shellHtml.search(/<div hidden id="S:/);
+        if (completionStart !== -1) {
+          shellHtml = shellHtml.slice(0, completionStart);
+        }
+        break;
+      }
+    }
+
+    // Cancel the rest of the stream
+    try { reader.cancel(); } catch {}
+
+    return { shellHtml, clientChunks: browserChunks, timedOut };
+  } finally {
+    if ((globalThis as any).php === mockPhpFn) {
+      if (previousPhp) {
+        (globalThis as any).php = previousPhp;
+      } else {
+        delete (globalThis as any).php;
+      }
+    }
+  }
+}
+
 // ─── Handler (buffered, non-streaming) ───────────────────────────────────────
 
 export async function handleRsc(

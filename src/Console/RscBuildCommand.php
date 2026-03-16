@@ -102,21 +102,36 @@ class RscBuildCommand extends Command
             $uri = '/'.ltrim($route->uri(), '/');
             $isParameterized = str_contains($route->uri(), '{');
 
-            // Parameterized without staticPaths — can't prerender, PPR at request time
-            if ($isParameterized && ! isset($route->defaults['_static_paths'])) {
-                $results[] = [
-                    'url' => $uri,
-                    'uri' => $uri,
-                    'component' => $component,
-                    'type' => 'dynamic',
-                    'reason' => 'dynamic params',
-                    'generatedPaths' => [],
-                ];
+            $urls = $prerender->resolveUrls($route);
+
+            // Parameterized without staticPaths — PPR shell with fallback
+            if ($isParameterized && empty($urls)) {
+                try {
+                    $result = $prerender->prerenderPprShell($uri, $route, $outputPath);
+
+                    $results[] = [
+                        'url' => $uri,
+                        'uri' => $uri,
+                        'component' => $component,
+                        'type' => 'ppr',
+                        'reason' => 'dynamic params',
+                        'generatedPaths' => [],
+                    ];
+                } catch (\Throwable $e) {
+                    $this->error("  PPR shell failed {$uri}: {$e->getMessage()}");
+
+                    $results[] = [
+                        'url' => $uri,
+                        'uri' => $uri,
+                        'component' => $component,
+                        'type' => 'error',
+                        'reason' => $e->getMessage(),
+                        'generatedPaths' => [],
+                    ];
+                }
 
                 continue;
             }
-
-            $urls = $prerender->resolveUrls($route);
 
             // Parameterized with staticPaths — prerender each path
             if ($isParameterized && ! empty($urls)) {
@@ -240,7 +255,12 @@ class RscBuildCommand extends Command
                 $icon = "\u{25D4}";
                 $pathCount = count($result['generatedPaths']);
                 $label = $pathCount > 1 ? "PPR ({$pathCount} paths)" : 'PPR';
-                $this->line("<fg=magenta>{$icon}</>  {$uri}  <fg=gray>{$label}</>");
+
+                if ($reason !== null) {
+                    $this->line("<fg=magenta>{$icon}</>  {$uri}  <fg=gray>{$label} ({$reason})</>");
+                } else {
+                    $this->line("<fg=magenta>{$icon}</>  {$uri}  <fg=gray>{$label}</>");
+                }
 
                 if ($pathCount > 1) {
                     $paths = $result['generatedPaths'];

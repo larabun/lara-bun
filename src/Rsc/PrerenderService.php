@@ -131,10 +131,95 @@ class PrerenderService
     public const PPR_PAYLOAD_MARKER = '<!--__RSC_PPR_PAYLOAD__-->';
 
     /**
-     * Pre-render a PPR page — HTML shell with a placeholder for the Flight payload.
+     * Pre-render a PPR shell for a parameterized route.
      *
+     * Uses handleRscPprShell which mocks php() so async components suspend
+     * and Suspense shows fallback content. The shell (layout + fallbacks)
+     * is captured and cached for all param values.
+     *
+     * @return array{type: string, reason: string|null}
+     */
+    public function prerenderPprShell(string $uri, Route $route, string $outputPath): array
+    {
+        // Use placeholder params to resolve the route controller
+        $paramNames = $route->parameterNames();
+        $dummyParams = [];
+
+        foreach ($paramNames as $name) {
+            $dummyParams[$name] = '__ppr__';
+        }
+
+        $dummyUrl = ltrim($uri, '/');
+
+        foreach ($dummyParams as $key => $value) {
+            $dummyUrl = str_replace(["{{$key}}", "{{$key}?}"], $value, $dummyUrl);
+        }
+
+        $dummyUrl = '/'.ltrim($dummyUrl, '/');
+
+        $rscResponse = $this->resolveRscResponse($route, $dummyUrl);
+
+        if (! $rscResponse instanceof RscResponse) {
+            return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
+        }
+
+        // Render the shell — php() is mocked so Suspense shows fallbacks
+        $result = app(BunBridge::class)->rscPprShell(
+            $rscResponse->getComponent(),
+            $rscResponse->getProps(),
+            $rscResponse->getLayouts(),
+        );
+
+        if ($result['timedOut']) {
+            throw new \RuntimeException(
+                "PPR shell timed out for {$uri}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
+            );
+        }
+
+        $version = $rscResponse->getVersion();
+
+        $initialJson = json_encode([
+            'url' => self::PPR_PAYLOAD_MARKER,
+            'component' => $rscResponse->getComponent(),
+            'version' => $version,
+        ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
+
+        $rootView = config('bun.rsc.root_view', 'lara-bun::rsc-app');
+
+        $html = view($rootView, [
+            ...$rscResponse->getViewData(),
+            'body' => $result['shellHtml'],
+            'initialJson' => $initialJson,
+            'scripts' => self::PPR_PAYLOAD_MARKER,
+        ])->render();
+
+        // Store under the URI pattern (e.g. posts/_id_)
+        $path = trim(str_replace(['{', '}'], ['_', '_'], ltrim($uri, '/')), '/') ?: 'index';
+        File::ensureDirectoryExists(dirname("{$outputPath}/{$path}.ppr.html"));
+
+        File::put("{$outputPath}/{$path}.ppr.html", $html);
+
+        $meta = [
+            'clientChunks' => $result['clientChunks'],
+            'version' => $version,
+            'component' => $rscResponse->getComponent(),
+            'layouts' => $rscResponse->getLayouts(),
+            'parameterized' => true,
+            'uriPattern' => $uri,
+        ];
+
+        File::put("{$outputPath}/{$path}.ppr-meta.json", json_encode($meta, JSON_THROW_ON_ERROR));
+
+        return ['type' => 'ppr', 'reason' => null];
+    }
+
+    /**
+     * Pre-render a PPR page — shell with Suspense fallbacks and a placeholder
+     * for the Flight payload.
+     *
+     * Uses handleRscPprShell which mocks php() so async components suspend.
      * At request time, the shell is served instantly and a fresh RSC render
-     * fills in the Flight payload, giving the client up-to-date data to hydrate with.
+     * streams Suspense completions + Flight payload.
      *
      * @return array{type: string, reason: string|null}
      */
@@ -146,16 +231,21 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
-        $result = app(BunBridge::class)->rsc(
+        // Render the shell — php() is mocked so Suspense shows fallbacks
+        $result = app(BunBridge::class)->rscPprShell(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
         );
 
+        if ($result['timedOut']) {
+            throw new \RuntimeException(
+                "PPR shell timed out for {$url}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
+            );
+        }
+
         $version = $rscResponse->getVersion();
 
-        // Build the HTML but use a marker instead of the real Flight payload.
-        // At request time, the marker gets replaced with a fresh payload.
         $initialJson = json_encode([
             'url' => $url,
             'component' => $rscResponse->getComponent(),
@@ -166,7 +256,7 @@ class PrerenderService
 
         $html = view($rootView, [
             ...$rscResponse->getViewData(),
-            'body' => $result['body'],
+            'body' => $result['shellHtml'],
             'initialJson' => $initialJson,
             'scripts' => self::PPR_PAYLOAD_MARKER,
         ])->render();

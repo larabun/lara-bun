@@ -12,7 +12,7 @@ interface LayoutEntry {
 }
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "ssr" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action";
+  type: "ping" | "call" | "list" | "ssr" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell";
   function?: string;
   args?: Record<string, unknown>;
   page?: Record<string, unknown>;
@@ -157,6 +157,27 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
       }
     }
 
+    case "rsc-ppr-shell": {
+      if (!rscHandler) {
+        return '{"error":"RSC not enabled. Set BUN_RSC_ENABLED=true and run: bun run build:rsc"}';
+      }
+      if (!message.component) {
+        return '{"error":"Missing component in RSC message"}';
+      }
+      try {
+        const result = await rscHandler.handleRscPprShell(
+          message.component,
+          message.props ?? {},
+          message.layouts ?? []
+        );
+        return JSON.stringify({ result });
+      } catch (err) {
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     case "list":
       return JSON.stringify({ result: Object.keys(functions) });
 
@@ -200,6 +221,11 @@ type RscHandlerModule = {
     contentType: string,
     callbackSocket?: string | null
   ) => Promise<{ stream: ReadableStream }>;
+  handleRscPprShell: (
+    component: string,
+    props: Record<string, unknown>,
+    layouts?: LayoutEntry[]
+  ) => Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean }>;
   resolveMetadata: (
     component: string,
     props: Record<string, unknown>,

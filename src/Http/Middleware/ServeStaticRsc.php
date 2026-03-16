@@ -159,12 +159,7 @@ class ServeStaticRsc
                 $props = $route ? $route->parameters() : [];
 
                 $bridge = app(BunBridge::class);
-                $result = $bridge->rsc($component, $props, $layouts, withCallbacks: false);
-
-                if ($result['usedDynamicApis'] ?? false) {
-                    // Page calls php() — need real callbacks for data
-                    $result = $bridge->rsc($component, $props, $layouts, withCallbacks: true);
-                }
+                $result = $bridge->rsc($component, $props, $layouts);
 
                 $rscPayload = $result['rscPayload'] ?? '';
             } catch (\Throwable) {
@@ -214,11 +209,7 @@ class ServeStaticRsc
                 $props = $route ? $route->parameters() : [];
 
                 $bridge = app(BunBridge::class);
-                $result = $bridge->rsc($component, $props, $layouts, withCallbacks: false);
-
-                if ($result['usedDynamicApis'] ?? false) {
-                    $result = $bridge->rsc($component, $props, $layouts, withCallbacks: true);
-                }
+                $result = $bridge->rsc($component, $props, $layouts);
 
                 echo $result['rscPayload'] ?? '';
                 flush();

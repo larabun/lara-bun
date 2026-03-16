@@ -78,7 +78,7 @@ class PrerenderService
 
         // Use the no-callback path for prerendering — php() calls are detected
         // via the dynamic API proxy on the Bun side, not executed on the PHP side.
-        $result = app(BunBridge::class)->rscWithoutCallbacks(
+        $result = app(BunBridge::class)->rsc(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
@@ -165,7 +165,7 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
-        $result = app(BunBridge::class)->rscWithoutCallbacks(
+        $result = app(BunBridge::class)->rsc(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
@@ -228,7 +228,7 @@ class PrerenderService
 
         // Render without callbacks — stub php() returns never-resolving promises,
         // so Suspense shows fallbacks. The shell HTML has fallback content.
-        $result = app(BunBridge::class)->rscWithoutCallbacks(
+        $result = app(BunBridge::class)->rsc(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),

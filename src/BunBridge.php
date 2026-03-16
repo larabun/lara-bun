@@ -1095,8 +1095,9 @@ class BunBridge
     private function send(string $json): array
     {
         $lastException = null;
+        $maxAttempts = max($this->workerCount, 3);
 
-        for ($attempt = 0; $attempt < $this->workerCount; $attempt++) {
+        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
             $index = $this->currentWorker++ % $this->workerCount;
             $socket = $this->checkout($index);
 
@@ -1107,8 +1108,21 @@ class BunBridge
 
                 return $response;
             } catch (RuntimeException $e) {
-                socket_close($socket);
+                @socket_close($socket);
+
+                // Clear the pool for this worker — sockets may be stale
+                if (! empty($this->pool[$index])) {
+                    foreach ($this->pool[$index] as $stale) {
+                        @socket_close($stale);
+                    }
+                    $this->pool[$index] = [];
+                }
+
                 $lastException = $e;
+
+                if ($attempt < $maxAttempts - 1) {
+                    usleep(50_000 * ($attempt + 1)); // 50ms, 100ms, 150ms
+                }
             }
         }
 
@@ -1121,11 +1135,18 @@ class BunBridge
      */
     private function checkout(int $index): Socket
     {
-        if (! empty($this->pool[$index])) {
-            return array_pop($this->pool[$index]);
+        // Try pooled sockets, validating they're still alive
+        while (! empty($this->pool[$index])) {
+            $socket = array_pop($this->pool[$index]);
+
+            if ($this->isSocketAlive($socket)) {
+                return $socket;
+            }
+
+            @socket_close($socket);
         }
 
-        return $this->createSocket($index);
+        return $this->connectWithRetry($index);
     }
 
     /**
@@ -1133,7 +1154,48 @@ class BunBridge
      */
     private function release(int $index, Socket $socket): void
     {
-        $this->pool[$index][] = $socket;
+        if ($this->isSocketAlive($socket)) {
+            $this->pool[$index][] = $socket;
+        } else {
+            @socket_close($socket);
+        }
+    }
+
+    /**
+     * Check if a socket is still connected and usable.
+     */
+    private function isSocketAlive(Socket $socket): bool
+    {
+        // Attempt a zero-length read — if the socket is dead, it returns false or 0
+        socket_set_nonblock($socket);
+        $buf = '';
+        $result = @socket_recv($socket, $buf, 1, MSG_PEEK | MSG_DONTWAIT);
+        socket_set_block($socket);
+
+        // false = error (dead), 0 = peer closed, >0 or null = alive (no data or data waiting)
+        return $result !== false && $result !== 0;
+    }
+
+    /**
+     * Connect to the Bun worker with retry logic.
+     */
+    private function connectWithRetry(int $index, int $maxRetries = 3): Socket
+    {
+        $lastException = null;
+
+        for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
+            try {
+                return $this->createSocket($index);
+            } catch (RuntimeException $e) {
+                $lastException = $e;
+
+                if ($attempt < $maxRetries) {
+                    usleep(100_000 * $attempt); // 100ms, 200ms, 300ms
+                }
+            }
+        }
+
+        throw $lastException;
     }
 
     private function createSocket(int $index): Socket

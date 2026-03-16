@@ -377,18 +377,48 @@ async function handleRscHtmlStreamMessage(
   }
 
   try {
-    const phpFn = createPhpFn(mainSocket);
+    const realPhpFn = createPhpFn(mainSocket);
+
+    // Deferred php() for Suspense streaming: queue calls during Flight
+    // rendering so React sees unresolved Promises and emits fallback HTML
+    // first. After the first HTML chunk, flush queued calls to PHP.
+    const pendingCalls: Array<{
+      fn: string;
+      args: unknown[];
+      resolve: (value: unknown) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+    let flushed = false;
+
+    const flush = () => {
+      if (flushed) return;
+      flushed = true;
+      for (const call of pendingCalls) {
+        realPhpFn(call.fn, ...call.args).then(call.resolve, call.reject);
+      }
+      pendingCalls.length = 0;
+    };
+
+    // Auto-flush after 100ms to prevent deadlock without Suspense
+    const autoFlushTimer = setTimeout(flush, 100);
+
+    const deferredPhpFn = (functionName: string, ...args: unknown[]): Promise<unknown> => {
+      if (flushed) return realPhpFn(functionName, ...args);
+      return new Promise((resolve, reject) => {
+        pendingCalls.push({ fn: functionName, args, resolve, reject });
+      });
+    };
 
     const [{ htmlStream, rscPayloadPromise, clientChunks }, metadata] =
       await Promise.all([
-        rscHandler.withPhp(phpFn, () =>
+        rscHandler.withPhp(deferredPhpFn, () =>
           rscHandler!.handleRscHtmlStream(
             message.component!,
             message.props ?? {},
             message.layouts ?? []
           )
         ),
-        rscHandler.withPhp(phpFn, () =>
+        rscHandler.withPhp(deferredPhpFn, () =>
           rscHandler!.resolveMetadata(
             message.component!,
             message.props ?? {},
@@ -401,6 +431,7 @@ async function handleRscHtmlStreamMessage(
 
     const reader = htmlStream.getReader();
     const decoder = new TextDecoder();
+    let firstChunkSent = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -411,7 +442,16 @@ async function handleRscHtmlStreamMessage(
         : decoder.decode(value, { stream: true });
       writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
       await Bun.sleep(0);
+
+      // After first HTML chunk (shell with fallbacks), flush deferred php() calls
+      if (!firstChunkSent) {
+        firstChunkSent = true;
+        clearTimeout(autoFlushTimer);
+        flush();
+      }
     }
+
+    clearTimeout(autoFlushTimer);
 
     const rscPayload = await rscPayloadPromise;
     writeFrame(mainSocket, JSON.stringify({ type: "html-end", rscPayload }));

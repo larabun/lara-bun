@@ -582,8 +582,8 @@ export async function handleRsc(
   } else {
     // No callback socket (build-time prerender) — provide a stub that
     // marks the page as dynamic and returns a never-resolving Promise.
-    // Components that await this will suspend, hitting Suspense boundaries.
-    // Components that pass the promise as a prop (without awaiting) work fine.
+    // With renderRscStream, pending promises stay open and Suspense
+    // shows fallbacks. Static parts render normally.
     const stubFn = (): Promise<never> => {
       usedDynamicApis = true;
       return new Promise(() => {});
@@ -648,29 +648,68 @@ export async function handleRsc(
   };
 
   try {
-    // Step 1: Render component to RSC Flight payload
-    // When no callback socket is provided (prerender), php() returns a
-    // never-resolving Promise. If the component awaits it without Suspense,
-    // renderRsc will hang. Use a timeout to detect this.
-    const PRERENDER_TIMEOUT = callbackSocket ? 0 : 10000;
+    const isPrerender = !callbackSocket;
+    const consumerManifest = ssrManifest
+      ? { serverConsumerManifest: ssrManifest }
+      : emptyManifest;
 
-    const renderPromise = clientManifest
-      ? rscModule.renderRsc(component, props, clientManifest, layouts)
-      : rscModule.renderRsc(component, props, layouts);
+    if (isPrerender) {
+      // Prerender path: use renderRscStream so pending promises (from stub
+      // php()) don't block. The stream emits static parts immediately and
+      // leaves dynamic chunks pending. React's Suspense shows fallbacks.
+      const flightStream: ReadableStream = clientManifest
+        ? rscModule.renderRscStream(component, props, clientManifest, layouts)
+        : rscModule.renderRscStream(component, props, layouts);
 
-    const rscPayload: string = PRERENDER_TIMEOUT > 0
-      ? await Promise.race([
-          renderPromise,
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(
-              "Prerender timed out. A component awaits php() without a <Suspense> boundary. " +
-              "Wrap async content in <Suspense> or provide a loading.tsx."
-            )), PRERENDER_TIMEOUT)
-          ),
-        ])
-      : await renderPromise;
+      const [flightForHtml, flightForPayload] = flightStream.tee();
 
-    // Step 2: Deserialize Flight payload into React element tree
+      // Collect available Flight payload with a timeout.
+      // Static parts arrive immediately; dynamic parts never resolve.
+      const PRERENDER_TIMEOUT = 5000;
+      const payloadCollector = new Response(flightForPayload).text();
+      const rscPayload = await Promise.race([
+        payloadCollector,
+        new Promise<string>((resolve) =>
+          setTimeout(() => {
+            // Cancel the reader — we've collected enough
+            try { flightForPayload.cancel(); } catch {}
+            resolve("");
+          }, PRERENDER_TIMEOUT)
+        ),
+      ]);
+
+      // Deserialize Flight → React tree
+      const reactTree = await createFromReadableStream(flightForHtml, consumerManifest);
+
+      // Render to HTML — use allReady with timeout
+      const htmlStream = await renderToReadableStream(reactTree);
+
+      const allReadyResult = await Promise.race([
+        htmlStream.allReady.then(() => "ready" as const),
+        new Promise<"timeout">((resolve) =>
+          setTimeout(() => resolve("timeout"), PRERENDER_TIMEOUT)
+        ),
+      ]);
+
+      if (allReadyResult === "timeout") {
+        // Page has unresolved Suspense without a boundary above it
+        try { htmlStream.cancel(); } catch {}
+        throw new Error(
+          "Prerender timed out. A component awaits php() without a <Suspense> boundary. " +
+          "Wrap async content in <Suspense> or provide a loading.tsx."
+        );
+      }
+
+      const body = await new Response(htmlStream).text();
+
+      return { body, rscPayload, clientChunks: browserChunks, usedDynamicApis };
+    }
+
+    // Normal path: buffered render with real callback socket
+    const rscPayload: string = clientManifest
+      ? await rscModule.renderRsc(component, props, clientManifest, layouts)
+      : await rscModule.renderRsc(component, props, layouts);
+
     const flightStream = new ReadableStream({
       start(controller) {
         controller.enqueue(new TextEncoder().encode(rscPayload));
@@ -678,16 +717,7 @@ export async function handleRsc(
       },
     });
 
-    const consumerManifest = ssrManifest
-      ? { serverConsumerManifest: ssrManifest }
-      : emptyManifest;
-
-    const reactTree = await createFromReadableStream(
-      flightStream,
-      consumerManifest
-    );
-
-    // Step 3: Render React elements to HTML
+    const reactTree = await createFromReadableStream(flightStream, consumerManifest);
     const htmlStream = await renderToReadableStream(reactTree);
     await htmlStream.allReady;
 

@@ -279,9 +279,14 @@ async function handleRscMessage(
     return;
   }
   try {
-    const phpFn = createPhpFn(mainSocket);
-
     const isPrerender = message.isPrerender ?? false;
+
+    // For prerender: stub php() returns never-resolving Promises so
+    // async components suspend and Suspense shows fallbacks.
+    // For runtime: real phpFn writes callback frames to PHP.
+    const phpFn = isPrerender
+      ? (): Promise<never> => new Promise(() => {})
+      : createPhpFn(mainSocket);
 
     const [result, metadata] = await Promise.all([
       rscHandler.withPhp(phpFn, () =>

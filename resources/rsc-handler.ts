@@ -581,12 +581,12 @@ export async function handleRsc(
     };
   } else {
     // No callback socket (build-time prerender) — provide a stub that
-    // marks the page as dynamic and throws a clear error.
-    const stubFn = (): never => {
+    // marks the page as dynamic and returns a never-resolving Promise.
+    // Components that await this will suspend, hitting Suspense boundaries.
+    // Components that pass the promise as a prop (without awaiting) work fine.
+    const stubFn = (): Promise<never> => {
       usedDynamicApis = true;
-      throw new Error(
-        "php() was called during prerender. Wrap async content in <Suspense> or provide a loading.tsx."
-      );
+      return new Promise(() => {});
     };
     (globalThis as any).php = stubFn;
 
@@ -649,9 +649,26 @@ export async function handleRsc(
 
   try {
     // Step 1: Render component to RSC Flight payload
-    const rscPayload: string = clientManifest
-      ? await rscModule.renderRsc(component, props, clientManifest, layouts)
-      : await rscModule.renderRsc(component, props, layouts);
+    // When no callback socket is provided (prerender), php() returns a
+    // never-resolving Promise. If the component awaits it without Suspense,
+    // renderRsc will hang. Use a timeout to detect this.
+    const PRERENDER_TIMEOUT = callbackSocket ? 0 : 10000;
+
+    const renderPromise = clientManifest
+      ? rscModule.renderRsc(component, props, clientManifest, layouts)
+      : rscModule.renderRsc(component, props, layouts);
+
+    const rscPayload: string = PRERENDER_TIMEOUT > 0
+      ? await Promise.race([
+          renderPromise,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(
+              "Prerender timed out. A component awaits php() without a <Suspense> boundary. " +
+              "Wrap async content in <Suspense> or provide a loading.tsx."
+            )), PRERENDER_TIMEOUT)
+          ),
+        ])
+      : await renderPromise;
 
     // Step 2: Deserialize Flight payload into React element tree
     const flightStream = new ReadableStream({

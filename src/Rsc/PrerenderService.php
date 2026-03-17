@@ -76,11 +76,27 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
+        // Step 1: Classify using PPR shell render (fast, never hangs).
+        // Mock php() returns never-resolving Promises — if the page uses
+        // php(), it's detected as dynamic. If not, it's static.
+        $shell = app(BunBridge::class)->rscPprShell(
+            $rscResponse->getComponent(),
+            $rscResponse->getProps(),
+            $rscResponse->getLayouts(),
+        );
+
+        if ($shell['timedOut']) {
+            throw new \RuntimeException(
+                "Prerender timed out for {$url}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
+            );
+        }
+
+        // Step 2: Full render for static pages (no dynamic APIs detected).
+        // Use the real rsc() with callbacks to get complete HTML + Flight payload.
         $result = app(BunBridge::class)->rsc(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
-            isPrerender: true,
         );
 
         if ($result['usedDynamicApis'] ?? false) {
@@ -164,12 +180,17 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
-        $result = app(BunBridge::class)->rsc(
+        $result = app(BunBridge::class)->rscPprShell(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
-            isPrerender: true,
         );
+
+        if ($result['timedOut']) {
+            throw new \RuntimeException(
+                "PPR shell timed out for {$uri}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
+            );
+        }
 
         $version = $rscResponse->getVersion();
 
@@ -183,7 +204,7 @@ class PrerenderService
 
         $html = view($rootView, [
             ...$rscResponse->getViewData(),
-            'body' => $result['body'],
+            'body' => $result['shellHtml'],
             'initialJson' => $initialJson,
             'scripts' => self::PPR_PAYLOAD_MARKER,
         ])->render();
@@ -226,12 +247,17 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
-        $result = app(BunBridge::class)->rsc(
+        $result = app(BunBridge::class)->rscPprShell(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
-            isPrerender: true,
         );
+
+        if ($result['timedOut']) {
+            throw new \RuntimeException(
+                "PPR shell timed out for {$url}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
+            );
+        }
 
         $version = $rscResponse->getVersion();
 
@@ -245,7 +271,7 @@ class PrerenderService
 
         $html = view($rootView, [
             ...$rscResponse->getViewData(),
-            'body' => $result['body'],
+            'body' => $result['shellHtml'],
             'initialJson' => $initialJson,
             'scripts' => self::PPR_PAYLOAD_MARKER,
         ])->render();

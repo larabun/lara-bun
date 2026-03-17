@@ -386,7 +386,6 @@ class BunBridge
                 }
 
                 $callbackServer = $this->createUnixServer($callbackPath);
-                error_log("[BunBridge] Callback socket created: {$callbackPath}, exists: ".(file_exists($callbackPath) ? 'yes' : 'no'));
             }
 
             $this->writeFrame($mainSocket, json_encode([

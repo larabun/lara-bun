@@ -25,12 +25,11 @@ export class PhpCallbackClient {
     this.receiveBuffer = Buffer.alloc(0);
 
     const self = this;
-    const maxRetries = 5;
+    const maxRetries = 3;
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        console.error(`[php-callback] Attempt ${attempt + 1}/${maxRetries} connecting to ${socketPath}`);
         this.connection = await Bun.connect({
           unix: socketPath,
           socket: {

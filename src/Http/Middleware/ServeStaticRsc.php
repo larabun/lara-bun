@@ -95,12 +95,12 @@ class ServeStaticRsc
     }
 
     /**
-     * Serve a PPR response: cached shell + fresh Flight payload.
+     * Serve a PPR response: cached shell for fast TTFB, then stream
+     * fresh content via rscHtmlStream (the proven Suspense streaming path).
      *
      * 1. Cached shell (with Suspense fallbacks) sent immediately → fast TTFB
-     * 2. Fresh buffered RSC render generates the Flight payload
-     * 3. Client hydrates from fresh Flight → React reconciles DOM,
-     *    replacing fallback content with real data
+     * 2. Fresh rscHtmlStream render streams Suspense completions + Flight payload
+     * 3. React swaps fallbacks with real content progressively
      */
     private function servePprResponse(Request $request, string $shellPath, string $metaPath): StreamedResponse
     {
@@ -146,28 +146,59 @@ class ServeStaticRsc
             echo substr($shell, 0, $markerPos);
             flush();
 
-            // Generate fresh Flight payload with real data.
-            // Try without callbacks first — most PPR pages don't call php().
-            // If the page does call php(), retry with callbacks.
-            $clientChunks = $meta['clientChunks'] ?? [];
-            $rscPayload = '';
-
+            // Use the streaming path for fresh content — same as normal
+            // page loads. Suspense completions arrive progressively.
             try {
                 $component = $meta['component'] ?? '';
                 $layouts = $meta['layouts'] ?? [];
                 $route = $request->route();
                 $props = $route ? $route->parameters() : [];
 
-                $bridge = app(BunBridge::class);
-                $result = $bridge->rsc($component, $props, $layouts);
+                $layoutEntries = [];
 
-                $rscPayload = $result['rscPayload'] ?? '';
+                foreach ($layouts as $layout) {
+                    $layoutEntries[] = is_array($layout) ? $layout : ['component' => $layout, 'props' => []];
+                }
+
+                $bridge = app(BunBridge::class);
+                $generator = $bridge->rscHtmlStream($component, $props, $layoutEntries);
+
+                // Skip first yield (metadata — we already have it from the cached shell)
+                $generator->current();
+                $generator->next();
+
+                $rscPayload = '';
+                $clientChunks = $meta['clientChunks'] ?? [];
+
+                while ($generator->valid()) {
+                    $value = $generator->current();
+
+                    if (is_array($value) && isset($value['rscPayload'])) {
+                        $rscPayload = $value['rscPayload'];
+                        $generator->next();
+
+                        continue;
+                    }
+
+                    // The streaming path sends shell HTML + Suspense completions.
+                    // We already sent the cached shell, so skip it and only send
+                    // the completion chunks (hidden templates + $RC scripts).
+                    if (is_string($value)) {
+                        echo $value;
+                        flush();
+                    }
+
+                    $generator->next();
+                }
+
+                // Send scripts with Flight payload for hydration
+                echo BunServiceProvider::renderRscScripts($rscPayload, $clientChunks);
             } catch (\Throwable $e) {
                 report($e);
-            }
 
-            // Send scripts with fresh Flight payload for hydration
-            echo BunServiceProvider::renderRscScripts($rscPayload, $clientChunks);
+                // Fallback: send empty scripts so the page at least loads
+                echo BunServiceProvider::renderRscScripts('', $meta['clientChunks'] ?? []);
+            }
 
             // Send closing tags
             echo substr($shell, $markerPos + strlen($marker));

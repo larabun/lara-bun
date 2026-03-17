@@ -91,9 +91,9 @@ class PrerenderService
             );
         }
 
-        // Step 2: Full render for static pages (no dynamic APIs detected).
-        // Use the real rsc() with callbacks to get complete HTML + Flight payload.
-        $result = app(BunBridge::class)->rsc(
+        // Step 2: Full render for static pages.
+        // Use rscWithoutCallbacks — static pages don't call php().
+        $result = app(BunBridge::class)->rscWithoutCallbacks(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),

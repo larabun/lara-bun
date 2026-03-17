@@ -12,25 +12,17 @@ interface LayoutEntry {
 }
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "ssr" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell" | "callback-response";
+  type: "ping" | "call" | "list" | "ssr" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell";
   function?: string;
   args?: Record<string, unknown>;
   page?: Record<string, unknown>;
   component?: string;
   props?: Record<string, unknown>;
   layouts?: LayoutEntry[];
+  callbackSocket?: string;
   actionId?: string;
   body?: string;
   contentType?: string;
-  isPrerender?: boolean;
-  // Callback response fields
-  id?: string;
-  result?: unknown;
-  error?: string;
-  unauthenticated?: boolean;
-  unauthorized?: boolean;
-  validation_errors?: Record<string, string[]>;
-  redirect?: string;
 }
 
 function log(...args: unknown[]): void {
@@ -136,6 +128,35 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
       }
     }
 
+    case "rsc": {
+      if (!rscHandler) {
+        return '{"error":"RSC not enabled. Set BUN_RSC_ENABLED=true and run: bun run build:rsc"}';
+      }
+      if (!message.component) {
+        return '{"error":"Missing component in RSC message"}';
+      }
+      try {
+        const [result, metadata] = await Promise.all([
+          rscHandler.handleRsc(
+            message.component,
+            message.props ?? {},
+            message.callbackSocket ?? null,
+            message.layouts ?? []
+          ),
+          rscHandler.resolveMetadata(
+            message.component,
+            message.props ?? {},
+            message.callbackSocket ?? null
+          ),
+        ]);
+        return JSON.stringify({ result: { ...result, metadata } });
+      } catch (err) {
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     case "rsc-ppr-shell": {
       if (!rscHandler) {
         return '{"error":"RSC not enabled. Set BUN_RSC_ENABLED=true and run: bun run build:rsc"}';
@@ -174,40 +195,41 @@ if (functionsDir) {
 
 await loadEntryPoints();
 
-// Load RSC handler
+// Load RSC handler if a bundle is configured
 type RscHandlerModule = {
-  withPhp: <T>(phpFn: (fn: string, ...args: unknown[]) => Promise<unknown>, fn: () => T) => T;
   handleRsc: (
     component: string,
     props: Record<string, unknown>,
-    layouts?: LayoutEntry[],
-    isPrerender?: boolean
+    callbackSocket?: string | null,
+    layouts?: LayoutEntry[]
   ) => Promise<{ body: string; rscPayload: string; clientChunks: string[]; usedDynamicApis: boolean }>;
   handleRscStream: (
     component: string,
     props: Record<string, unknown>,
+    callbackSocket?: string | null,
     layouts?: LayoutEntry[]
   ) => Promise<{ stream: ReadableStream; clientChunks: string[] }>;
   handleRscHtmlStream: (
     component: string,
     props: Record<string, unknown>,
+    callbackSocket?: string | null,
     layouts?: LayoutEntry[]
-  ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }>;
+  ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[]; flushCallbacks?: () => void }>;
   handleAction: (
     actionId: string,
     body: string,
     contentType: string,
+    callbackSocket?: string | null
   ) => Promise<{ stream: ReadableStream }>;
   handleRscPprShell: (
     component: string,
     props: Record<string, unknown>,
     layouts?: LayoutEntry[]
   ) => Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean }>;
-  handleCallbackResponse: (response: Record<string, unknown>) => void;
-  registerCallback: (id: string, resolve: (value: unknown) => void, reject: (reason: Error) => void) => void;
   resolveMetadata: (
     component: string,
     props: Record<string, unknown>,
+    callbackSocket?: string | null
   ) => Promise<Record<string, unknown> | null>;
 };
 
@@ -230,88 +252,14 @@ if (Object.keys(functions).length === 0 && !rscHandler) {
   process.exit(1);
 }
 
-// ─── Callback infrastructure ────────────────────────────────────────────────
-// php() calls write callback frames on the main socket. PHP handles them
-// and writes callback-response frames back. We route those responses here.
-
-let callbackIdCounter = 0;
-
 /**
- * Create a php() function scoped to a specific socket connection.
- * Writes callback frames on the main socket and returns Promises that
- * resolve when PHP sends the response back.
+ * Handles rsc-stream messages.
+ *
+ * Writes Flight data frames back on the main Bun.listen handler socket
+ * (same path as SSR responses). The drain handler on Bun.listen handles
+ * backpressure for large payloads. Runs via setTimeout so writes are not
+ * corked by the data handler's async callback buffering.
  */
-function createPhpFn(mainSocket: SocketLike): (fn: string, ...args: unknown[]) => Promise<unknown> {
-  return (functionName: string, ...args: unknown[]): Promise<unknown> => {
-    const id = `cb_${++callbackIdCounter}`;
-
-    const json = JSON.stringify({
-      type: "callback",
-      id,
-      function: functionName,
-      args,
-    });
-
-    writeFrame(mainSocket, json);
-
-    return new Promise((resolve, reject) => {
-      if (rscHandler) {
-        rscHandler.registerCallback(id, resolve, reject);
-      } else {
-        reject(new Error("RSC handler not loaded"));
-      }
-    });
-  };
-}
-
-// ─── Streaming message handlers ─────────────────────────────────────────────
-
-async function handleRscMessage(
-  mainSocket: SocketLike,
-  message: IncomingMessage
-): Promise<void> {
-  if (!rscHandler) {
-    writeFrame(mainSocket, '{"error":"RSC not enabled"}');
-    return;
-  }
-  if (!message.component) {
-    writeFrame(mainSocket, '{"error":"Missing component in RSC message"}');
-    return;
-  }
-  try {
-    const isPrerender = message.isPrerender ?? false;
-
-    // For prerender: stub php() returns never-resolving Promises so
-    // async components suspend and Suspense shows fallbacks.
-    // For runtime: real phpFn writes callback frames to PHP.
-    const phpFn = isPrerender
-      ? (): Promise<never> => new Promise(() => {})
-      : createPhpFn(mainSocket);
-
-    const [result, metadata] = await Promise.all([
-      rscHandler.withPhp(phpFn, () =>
-        rscHandler!.handleRsc(
-          message.component!,
-          message.props ?? {},
-          message.layouts ?? [],
-          isPrerender
-        )
-      ),
-      rscHandler.withPhp(phpFn, () =>
-        rscHandler!.resolveMetadata(
-          message.component!,
-          message.props ?? {},
-        )
-      ),
-    ]);
-    writeFrame(mainSocket, JSON.stringify({ result: { ...result, metadata } }));
-  } catch (err) {
-    writeFrame(mainSocket, JSON.stringify({
-      error: err instanceof Error ? err.message : String(err),
-    }));
-  }
-}
-
 async function handleRscStreamMessage(
   mainSocket: SocketLike,
   message: IncomingMessage
@@ -326,21 +274,17 @@ async function handleRscStreamMessage(
   }
 
   try {
-    const phpFn = createPhpFn(mainSocket);
-
     const [{ stream, clientChunks }, metadata] = await Promise.all([
-      rscHandler.withPhp(phpFn, () =>
-        rscHandler!.handleRscStream(
-          message.component!,
-          message.props ?? {},
-          message.layouts ?? []
-        )
+      rscHandler.handleRscStream(
+        message.component,
+        message.props ?? {},
+        message.callbackSocket ?? null,
+        message.layouts ?? []
       ),
-      rscHandler.withPhp(phpFn, () =>
-        rscHandler!.resolveMetadata(
-          message.component!,
-          message.props ?? {},
-        )
+      rscHandler.resolveMetadata(
+        message.component,
+        message.props ?? {},
+        message.callbackSocket ?? null
       ),
     ]);
 
@@ -372,6 +316,13 @@ async function handleRscStreamMessage(
   }
 }
 
+/**
+ * Handles rsc-html-stream messages for initial page loads with Suspense.
+ *
+ * Writes HTML + Flight payload frames back on the main Bun.listen handler
+ * socket (same path as SSR responses). The drain handler on Bun.listen
+ * handles backpressure for large payloads.
+ */
 async function handleRscHtmlStreamMessage(
   mainSocket: SocketLike,
   message: IncomingMessage
@@ -386,52 +337,18 @@ async function handleRscHtmlStreamMessage(
   }
 
   try {
-    const realPhpFn = createPhpFn(mainSocket);
-
-    // Deferred php() for Suspense streaming: queue calls during Flight
-    // rendering so React sees unresolved Promises and emits fallback HTML
-    // first. After the first HTML chunk, flush queued calls to PHP.
-    const pendingCalls: Array<{
-      fn: string;
-      args: unknown[];
-      resolve: (value: unknown) => void;
-      reject: (reason: Error) => void;
-    }> = [];
-    let flushed = false;
-
-    const flush = () => {
-      if (flushed) return;
-      flushed = true;
-      for (const call of pendingCalls) {
-        realPhpFn(call.fn, ...call.args).then(call.resolve, call.reject);
-      }
-      pendingCalls.length = 0;
-    };
-
-    // Auto-flush after 100ms to prevent deadlock without Suspense
-    const autoFlushTimer = setTimeout(flush, 100);
-
-    const deferredPhpFn = (functionName: string, ...args: unknown[]): Promise<unknown> => {
-      if (flushed) return realPhpFn(functionName, ...args);
-      return new Promise((resolve, reject) => {
-        pendingCalls.push({ fn: functionName, args, resolve, reject });
-      });
-    };
-
-    const [{ htmlStream, rscPayloadPromise, clientChunks }, metadata] =
+    const [{ htmlStream, rscPayloadPromise, clientChunks, flushCallbacks }, metadata] =
       await Promise.all([
-        rscHandler.withPhp(deferredPhpFn, () =>
-          rscHandler!.handleRscHtmlStream(
-            message.component!,
-            message.props ?? {},
-            message.layouts ?? []
-          )
+        rscHandler.handleRscHtmlStream(
+          message.component,
+          message.props ?? {},
+          message.callbackSocket ?? null,
+          message.layouts ?? []
         ),
-        rscHandler.withPhp(deferredPhpFn, () =>
-          rscHandler!.resolveMetadata(
-            message.component!,
-            message.props ?? {},
-          )
+        rscHandler.resolveMetadata(
+          message.component,
+          message.props ?? {},
+          message.callbackSocket ?? null
         ),
       ]);
 
@@ -440,7 +357,7 @@ async function handleRscHtmlStreamMessage(
 
     const reader = htmlStream.getReader();
     const decoder = new TextDecoder();
-    let firstChunkSent = false;
+    let callbacksFlushed = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -452,15 +369,13 @@ async function handleRscHtmlStreamMessage(
       writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
       await Bun.sleep(0);
 
-      // After first HTML chunk (shell with fallbacks), flush deferred php() calls
-      if (!firstChunkSent) {
-        firstChunkSent = true;
-        clearTimeout(autoFlushTimer);
-        flush();
+      // After the first HTML chunk (shell), flush deferred php() calls.
+      // The auto-flush timer handles the no-Suspense fallback case.
+      if (!callbacksFlushed && flushCallbacks) {
+        callbacksFlushed = true;
+        flushCallbacks();
       }
     }
-
-    clearTimeout(autoFlushTimer);
 
     const rscPayload = await rscPayloadPromise;
     writeFrame(mainSocket, JSON.stringify({ type: "html-end", rscPayload }));
@@ -474,6 +389,12 @@ async function handleRscHtmlStreamMessage(
   }
 }
 
+/**
+ * Handles rsc-action messages (server action calls).
+ *
+ * Same streaming pattern as handleRscStreamMessage — writes Flight
+ * data frames back on the main socket with action-specific frame types.
+ */
 async function handleRscActionMessage(
   mainSocket: SocketLike,
   message: IncomingMessage
@@ -488,14 +409,11 @@ async function handleRscActionMessage(
   }
 
   try {
-    const phpFn = createPhpFn(mainSocket);
-
-    const { stream } = await rscHandler.withPhp(phpFn, () =>
-      rscHandler!.handleAction(
-        message.actionId!,
-        message.body ?? "",
-        message.contentType ?? "text/plain",
-      )
+    const { stream } = await rscHandler.handleAction(
+      message.actionId,
+      message.body ?? "",
+      message.contentType ?? "text/plain",
+      message.callbackSocket ?? null
     );
 
     writeFrame(mainSocket, '{"type":"action-start"}');
@@ -519,15 +437,28 @@ async function handleRscActionMessage(
   } catch (err) {
     let errorJson: string;
     if (err instanceof ServerAuthenticationError) {
-      errorJson = JSON.stringify({ unauthenticated: true, error: err.message });
+      errorJson = JSON.stringify({
+        unauthenticated: true,
+        error: err.message,
+      });
     } else if (err instanceof ServerAuthorizationError) {
-      errorJson = JSON.stringify({ unauthorized: true, error: err.message });
+      errorJson = JSON.stringify({
+        unauthorized: true,
+        error: err.message,
+      });
     } else if (err instanceof ServerRedirectError) {
-      errorJson = JSON.stringify({ redirect: err.location });
+      errorJson = JSON.stringify({
+        redirect: err.location,
+      });
     } else if (err instanceof ServerValidationError) {
-      errorJson = JSON.stringify({ error: err.message, validation_errors: err.errors });
+      errorJson = JSON.stringify({
+        error: err.message,
+        validation_errors: err.errors,
+      });
     } else {
-      errorJson = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      errorJson = JSON.stringify({
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     try {
       writeFrame(mainSocket, errorJson);
@@ -536,8 +467,6 @@ async function handleRscActionMessage(
     }
   }
 }
-
-// ─── Socket server ──────────────────────────────────────────────────────────
 
 try {
   unlinkSync(socketPath);
@@ -569,6 +498,9 @@ function writeFrame(socket: SocketLike, json: string): void {
 
   const frame = Buffer.concat([header, payload]);
 
+  // If there are pending writes from a previous partial write,
+  // queue this frame behind them to maintain frame ordering.
+  // Writing directly would interleave with pending data on the wire.
   const existing = pendingWriteBuffers.get(socket);
   if (existing) {
     pendingWriteBuffers.set(socket, Buffer.concat([existing, frame]));
@@ -581,7 +513,7 @@ function writeFrame(socket: SocketLike, json: string): void {
   }
 }
 
-const MAX_FRAME_SIZE = parseInt(process.env.BUN_MAX_FRAME_SIZE || "1048576", 10);
+const MAX_FRAME_SIZE = parseInt(process.env.BUN_MAX_FRAME_SIZE || "1048576", 10); // 1MB default
 
 const server = Bun.listen({
   unix: socketPath,
@@ -609,25 +541,14 @@ const server = Bun.listen({
         try {
           const message = JSON.parse(jsonBytes.toString("utf-8")) as IncomingMessage;
 
-          // Route callback responses to the pending callbacks handler
-          if (message.type === "callback-response") {
-            if (rscHandler) {
-              rscHandler.handleCallbackResponse(message as Record<string, unknown>);
-            }
-            continue;
-          }
-
-          // Dispatch ALL RSC message types via setTimeout to avoid corking
-          // AND to allow callback-response frames to be processed while
-          // the handler is awaiting php() results.
-          if (message.type === "rsc" || message.type === "rsc-stream" || message.type === "rsc-html-stream" || message.type === "rsc-action") {
-            const handler = message.type === "rsc"
-              ? handleRscMessage
-              : message.type === "rsc-html-stream"
-                ? handleRscHtmlStreamMessage
-                : message.type === "rsc-action"
-                  ? handleRscActionMessage
-                  : handleRscStreamMessage;
+          if (message.type === "rsc-stream" || message.type === "rsc-html-stream" || message.type === "rsc-action") {
+            // Run streaming outside the data handler so socket writes
+            // are not corked by Bun's async callback buffering.
+            const handler = message.type === "rsc-html-stream"
+              ? handleRscHtmlStreamMessage
+              : message.type === "rsc-action"
+                ? handleRscActionMessage
+                : handleRscStreamMessage;
             setTimeout(() => handler(socket, message), 0);
           } else {
             const response = await handleMessage(message);
@@ -674,6 +595,9 @@ function shutdown(signal: string): void {
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
+// Prevent unhandled errors from crashing the worker process.
+// These can occur during socket cleanup (e.g., callback socket closed by PHP)
+// or from deferred React rendering microtasks.
 process.on("uncaughtException", (err) => {
   log("Uncaught exception (worker kept alive):", err.message);
 });

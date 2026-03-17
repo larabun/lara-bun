@@ -88,8 +88,7 @@ class BunBridge
     }
 
     /**
-     * Render a PPR shell — page with mock php() so async components suspend
-     * and Suspense shows fallback content. Returns just the shell HTML.
+     * Render a PPR shell — page with mock php() so async components suspend.
      *
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{shellHtml: string, clientChunks: string[], timedOut: bool}
@@ -111,64 +110,55 @@ class BunBridge
     }
 
     /**
-     * Render RSC with inline callback handling on the main socket.
-     *
-     * Callbacks from the Bun worker (php() calls) arrive as frames on the
-     * same socket used for the render request. This eliminates the per-request
-     * callback socket that was prone to race conditions under Octane.
+     * Render RSC without callback socket — for build-time prerendering.
      *
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
-    public function rsc(string $component, array $props = [], array $layouts = [], bool $isPrerender = false): array
+    public function rscWithoutCallbacks(string $component, array $props = [], array $layouts = []): array
     {
-        $index = $this->currentWorker++ % $this->workerCount;
-        $mainSocket = $this->checkout($index);
+        $response = $this->send(json_encode([
+            'type' => 'rsc',
+            'component' => $component,
+            'props' => $props,
+            'layouts' => $layouts,
+        ], JSON_THROW_ON_ERROR));
+
+        if (isset($response['error'])) {
+            throw new RuntimeException("Bun RSC error: {$response['error']}");
+        }
+
+        return $response['result'];
+    }
+
+    /**
+     * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
+     * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
+     */
+    public function rsc(string $component, array $props = [], array $layouts = []): array
+    {
         $registry = app(CallableRegistry::class);
 
-        try {
-            $message = [
-                'type' => 'rsc',
-                'component' => $component,
-                'props' => $props,
-                'layouts' => $layouts,
-            ];
-
-            if ($isPrerender) {
-                $message['isPrerender'] = true;
-            }
-
-            $this->writeFrame($mainSocket, json_encode($message, JSON_THROW_ON_ERROR));
-
-            // Read frames in a loop — handle callbacks inline, return on final response
-            while (true) {
-                $frame = $this->readFrame($mainSocket);
-
-                if (($frame['type'] ?? '') === 'callback') {
-                    $this->handleCallback($mainSocket, $frame, $registry);
-
-                    continue;
-                }
-
-                $this->throwIfAuthError($frame);
-
-                if (isset($frame['error'])) {
-                    throw new RuntimeException("Bun RSC error: {$frame['error']}");
-                }
-
-                if (isset($frame['result']) && is_array($frame['result'])) {
-                    $this->release($index, $mainSocket);
-
-                    return $frame['result'];
-                }
-
-                throw new RuntimeException('Invalid RSC response from Bun');
-            }
-        } catch (\Throwable $e) {
-            @socket_close($mainSocket);
-
-            throw $e;
+        if ($registry->hasCallables()) {
+            return $this->rscWithCallbacks($component, $props, $registry, $layouts);
         }
+
+        $response = $this->send(json_encode([
+            'type' => 'rsc',
+            'component' => $component,
+            'props' => $props,
+            'layouts' => $layouts,
+        ], JSON_THROW_ON_ERROR));
+
+        if (isset($response['error'])) {
+            throw new RuntimeException("Bun RSC error: {$response['error']}");
+        }
+
+        if (! isset($response['result']) || ! is_array($response['result'])) {
+            throw new RuntimeException('Invalid RSC response from Bun');
+        }
+
+        return $response['result'];
     }
 
     /**
@@ -189,59 +179,172 @@ class BunBridge
     public function rscStream(string $component, array $props = [], array $layouts = []): \Generator
     {
         $registry = app(CallableRegistry::class);
+        $hasCallbacks = $registry->hasCallables();
+
+        $callbackPath = $hasCallbacks ? '/tmp/rsc-cb-'.bin2hex(random_bytes(8)).'.sock' : null;
+        $callbackServer = null;
+        $callbackClient = null;
+
         $index = $this->currentWorker++ % $this->workerCount;
         $mainSocket = $this->checkout($index);
 
         try {
+            if ($hasCallbacks) {
+                $callbackServer = $this->createUnixServer($callbackPath);
+            }
+
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc-stream',
                 'component' => $component,
                 'props' => $props,
                 'layouts' => $layouts,
-            ], JSON_THROW_ON_ERROR));
+                'callbackSocket' => $callbackPath,
+                ], JSON_THROW_ON_ERROR));
+
+            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 5);
+            $callbackBuffer = '';
+
+            // Accept callback connection if needed
+            if ($callbackServer !== null) {
+                $read = [$callbackServer];
+                $write = [];
+                $except = [];
+
+                if (socket_select($read, $write, $except, $callbackTimeout) > 0) {
+                    $accepted = socket_accept($callbackServer);
+
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
+                }
+            }
 
             while (true) {
-                $frame = $this->readFrame($mainSocket);
+                $read = [$mainSocket];
 
-                if (($frame['type'] ?? '') === 'callback') {
-                    $this->handleCallback($mainSocket, $frame, $registry);
-
-                    continue;
+                if ($callbackServer !== null) {
+                    $read[] = $callbackServer;
                 }
 
-                $this->throwIfAuthError($frame);
-
-                if (isset($frame['error'])) {
-                    throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
+                if ($callbackClient !== null) {
+                    $read[] = $callbackClient;
                 }
 
-                $type = $frame['type'] ?? '';
+                $write = [];
+                $except = [];
+                $changed = socket_select($read, $write, $except, null);
 
-                if ($type === 'stream-start') {
-                    yield [
-                        'clientChunks' => $frame['clientChunks'] ?? [],
-                        'metadata' => $frame['metadata'] ?? null,
-                    ];
-
-                    continue;
+                if ($changed === false) {
+                    throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
                 }
 
-                if ($type === 'stream-chunk') {
-                    yield $frame['data'] ?? '';
+                if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
+                    $accepted = socket_accept($callbackServer);
 
-                    continue;
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
                 }
 
-                if ($type === 'stream-end') {
-                    $this->release($index, $mainSocket);
-                    $mainSocket = null;
+                if (in_array($mainSocket, $read, true)) {
+                    $frame = $this->readFrame($mainSocket);
 
-                    break;
+                    $this->throwIfAuthError($frame);
+
+                    if (isset($frame['error'])) {
+                        throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
+                    }
+
+                    $type = $frame['type'] ?? '';
+
+                    if ($type === 'stream-start') {
+                        yield [
+                            'clientChunks' => $frame['clientChunks'] ?? [],
+                            'metadata' => $frame['metadata'] ?? null,
+                        ];
+
+                        continue;
+                    }
+
+                    if ($type === 'stream-chunk') {
+                        yield $frame['data'] ?? '';
+
+                        continue;
+                    }
+
+                    if ($type === 'stream-end') {
+                        $this->release($index, $mainSocket);
+                        $mainSocket = null;
+
+                        break;
+                    }
+                }
+
+                if ($callbackClient !== null && in_array($callbackClient, $read, true)) {
+                    // Drain available stream data before executing callback
+                    $streamEnded = false;
+
+                    while (! $streamEnded) {
+                        $streamCheck = [$mainSocket];
+                        $w = [];
+                        $e = [];
+
+                        if (socket_select($streamCheck, $w, $e, 0, 5000) <= 0) {
+                            break;
+                        }
+
+                        $frame = $this->readFrame($mainSocket);
+
+                        $this->throwIfAuthError($frame);
+
+                        if (isset($frame['error'])) {
+                            throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
+                        }
+
+                        $type = $frame['type'] ?? '';
+
+                        if ($type === 'stream-start') {
+                            yield [
+                                'clientChunks' => $frame['clientChunks'] ?? [],
+                                'metadata' => $frame['metadata'] ?? null,
+                            ];
+                        } elseif ($type === 'stream-chunk') {
+                            yield $frame['data'] ?? '';
+                        } elseif ($type === 'stream-end') {
+                            $this->release($index, $mainSocket);
+                            $mainSocket = null;
+                            $streamEnded = true;
+                        }
+                    }
+
+                    if ($streamEnded) {
+                        break;
+                    }
+
+                    $this->handleCallbackData($callbackClient, $callbackBuffer, $registry);
                 }
             }
         } finally {
             if ($mainSocket !== null) {
-                @socket_close($mainSocket);
+                socket_close($mainSocket);
+            }
+
+            if ($callbackClient !== null) {
+                socket_close($callbackClient);
+            }
+
+            if ($callbackServer !== null) {
+                socket_close($callbackServer);
+            }
+
+            if ($callbackPath !== null && file_exists($callbackPath)) {
+                @unlink($callbackPath);
             }
         }
     }
@@ -249,66 +352,180 @@ class BunBridge
     /**
      * Stream HTML for initial page loads with Suspense support.
      *
-     * Callbacks from php() arrive as frames on the same main socket,
-     * interleaved with HTML stream frames.
+     * React renders the shell (with Suspense fallbacks) immediately, then
+     * streams completion scripts as async content resolves. The Flight
+     * payload for hydration is sent as the final yield.
      *
+     * Yields:
+     *  1st: array{clientChunks: string[]}
+     *  middle: string (HTML chunks)
+     *  last: array{rscPayload: string}
+     *
+     * @return \Generator<int, array{clientChunks?: string[], rscPayload?: string}|string, void, void>
+     */
+    /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
-     * @return \Generator<int, array{clientChunks?: string[], metadata?: mixed, rscPayload?: string}|string, void, void>
      */
     public function rscHtmlStream(string $component, array $props = [], array $layouts = []): \Generator
     {
         $registry = app(CallableRegistry::class);
+        $hasCallbacks = $registry->hasCallables();
+
+        $callbackPath = $hasCallbacks ? '/tmp/rsc-cb-'.bin2hex(random_bytes(8)).'.sock' : null;
+        $callbackServer = null;
+        $callbackClient = null;
+
         $index = $this->currentWorker++ % $this->workerCount;
         $mainSocket = $this->checkout($index);
 
         try {
+            if ($hasCallbacks) {
+                $callbackServer = $this->createUnixServer($callbackPath);
+            }
+
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc-html-stream',
                 'component' => $component,
                 'props' => $props,
                 'layouts' => $layouts,
-            ], JSON_THROW_ON_ERROR));
+                'callbackSocket' => $callbackPath,
+                ], JSON_THROW_ON_ERROR));
+
+            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 5);
+            $callbackBuffer = '';
+
+            // Accept callback connection if needed
+            if ($callbackServer !== null) {
+                $read = [$callbackServer];
+                $write = [];
+                $except = [];
+
+                if (socket_select($read, $write, $except, $callbackTimeout) > 0) {
+                    $accepted = socket_accept($callbackServer);
+
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
+                }
+            }
 
             while (true) {
-                $frame = $this->readFrame($mainSocket);
+                $read = [$mainSocket];
 
-                if (($frame['type'] ?? '') === 'callback') {
-                    $this->handleCallback($mainSocket, $frame, $registry);
-
-                    continue;
+                if ($callbackServer !== null) {
+                    $read[] = $callbackServer;
                 }
 
-                $this->throwIfAuthError($frame);
-
-                if (isset($frame['error'])) {
-                    throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
+                if ($callbackClient !== null) {
+                    $read[] = $callbackClient;
                 }
 
-                $type = $frame['type'] ?? '';
+                $write = [];
+                $except = [];
+                $changed = socket_select($read, $write, $except, null);
 
-                if ($type === 'html-start') {
-                    yield ['clientChunks' => $frame['clientChunks'] ?? [], 'metadata' => $frame['metadata'] ?? null];
-
-                    continue;
+                if ($changed === false) {
+                    throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
                 }
 
-                if ($type === 'html-chunk') {
-                    yield $frame['data'] ?? '';
+                if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
+                    $accepted = socket_accept($callbackServer);
 
-                    continue;
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
                 }
 
-                if ($type === 'html-end') {
-                    yield ['rscPayload' => $frame['rscPayload'] ?? ''];
-                    $this->release($index, $mainSocket);
-                    $mainSocket = null;
+                if (in_array($mainSocket, $read, true)) {
+                    $frame = $this->readFrame($mainSocket);
 
-                    break;
+                    $this->throwIfAuthError($frame);
+
+                    if (isset($frame['error'])) {
+                        throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
+                    }
+
+                    $type = $frame['type'] ?? '';
+
+                    if ($type === 'html-start') {
+                        yield ['clientChunks' => $frame['clientChunks'] ?? [], 'metadata' => $frame['metadata'] ?? null];
+
+                        continue;
+                    }
+
+                    if ($type === 'html-chunk') {
+                        yield $frame['data'] ?? '';
+
+                        continue;
+                    }
+
+                    if ($type === 'html-end') {
+                        yield ['rscPayload' => $frame['rscPayload'] ?? ''];
+                        $this->release($index, $mainSocket);
+                        $mainSocket = null;
+
+                        break;
+                    }
+                }
+
+                if ($callbackClient !== null && in_array($callbackClient, $read, true)) {
+                    // Drain available stream data before executing callback
+                    while (true) {
+                        $streamCheck = [$mainSocket];
+                        $w = [];
+                        $e = [];
+
+                        if (socket_select($streamCheck, $w, $e, 0, 5000) <= 0) {
+                            break;
+                        }
+
+                        $frame = $this->readFrame($mainSocket);
+
+                        $this->throwIfAuthError($frame);
+
+                        if (isset($frame['error'])) {
+                            throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
+                        }
+
+                        $type = $frame['type'] ?? '';
+
+                        if ($type === 'html-start') {
+                            yield ['clientChunks' => $frame['clientChunks'] ?? [], 'metadata' => $frame['metadata'] ?? null];
+                        } elseif ($type === 'html-chunk') {
+                            yield $frame['data'] ?? '';
+                        } elseif ($type === 'html-end') {
+                            yield ['rscPayload' => $frame['rscPayload'] ?? ''];
+                            $this->release($index, $mainSocket);
+                            $mainSocket = null;
+
+                            break 2;
+                        }
+                    }
+
+                    $this->handleCallbackData($callbackClient, $callbackBuffer, $registry);
                 }
             }
         } finally {
             if ($mainSocket !== null) {
-                @socket_close($mainSocket);
+                socket_close($mainSocket);
+            }
+
+            if ($callbackClient !== null) {
+                socket_close($callbackClient);
+            }
+
+            if ($callbackServer !== null) {
+                socket_close($callbackServer);
+            }
+
+            if ($callbackPath !== null && file_exists($callbackPath)) {
+                @unlink($callbackPath);
             }
         }
     }
@@ -327,59 +544,174 @@ class BunBridge
     public function rscAction(string $actionId, string $body, string $contentType = 'text/plain'): \Generator
     {
         $registry = app(CallableRegistry::class);
+        $hasCallbacks = $registry->hasCallables();
+
+        $callbackPath = $hasCallbacks ? '/tmp/rsc-cb-'.bin2hex(random_bytes(8)).'.sock' : null;
+        $callbackServer = null;
+        $callbackClient = null;
+
         $index = $this->currentWorker++ % $this->workerCount;
         $mainSocket = $this->checkout($index);
 
         try {
+            if ($hasCallbacks) {
+                $callbackServer = $this->createUnixServer($callbackPath);
+            }
+
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc-action',
                 'actionId' => $actionId,
                 'body' => $body,
                 'contentType' => $contentType,
+                'callbackSocket' => $callbackPath,
             ], JSON_THROW_ON_ERROR));
 
+            $callbackTimeout = (int) config('bun.rsc.callback_timeout', 5);
+            $callbackBuffer = '';
+
+            // Accept callback connection if needed
+            if ($callbackServer !== null) {
+                $read = [$callbackServer];
+                $write = [];
+                $except = [];
+
+                if (socket_select($read, $write, $except, $callbackTimeout) > 0) {
+                    $accepted = socket_accept($callbackServer);
+
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
+                }
+            }
+
             while (true) {
-                $frame = $this->readFrame($mainSocket);
+                $read = [$mainSocket];
 
-                if (($frame['type'] ?? '') === 'callback') {
-                    $this->handleCallback($mainSocket, $frame, $registry);
-
-                    continue;
+                if ($callbackServer !== null) {
+                    $read[] = $callbackServer;
                 }
 
-                if (isset($frame['redirect'])) {
-                    throw new RscRedirectException($frame['redirect']);
+                if ($callbackClient !== null) {
+                    $read[] = $callbackClient;
                 }
 
-                $this->throwIfAuthError($frame);
-                $this->throwIfValidationError($frame);
+                $write = [];
+                $except = [];
+                $changed = socket_select($read, $write, $except, null);
 
-                if (isset($frame['error'])) {
-                    throw new RuntimeException("Bun RSC action error: {$frame['error']}");
+                if ($changed === false) {
+                    throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
                 }
 
-                $type = $frame['type'] ?? '';
+                if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
+                    $accepted = socket_accept($callbackServer);
 
-                if ($type === 'action-start') {
-                    continue;
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
                 }
 
-                if ($type === 'action-chunk') {
-                    yield $frame['data'] ?? '';
+                if (in_array($mainSocket, $read, true)) {
+                    $frame = $this->readFrame($mainSocket);
 
-                    continue;
+                    if (isset($frame['redirect'])) {
+                        throw new RscRedirectException($frame['redirect']);
+                    }
+
+                    $this->throwIfAuthError($frame);
+                    $this->throwIfValidationError($frame);
+
+                    if (isset($frame['error'])) {
+                        throw new RuntimeException("Bun RSC action error: {$frame['error']}");
+                    }
+
+                    $type = $frame['type'] ?? '';
+
+                    if ($type === 'action-start') {
+                        continue;
+                    }
+
+                    if ($type === 'action-chunk') {
+                        yield $frame['data'] ?? '';
+
+                        continue;
+                    }
+
+                    if ($type === 'action-end') {
+                        $this->release($index, $mainSocket);
+                        $mainSocket = null;
+
+                        break;
+                    }
                 }
 
-                if ($type === 'action-end') {
-                    $this->release($index, $mainSocket);
-                    $mainSocket = null;
+                if ($callbackClient !== null && in_array($callbackClient, $read, true)) {
+                    // Drain available stream data before executing callback
+                    $streamEnded = false;
 
-                    break;
+                    while (! $streamEnded) {
+                        $streamCheck = [$mainSocket];
+                        $w = [];
+                        $e = [];
+
+                        if (socket_select($streamCheck, $w, $e, 0, 5000) <= 0) {
+                            break;
+                        }
+
+                        $frame = $this->readFrame($mainSocket);
+
+                        if (isset($frame['redirect'])) {
+                            throw new RscRedirectException($frame['redirect']);
+                        }
+
+                        $this->throwIfAuthError($frame);
+                        $this->throwIfValidationError($frame);
+
+                        if (isset($frame['error'])) {
+                            throw new RuntimeException("Bun RSC action error: {$frame['error']}");
+                        }
+
+                        $type = $frame['type'] ?? '';
+
+                        if ($type === 'action-start') {
+                            // No-op, already started
+                        } elseif ($type === 'action-chunk') {
+                            yield $frame['data'] ?? '';
+                        } elseif ($type === 'action-end') {
+                            $this->release($index, $mainSocket);
+                            $mainSocket = null;
+                            $streamEnded = true;
+                        }
+                    }
+
+                    if ($streamEnded) {
+                        break;
+                    }
+
+                    $this->handleCallbackData($callbackClient, $callbackBuffer, $registry);
                 }
             }
         } finally {
             if ($mainSocket !== null) {
-                @socket_close($mainSocket);
+                socket_close($mainSocket);
+            }
+
+            if ($callbackClient !== null) {
+                socket_close($callbackClient);
+            }
+
+            if ($callbackServer !== null) {
+                socket_close($callbackServer);
+            }
+
+            if ($callbackPath !== null && file_exists($callbackPath)) {
+                @unlink($callbackPath);
             }
         }
     }
@@ -454,63 +786,207 @@ class BunBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
-    /**
-     * Handle a callback frame from Bun on the main socket.
-     *
-     * Bun sends callback frames when php() is called during rendering.
-     * We execute the callable and write the response back on the same socket.
-     *
-     * @param  array<string, mixed>  $frame
-     */
-    private function handleCallback(Socket $socket, array $frame, CallableRegistry $registry): void
+    private function rscWithCallbacks(string $component, array $props, CallableRegistry $registry, array $layouts = []): array
     {
-        $id = $frame['id'] ?? '';
-        $function = $frame['function'] ?? '';
-        $args = $frame['args'] ?? [];
+        $callbackPath = '/tmp/rsc-cb-'.bin2hex(random_bytes(8)).'.sock';
+        $callbackServer = null;
+        $callbackClient = null;
+
+        $index = $this->currentWorker++ % $this->workerCount;
+        $mainSocket = $this->checkout($index);
 
         try {
-            $result = $registry->execute($function, $args);
-            $response = json_encode([
-                'type' => 'callback-response',
-                'id' => $id,
-                'result' => $result,
-            ], JSON_THROW_ON_ERROR);
-        } catch (AuthenticationException $e) {
-            $response = json_encode([
-                'type' => 'callback-response',
-                'id' => $id,
-                'unauthenticated' => true,
-                'error' => $e->getMessage(),
-            ], JSON_THROW_ON_ERROR);
-        } catch (AuthorizationException $e) {
-            $response = json_encode([
-                'type' => 'callback-response',
-                'id' => $id,
-                'unauthorized' => true,
-                'error' => $e->getMessage(),
-            ], JSON_THROW_ON_ERROR);
-        } catch (ValidationException $e) {
-            $response = json_encode([
-                'type' => 'callback-response',
-                'id' => $id,
-                'validation_errors' => $e->errors(),
-                'error' => $e->getMessage(),
-            ], JSON_THROW_ON_ERROR);
-        } catch (RscRedirectException $e) {
-            $response = json_encode([
-                'type' => 'callback-response',
-                'id' => $id,
-                'redirect' => $e->getLocation(),
-            ], JSON_THROW_ON_ERROR);
+            $callbackServer = socket_create(AF_UNIX, SOCK_STREAM, 0);
+
+            if ($callbackServer === false) {
+                throw new RuntimeException('Failed to create callback socket: '.socket_strerror(socket_last_error()));
+            }
+
+            if (! socket_bind($callbackServer, $callbackPath)) {
+                throw new RuntimeException('Failed to bind callback socket: '.socket_strerror(socket_last_error($callbackServer)));
+            }
+
+            if (! socket_listen($callbackServer, 1)) {
+                throw new RuntimeException('Failed to listen on callback socket: '.socket_strerror(socket_last_error($callbackServer)));
+            }
+
+            socket_set_nonblock($callbackServer);
+
+            $this->writeFrame($mainSocket, json_encode([
+                'type' => 'rsc',
+                'component' => $component,
+                'props' => $props,
+                'layouts' => $layouts,
+                'callbackSocket' => $callbackPath,
+                ], JSON_THROW_ON_ERROR));
+
+            $timeout = (int) config('bun.rsc.callback_timeout', 5);
+            $callbackBuffer = '';
+
+            while (true) {
+                $read = [$mainSocket];
+
+                if ($callbackServer !== null) {
+                    $read[] = $callbackServer;
+                }
+
+                if ($callbackClient !== null) {
+                    $read[] = $callbackClient;
+                }
+
+                $write = [];
+                $except = [];
+                $changed = socket_select($read, $write, $except, $timeout);
+
+                if ($changed === false) {
+                    throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
+                }
+
+                if ($changed === 0) {
+                    throw new RuntimeException("RSC callback timed out after {$timeout} seconds");
+                }
+
+                if ($callbackServer !== null && in_array($callbackServer, $read, true)) {
+                    $accepted = socket_accept($callbackServer);
+
+                    if ($accepted !== false) {
+                        socket_set_nonblock($accepted);
+                        $callbackClient = $accepted;
+                        socket_close($callbackServer);
+                        $callbackServer = null;
+                    }
+                }
+
+                if ($callbackClient !== null && in_array($callbackClient, $read, true)) {
+                    $this->handleCallbackData($callbackClient, $callbackBuffer, $registry);
+                }
+
+                if (in_array($mainSocket, $read, true)) {
+                    $response = $this->readFrame($mainSocket);
+                    $this->release($index, $mainSocket);
+                    $mainSocket = null;
+
+                    if (isset($response['error'])) {
+                        throw new RuntimeException("Bun RSC error: {$response['error']}");
+                    }
+
+                    if (! isset($response['result']) || ! is_array($response['result'])) {
+                        throw new RuntimeException('Invalid RSC response from Bun');
+                    }
+
+                    return $response['result'];
+                }
+            }
         } catch (\Throwable $e) {
-            $response = json_encode([
-                'type' => 'callback-response',
-                'id' => $id,
-                'error' => $e->getMessage(),
-            ], JSON_THROW_ON_ERROR);
+            if ($mainSocket !== null) {
+                socket_close($mainSocket);
+            }
+
+            throw $e;
+        } finally {
+            if ($callbackClient !== null) {
+                socket_close($callbackClient);
+            }
+
+            if ($callbackServer !== null) {
+                socket_close($callbackServer);
+            }
+
+            if (file_exists($callbackPath)) {
+                @unlink($callbackPath);
+            }
+        }
+    }
+
+    private function createUnixServer(string $path): Socket
+    {
+        $server = socket_create(AF_UNIX, SOCK_STREAM, 0);
+
+        if ($server === false) {
+            throw new RuntimeException('Failed to create socket: '.socket_strerror(socket_last_error()));
         }
 
-        $this->writeFrame($socket, $response);
+        if (! socket_bind($server, $path)) {
+            throw new RuntimeException('Failed to bind socket: '.socket_strerror(socket_last_error($server)));
+        }
+
+        if (! socket_listen($server, 1)) {
+            throw new RuntimeException('Failed to listen on socket: '.socket_strerror(socket_last_error($server)));
+        }
+
+        socket_set_nonblock($server);
+
+        return $server;
+    }
+
+    private function handleCallbackData(Socket $socket, string &$buffer, CallableRegistry $registry): void
+    {
+        $chunk = @socket_read($socket, 65536, PHP_BINARY_READ);
+
+        if ($chunk === false || $chunk === '') {
+            return;
+        }
+
+        $buffer .= $chunk;
+
+        while (strlen($buffer) >= 4) {
+            $frameLength = unpack('N', substr($buffer, 0, 4))[1];
+
+            if ($frameLength <= 0 || $frameLength > $this->maxFrameSize) {
+                $buffer = '';
+
+                return;
+            }
+
+            if (strlen($buffer) < 4 + $frameLength) {
+                return;
+            }
+
+            $json = substr($buffer, 4, $frameLength);
+            $buffer = substr($buffer, 4 + $frameLength);
+
+            $request = json_decode($json, true);
+
+            if (! is_array($request) || ($request['type'] ?? '') !== 'callback') {
+                continue;
+            }
+
+            $id = $request['id'] ?? '';
+            $function = $request['function'] ?? '';
+            $args = $request['args'] ?? [];
+
+            try {
+                $result = $registry->execute($function, $args);
+                $response = json_encode(['id' => $id, 'result' => $result], JSON_THROW_ON_ERROR);
+            } catch (AuthenticationException $e) {
+                $response = json_encode([
+                    'id' => $id,
+                    'unauthenticated' => true,
+                    'error' => $e->getMessage(),
+                ], JSON_THROW_ON_ERROR);
+            } catch (AuthorizationException $e) {
+                $response = json_encode([
+                    'id' => $id,
+                    'unauthorized' => true,
+                    'error' => $e->getMessage(),
+                ], JSON_THROW_ON_ERROR);
+            } catch (ValidationException $e) {
+                $response = json_encode([
+                    'id' => $id,
+                    'validation_errors' => $e->errors(),
+                    'error' => $e->getMessage(),
+                ], JSON_THROW_ON_ERROR);
+            } catch (RscRedirectException $e) {
+                $response = json_encode([
+                    'id' => $id,
+                    'redirect' => $e->getLocation(),
+                ], JSON_THROW_ON_ERROR);
+            } catch (\Throwable $e) {
+                $response = json_encode(['id' => $id, 'error' => $e->getMessage()], JSON_THROW_ON_ERROR);
+            }
+
+            $this->writeFrame($socket, $response);
+        }
     }
 
     /**
@@ -617,9 +1093,8 @@ class BunBridge
     private function send(string $json): array
     {
         $lastException = null;
-        $maxAttempts = max($this->workerCount, 3);
 
-        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        for ($attempt = 0; $attempt < $this->workerCount; $attempt++) {
             $index = $this->currentWorker++ % $this->workerCount;
             $socket = $this->checkout($index);
 
@@ -630,21 +1105,8 @@ class BunBridge
 
                 return $response;
             } catch (RuntimeException $e) {
-                @socket_close($socket);
-
-                // Clear the pool for this worker — sockets may be stale
-                if (! empty($this->pool[$index])) {
-                    foreach ($this->pool[$index] as $stale) {
-                        @socket_close($stale);
-                    }
-                    $this->pool[$index] = [];
-                }
-
+                socket_close($socket);
                 $lastException = $e;
-
-                if ($attempt < $maxAttempts - 1) {
-                    usleep(50_000 * ($attempt + 1)); // 50ms, 100ms, 150ms
-                }
             }
         }
 
@@ -657,18 +1119,11 @@ class BunBridge
      */
     private function checkout(int $index): Socket
     {
-        // Try pooled sockets, validating they're still alive
-        while (! empty($this->pool[$index])) {
-            $socket = array_pop($this->pool[$index]);
-
-            if ($this->isSocketAlive($socket)) {
-                return $socket;
-            }
-
-            @socket_close($socket);
+        if (! empty($this->pool[$index])) {
+            return array_pop($this->pool[$index]);
         }
 
-        return $this->connectWithRetry($index);
+        return $this->createSocket($index);
     }
 
     /**
@@ -676,48 +1131,7 @@ class BunBridge
      */
     private function release(int $index, Socket $socket): void
     {
-        if ($this->isSocketAlive($socket)) {
-            $this->pool[$index][] = $socket;
-        } else {
-            @socket_close($socket);
-        }
-    }
-
-    /**
-     * Check if a socket is still connected and usable.
-     */
-    private function isSocketAlive(Socket $socket): bool
-    {
-        // Attempt a zero-length read — if the socket is dead, it returns false or 0
-        socket_set_nonblock($socket);
-        $buf = '';
-        $result = @socket_recv($socket, $buf, 1, MSG_PEEK | MSG_DONTWAIT);
-        socket_set_block($socket);
-
-        // false = error (dead), 0 = peer closed, >0 or null = alive (no data or data waiting)
-        return $result !== false && $result !== 0;
-    }
-
-    /**
-     * Connect to the Bun worker with retry logic.
-     */
-    private function connectWithRetry(int $index, int $maxRetries = 3): Socket
-    {
-        $lastException = null;
-
-        for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
-            try {
-                return $this->createSocket($index);
-            } catch (RuntimeException $e) {
-                $lastException = $e;
-
-                if ($attempt < $maxRetries) {
-                    usleep(100_000 * $attempt); // 100ms, 200ms, 300ms
-                }
-            }
-        }
-
-        throw $lastException;
+        $this->pool[$index][] = $socket;
     }
 
     private function createSocket(int $index): Socket

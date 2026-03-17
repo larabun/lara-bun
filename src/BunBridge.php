@@ -91,7 +91,7 @@ class BunBridge
      * Render a PPR shell — page with mock php() so async components suspend.
      *
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
-     * @return array{shellHtml: string, clientChunks: string[], timedOut: bool}
+     * @return array{shellHtml: string, clientChunks: string[], timedOut: bool, usedDynamicApis: bool}
      */
     public function rscPprShell(string $component, array $props = [], array $layouts = []): array
     {

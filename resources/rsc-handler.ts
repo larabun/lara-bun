@@ -467,8 +467,12 @@ export async function handleRscPprShell(
   component: string,
   props: Record<string, unknown>,
   layouts: LayoutEntry[] = []
-): Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean }> {
-  const mockPhpFn = (): Promise<never> => new Promise(() => {});
+): Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean; usedDynamicApis: boolean }> {
+  let usedDynamicApis = false;
+  const mockPhpFn = (): Promise<never> => {
+    usedDynamicApis = true;
+    return new Promise(() => {});
+  };
   const previousPhp = (globalThis as any).php;
   (globalThis as any).php = mockPhpFn;
 
@@ -517,7 +521,7 @@ export async function handleRscPprShell(
 
     try { reader.cancel(); } catch {}
 
-    return { shellHtml, clientChunks: browserChunks, timedOut };
+    return { shellHtml, clientChunks: browserChunks, timedOut, usedDynamicApis };
   } finally {
     if ((globalThis as any).php === mockPhpFn) {
       if (previousPhp) {

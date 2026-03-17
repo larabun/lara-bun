@@ -91,17 +91,17 @@ class PrerenderService
             );
         }
 
-        // Step 2: Full render for static pages.
-        // Use rscWithoutCallbacks — static pages don't call php().
+        // If page uses php() or other dynamic APIs, it's PPR — skip full render
+        if ($shell['usedDynamicApis'] ?? false) {
+            return ['type' => 'dynamic', 'reason' => 'usedDynamicApis'];
+        }
+
+        // Static page — full render to get HTML + Flight payload
         $result = app(BunBridge::class)->rscWithoutCallbacks(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
         );
-
-        if ($result['usedDynamicApis'] ?? false) {
-            return ['type' => 'dynamic', 'reason' => 'usedDynamicApis'];
-        }
 
         $version = $rscResponse->getVersion();
         $html = $this->buildHtmlPage($url, $rscResponse->getComponent(), $version, $result, $rscResponse);

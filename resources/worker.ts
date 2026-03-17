@@ -222,7 +222,7 @@ type RscHandlerModule = {
     component: string,
     props: Record<string, unknown>,
     layouts?: LayoutEntry[]
-  ) => Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean }>;
+  ) => Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean; usedDynamicApis: boolean }>;
   resolveMetadata: (
     component: string,
     props: Record<string, unknown>,
@@ -538,15 +538,22 @@ const server = Bun.listen({
         try {
           const message = JSON.parse(jsonBytes.toString("utf-8")) as IncomingMessage;
 
-          if (message.type === "rsc-stream" || message.type === "rsc-html-stream" || message.type === "rsc-action") {
-            // Run streaming outside the data handler so socket writes
-            // are not corked by Bun's async callback buffering.
-            const handler = message.type === "rsc-html-stream"
-              ? handleRscHtmlStreamMessage
-              : message.type === "rsc-action"
-                ? handleRscActionMessage
-                : handleRscStreamMessage;
-            setTimeout(() => handler(socket, message), 0);
+          if (message.type === "rsc-stream" || message.type === "rsc-html-stream" || message.type === "rsc-action" || message.type === "rsc-ppr-shell") {
+            // Run outside the data handler so socket writes are not corked
+            // and setTimeout/Promise.race timeouts can fire.
+            if (message.type === "rsc-ppr-shell") {
+              setTimeout(async () => {
+                const response = await handleMessage(message);
+                writeFrame(socket, response);
+              }, 0);
+            } else {
+              const handler = message.type === "rsc-html-stream"
+                ? handleRscHtmlStreamMessage
+                : message.type === "rsc-action"
+                  ? handleRscActionMessage
+                  : handleRscStreamMessage;
+              setTimeout(() => handler(socket, message), 0);
+            }
           } else {
             const response = await handleMessage(message);
             writeFrame(socket, response);

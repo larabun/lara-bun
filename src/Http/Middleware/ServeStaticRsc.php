@@ -5,12 +5,8 @@ namespace LaraBun\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use LaraBun\BunBridge;
-use LaraBun\BunServiceProvider;
 use LaraBun\Rsc\Header;
-use LaraBun\Rsc\PrerenderService;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ServeStaticRsc
 {
@@ -68,145 +64,11 @@ class ServeStaticRsc
                 ]);
             }
 
-            // PPR: serve cached shell with fresh Flight payload
-            // Check concrete path first (non-parameterized or pre-rendered with staticPaths)
-            $pprFile = "{$basePath}/{$path}.ppr.html";
-            $pprMeta = "{$basePath}/{$path}.ppr-meta.json";
-
-            if (file_exists($pprFile) && file_exists($pprMeta)) {
-                return $this->servePprResponse($request, $pprFile, $pprMeta);
-            }
-
-            // Check for parameterized PPR shell (stored under URI pattern)
-            $route = $request->route();
-
-            if ($route && str_contains($route->uri(), '{')) {
-                $patternPath = str_replace(['{', '}'], ['_', '_'], trim($route->uri(), '/'));
-                $pprFile = "{$basePath}/{$patternPath}.ppr.html";
-                $pprMeta = "{$basePath}/{$patternPath}.ppr-meta.json";
-
-                if (file_exists($pprFile) && file_exists($pprMeta)) {
-                    return $this->servePprResponse($request, $pprFile, $pprMeta);
-                }
-            }
+            // PPR pages fall through to the normal rendering path
+            // which handles Suspense streaming natively.
         }
 
         return $next($request);
-    }
-
-    /**
-     * Serve a PPR response: cached shell for fast TTFB, then stream
-     * fresh content via rscHtmlStream (the proven Suspense streaming path).
-     *
-     * 1. Cached shell (with Suspense fallbacks) sent immediately → fast TTFB
-     * 2. Fresh rscHtmlStream render streams Suspense completions + Flight payload
-     * 3. React swaps fallbacks with real content progressively
-     */
-    private function servePprResponse(Request $request, string $shellPath, string $metaPath): StreamedResponse
-    {
-        return new StreamedResponse(function () use ($request, $shellPath, $metaPath): void {
-            while (ob_get_level() > 0) {
-                ob_end_flush();
-            }
-
-            $shell = file_get_contents($shellPath);
-            $meta = json_decode(file_get_contents($metaPath), true);
-            $marker = PrerenderService::PPR_PAYLOAD_MARKER;
-
-            $markerPos = strpos($shell, $marker);
-
-            if ($markerPos === false) {
-                echo $shell;
-                flush();
-
-                return;
-            }
-
-            // For parameterized routes, fix the __RSC_INITIAL__ URL placeholder
-            $isParameterized = ($meta['parameterized'] ?? false);
-
-            if ($isParameterized) {
-                $realUrl = $request->getRequestUri();
-                $shell = str_replace(
-                    json_encode(PrerenderService::PPR_PAYLOAD_MARKER, JSON_HEX_TAG),
-                    json_encode($realUrl, JSON_HEX_TAG),
-                    $shell,
-                );
-                $markerPos = strpos($shell, $marker);
-
-                if ($markerPos === false) {
-                    echo $shell;
-                    flush();
-
-                    return;
-                }
-            }
-
-            // Send cached shell (head + body with fallbacks) → fast TTFB
-            echo substr($shell, 0, $markerPos);
-            flush();
-
-            // Use the streaming path for fresh content — same as normal
-            // page loads. Suspense completions arrive progressively.
-            try {
-                $component = $meta['component'] ?? '';
-                $layouts = $meta['layouts'] ?? [];
-                $route = $request->route();
-                $props = $route ? $route->parameters() : [];
-
-                $layoutEntries = [];
-
-                foreach ($layouts as $layout) {
-                    $layoutEntries[] = is_array($layout) ? $layout : ['component' => $layout, 'props' => []];
-                }
-
-                $bridge = app(BunBridge::class);
-                $generator = $bridge->rscHtmlStream($component, $props, $layoutEntries);
-
-                // Skip first yield (metadata — we already have it from the cached shell)
-                $generator->current();
-                $generator->next();
-
-                $rscPayload = '';
-                $clientChunks = $meta['clientChunks'] ?? [];
-
-                while ($generator->valid()) {
-                    $value = $generator->current();
-
-                    if (is_array($value) && isset($value['rscPayload'])) {
-                        $rscPayload = $value['rscPayload'];
-                        $generator->next();
-
-                        continue;
-                    }
-
-                    // The streaming path sends shell HTML + Suspense completions.
-                    // We already sent the cached shell, so skip it and only send
-                    // the completion chunks (hidden templates + $RC scripts).
-                    if (is_string($value)) {
-                        echo $value;
-                        flush();
-                    }
-
-                    $generator->next();
-                }
-
-                // Send scripts with Flight payload for hydration
-                echo BunServiceProvider::renderRscScripts($rscPayload, $clientChunks);
-            } catch (\Throwable $e) {
-                report($e);
-
-                // Fallback: send empty scripts so the page at least loads
-                echo BunServiceProvider::renderRscScripts('', $meta['clientChunks'] ?? []);
-            }
-
-            // Send closing tags
-            echo substr($shell, $markerPos + strlen($marker));
-            flush();
-        }, 200, [
-            'Content-Type' => 'text/html; charset=utf-8',
-            'X-Accel-Buffering' => 'no',
-        ]);
     }
 
     /**

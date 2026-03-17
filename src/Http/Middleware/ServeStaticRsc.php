@@ -162,8 +162,8 @@ class ServeStaticRsc
                 $result = $bridge->rsc($component, $props, $layouts);
 
                 $rscPayload = $result['rscPayload'] ?? '';
-            } catch (\Throwable) {
-                // If render fails, hydration will use whatever's in the shell
+            } catch (\Throwable $e) {
+                report($e);
             }
 
             // Send scripts with fresh Flight payload for hydration

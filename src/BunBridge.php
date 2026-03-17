@@ -380,7 +380,13 @@ class BunBridge
 
         try {
             if ($hasCallbacks) {
+                // Remove stale socket file if it exists
+                if (file_exists($callbackPath)) {
+                    @unlink($callbackPath);
+                }
+
                 $callbackServer = $this->createUnixServer($callbackPath);
+                error_log("[BunBridge] Callback socket created: {$callbackPath}, exists: ".(file_exists($callbackPath) ? 'yes' : 'no'));
             }
 
             $this->writeFrame($mainSocket, json_encode([
@@ -389,7 +395,7 @@ class BunBridge
                 'props' => $props,
                 'layouts' => $layouts,
                 'callbackSocket' => $callbackPath,
-                ], JSON_THROW_ON_ERROR));
+            ], JSON_THROW_ON_ERROR));
 
             $callbackTimeout = (int) config('bun.rsc.callback_timeout', 5);
             $callbackBuffer = '';

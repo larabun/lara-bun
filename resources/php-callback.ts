@@ -30,6 +30,7 @@ export class PhpCallbackClient {
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
+        console.error(`[php-callback] Attempt ${attempt + 1}/${maxRetries} connecting to ${socketPath}`);
         this.connection = await Bun.connect({
           unix: socketPath,
           socket: {

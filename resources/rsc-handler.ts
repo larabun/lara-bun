@@ -625,99 +625,15 @@ export async function handleRsc(
   };
 
   try {
-    const isPrerender = !callbackSocket;
     const consumerManifest = ssrManifest
       ? { serverConsumerManifest: ssrManifest }
       : emptyManifest;
 
-    if (isPrerender) {
-      // Prerender: use renderRscStream so pending promises (from stub php())
-      // don't block. Stream emits static parts, dynamic parts stay pending.
-      const flightStream: ReadableStream = clientManifest
-        ? rscModule.renderRscStream(component, props, clientManifest, layouts)
-        : rscModule.renderRscStream(component, props, layouts);
-
-      const [flightForHtml, flightForPayload] = flightStream.tee();
-
-      const payloadReader = flightForPayload.getReader();
-      const payloadChunks: Uint8Array[] = [];
-      let payloadDone = false;
-      const collectPayload = (async () => {
-        try {
-          while (true) {
-            const { done, value } = await payloadReader.read();
-            if (done) { payloadDone = true; break; }
-            payloadChunks.push(value);
-          }
-        } catch {}
-      })();
-
-      const reactTree = await createFromReadableStream(flightForHtml, consumerManifest);
-      const htmlStream = await renderToReadableStream(reactTree);
-
-      const PRERENDER_TIMEOUT = 5000;
-      const allReadyResult = await Promise.race([
-        htmlStream.allReady.then(() => "ready" as const),
-        new Promise<"timeout">((resolve) =>
-          setTimeout(() => resolve("timeout"), PRERENDER_TIMEOUT)
-        ),
-      ]);
-
-      if (allReadyResult === "ready") {
-        // Fully static — collect complete HTML + Flight payload
-        const body = await new Response(htmlStream).text();
-        await Promise.race([collectPayload, Bun.sleep(1000)]);
-        try { payloadReader.cancel(); } catch {}
-
-        const rscPayload = payloadDone
-          ? new TextDecoder().decode(Buffer.concat(payloadChunks))
-          : "";
-
-        return { body, rscPayload, clientChunks: browserChunks, usedDynamicApis };
-      }
-
-      // Dynamic — read just the shell HTML (before completion markers)
-      const reader = htmlStream.getReader();
-      const decoder = new TextDecoder();
-      let body = "";
-
-      while (true) {
-        const result = await Promise.race([
-          reader.read(),
-          new Promise<{ done: true; value: undefined }>((resolve) =>
-            setTimeout(() => resolve({ done: true, value: undefined }), PRERENDER_TIMEOUT)
-          ),
-        ]);
-
-        if (result.done) {
-          if (body === "") {
-            try { reader.cancel(); } catch {}
-            try { payloadReader.cancel(); } catch {}
-            throw new Error(
-              "Prerender timed out. A component awaits php() without a <Suspense> boundary. " +
-              "Wrap async content in <Suspense> or provide a loading.tsx."
-            );
-          }
-          break;
-        }
-
-        const chunk = decoder.decode(result.value, { stream: true });
-        body += chunk;
-
-        if (chunk.includes('hidden id="S:') || chunk.includes("$RC(")) {
-          const idx = body.search(/<div hidden id="S:/);
-          if (idx !== -1) body = body.slice(0, idx);
-          break;
-        }
-      }
-
-      try { reader.cancel(); } catch {}
-      try { payloadReader.cancel(); } catch {}
-
-      return { body, rscPayload: "", clientChunks: browserChunks, usedDynamicApis };
-    }
-
-    // Normal path: buffered render with real callback socket
+    // Buffered render — works for both prerender (stub php) and runtime (real callbacks).
+    // Static pages: stub php() is never called, renderRsc completes normally.
+    // Pages with php() + callbacks: renderRsc resolves all async content.
+    // Pages with php() + NO callbacks (prerender): renderRsc hangs — but
+    // those should use rscPprShell instead.
     const rscPayload: string = clientManifest
       ? await rscModule.renderRsc(component, props, clientManifest, layouts)
       : await rscModule.renderRsc(component, props, layouts);

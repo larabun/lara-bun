@@ -25,10 +25,14 @@ export class PhpCallbackClient {
     this.receiveBuffer = Buffer.alloc(0);
 
     const self = this;
+    const maxRetries = 5;
+    let lastError: Error | null = null;
 
-    this.connection = await Bun.connect({
-      unix: socketPath,
-      socket: {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        this.connection = await Bun.connect({
+          unix: socketPath,
+          socket: {
         data(_socket, rawData) {
           self.receiveBuffer = self.receiveBuffer.length > 0
             ? Buffer.concat([self.receiveBuffer, Buffer.from(rawData)])
@@ -93,6 +97,16 @@ export class PhpCallbackClient {
         },
       },
     });
+        // Connected successfully
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        // Wait before retry — gives PHP time to finish socket_listen
+        await Bun.sleep(50 * (attempt + 1));
+      }
+    }
+
+    throw lastError ?? new Error(`Failed to connect to callback socket after ${maxRetries} attempts: ${socketPath}`);
   }
 
   disconnect(): void {

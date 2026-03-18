@@ -493,7 +493,41 @@ export async function handleRscPprShell(
           ? { serverConsumerManifest: ssrManifest }
           : emptyManifest;
 
-        const reactTree = await createFromReadableStream(flightStream, consumerManifest);
+        // Collect Flight bytes that are immediately available, then close
+        // the stream. Pending async components (awaiting mock php()) will have
+        // their Flight chunks missing. When we deserialize from a closed stream,
+        // React treats the missing chunks as errors — Suspense catches them
+        // and renders fallbacks.
+        const flightReader = flightStream.getReader();
+        const flightChunks: Uint8Array[] = [];
+
+        // Read available chunks with a short timeout per read
+        const READ_TIMEOUT = 500;
+        while (true) {
+          const readResult = await Promise.race([
+            flightReader.read(),
+            new Promise<{ done: true; value: undefined }>((resolve) =>
+              setTimeout(() => resolve({ done: true, value: undefined }), READ_TIMEOUT)
+            ),
+          ]);
+
+          if (readResult.done) break;
+          if (readResult.value) flightChunks.push(readResult.value);
+        }
+
+        try { flightReader.cancel(); } catch {}
+
+        // Create a closed stream from the collected bytes
+        const collectedStream = new ReadableStream({
+          start(controller) {
+            for (const chunk of flightChunks) {
+              controller.enqueue(chunk);
+            }
+            controller.close();
+          },
+        });
+
+        const reactTree = await createFromReadableStream(collectedStream, consumerManifest);
         const htmlStream = await renderToReadableStream(reactTree);
         const reader = htmlStream.getReader();
         const decoder = new TextDecoder();

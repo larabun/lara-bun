@@ -112,8 +112,9 @@ function matchIntercept(url: string): string | null {
   }
 
   for (const entry of interceptManifest) {
+    // urlPattern already has a leading slash (e.g. "/docs/item/[id]")
     const regex = new RegExp(
-      "^/" +
+      "^" +
         entry.urlPattern
           .replace(/\[\.\.\.(\w+)\]/g, "(.+)")
           .replace(/\[(\w+)\]/g, "([^/]+)") +

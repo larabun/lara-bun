@@ -109,8 +109,21 @@ export default function Link({
     [prefetchStrategy, doPrefetch, onMouseEnter]
   );
 
+  // Prefetch on touchstart for mobile — fires ~100ms before tap completes
+  const handleTouchStart = useCallback(() => {
+    if (prefetchStrategy === "hover" || prefetchStrategy === "click") {
+      doPrefetch();
+    }
+  }, [prefetchStrategy, doPrefetch]);
+
   return (
-    <a href={href} onClick={handleClick} onMouseEnter={handleMouseEnter} {...rest}>
+    <a
+      href={href}
+      onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onTouchStart={handleTouchStart}
+      {...rest}
+    >
       {children}
     </a>
   );

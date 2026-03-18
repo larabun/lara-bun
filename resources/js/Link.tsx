@@ -5,7 +5,6 @@ import {
   type MouseEvent,
   useCallback,
   useEffect,
-  useRef,
 } from "react";
 
 type PrefetchStrategy = "hover" | "mount" | "click" | "none" | boolean;
@@ -56,14 +55,14 @@ export default function Link({
       ? "none"
       : prefetchProp;
 
-  const prefetchedRef = useRef(false);
-
   const doPrefetch = useCallback(() => {
-    if (prefetchedRef.current || isExternalUrl(href)) {
+    if (isExternalUrl(href)) {
       return;
     }
 
-    prefetchedRef.current = true;
+    // The prefetch() function handles deduplication via its cache.
+    // No need for a ref guard — expired/consumed cache entries are
+    // removed, so re-hover correctly triggers a new prefetch.
     const fn = (window as any).__rsc_prefetch;
     fn?.(href, cacheFor);
   }, [href, cacheFor]);

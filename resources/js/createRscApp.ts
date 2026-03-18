@@ -13,6 +13,7 @@
  */
 import { createFromReadableStream, encodeReply } from "react-server-dom-webpack/client.browser";
 import { hydrateRoot } from "react-dom/client";
+import { use, createElement, Suspense } from "react";
 import {
   setVersion,
   setNavigateHandler,
@@ -147,9 +148,20 @@ export function createRscApp(
   Promise.resolve(rootPromise).then((reactTree: any) => {
     const root = hydrateRoot(container, reactTree);
 
-    // Wire up SPA navigation: subsequent navigations re-render the root
+    // Wire up SPA navigation: subsequent navigations re-render the root.
+    // The tree may be a Thenable (from createFromReadableStream) — wrap it
+    // in a component that calls use() so React can show Suspense fallbacks
+    // immediately while async content streams in.
+    function TreeRenderer({ tree }: { tree: any }) {
+      return typeof tree?.then === "function" ? use(tree) : tree;
+    }
+
     setNavigateHandler((newTree: any) => {
-      root.render(newTree);
+      root.render(
+        createElement(Suspense, { fallback: null },
+          createElement(TreeRenderer, { tree: newTree })
+        )
+      );
     });
 
     // Handle browser back/forward

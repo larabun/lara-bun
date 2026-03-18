@@ -297,7 +297,12 @@ export async function handleAction(
   let decodable: string | FormData;
 
   if (contentType.includes("multipart/form-data")) {
-    const response = new Response(body, {
+    // Convert latin1 string back to raw bytes for proper FormData parsing
+    const bytes = new Uint8Array(body.length);
+    for (let i = 0; i < body.length; i++) {
+      bytes[i] = body.charCodeAt(i);
+    }
+    const response = new Response(bytes, {
       headers: { "Content-Type": contentType },
     });
     decodable = await response.formData();

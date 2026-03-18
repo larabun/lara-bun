@@ -467,9 +467,18 @@ async function handleRscActionMessage(
       cleanupPhp = rscHandler.installPhpFn(createPhpFn(cbConn));
     }
 
+    // Decode base64 body if encoded by PHP (binary-safe transport for file uploads)
+    let actionBody = message.body ?? "";
+    if ((message as any).bodyEncoding === "base64" && actionBody) {
+      // Convert base64 back to raw bytes as a latin1 string
+      // (preserves byte values for multipart/form-data reconstruction)
+      const buf = Buffer.from(actionBody, "base64");
+      actionBody = buf.toString("latin1");
+    }
+
     const { stream } = await rscHandler.handleAction(
       message.actionId,
-      message.body ?? "",
+      actionBody,
       message.contentType ?? "text/plain",
     );
 

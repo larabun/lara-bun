@@ -456,10 +456,13 @@ class BunBridge
                 $callbackSocket = $this->checkoutCallback($index, $callbackId);
             }
 
+            // Base64-encode the body to safely pass binary data (file uploads)
+            // through the JSON socket protocol.
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc-action',
                 'actionId' => $actionId,
-                'body' => $body,
+                'body' => base64_encode($body),
+                'bodyEncoding' => 'base64',
                 'contentType' => $contentType,
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));

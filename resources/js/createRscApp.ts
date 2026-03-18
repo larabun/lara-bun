@@ -18,6 +18,7 @@ import {
   setNavigateHandler,
   setDeserializer,
   setCallServer,
+  setInterceptManifest,
   renderTree,
   navigate,
   prefetch,
@@ -38,7 +39,8 @@ declare global {
 
 export function createRscApp(
   container: HTMLElement,
-  initialModules: Record<string, unknown>
+  initialModules: Record<string, unknown>,
+  interceptEntries: { urlPattern: string; slot: string }[] = []
 ): void {
   // Register all client component modules
   for (const [id, mod] of Object.entries(initialModules)) {
@@ -115,6 +117,7 @@ export function createRscApp(
   // the same react-server-dom-webpack instance as initial hydration
   setDeserializer(createFromReadableStream as any);
   setCallServer(callServer);
+  setInterceptManifest(interceptEntries);
 
   // Expose navigation globals for Link.tsx (cross-build-graph communication)
   window.__rsc_navigate = navigate;

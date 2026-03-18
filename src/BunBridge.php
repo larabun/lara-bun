@@ -238,7 +238,7 @@ class BunBridge
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      */
-    public function rscStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = []): \Generator
+    public function rscStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = []): \Generator
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -258,6 +258,7 @@ class BunBridge
                 'component' => $component,
                 'props' => $props,
                 'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
+                'slotOverrides' => $slotOverrides !== [] ? $slotOverrides : null,
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
 
@@ -344,7 +345,7 @@ class BunBridge
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      */
-    public function rscHtmlStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = []): \Generator
+    public function rscHtmlStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = []): \Generator
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -364,6 +365,7 @@ class BunBridge
                 'component' => $component,
                 'props' => $props,
                 'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
+                'slotOverrides' => $slotOverrides !== [] ? $slotOverrides : null,
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
 

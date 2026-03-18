@@ -27,6 +27,9 @@ class RscResponse implements Responsable
     /** @var array<string, string> */
     protected array $parallelSlotComponents = [];
 
+    /** @var array<string, array{component: string, props: array<string, mixed>}> */
+    protected array $slotOverrides = [];
+
     /**
      * @param  array<string, mixed>  $props
      */
@@ -89,6 +92,27 @@ class RscResponse implements Responsable
         return $this->parallelSlotComponents;
     }
 
+    /**
+     * Override a parallel slot with a different component and props.
+     * Used for route interception — the interceptor replaces the default slot content.
+     *
+     * @param  array<string, mixed>  $props
+     */
+    public function overrideSlot(string $slot, string $component, array $props = []): static
+    {
+        $this->slotOverrides[$slot] = ['component' => $component, 'props' => $props];
+
+        return $this;
+    }
+
+    /**
+     * @return array<string, array{component: string, props: array<string, mixed>}>
+     */
+    public function getSlotOverrides(): array
+    {
+        return $this->slotOverrides;
+    }
+
     public function rootView(string $rootView): static
     {
         $this->rootView = $rootView;
@@ -144,7 +168,7 @@ class RscResponse implements Responsable
     protected function toStreamedRscResponse(string $version): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents);
+        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides);
 
         // First yield is always {clientChunks, metadata} — read it eagerly
         // so we can set proper headers on the StreamedResponse object.
@@ -197,7 +221,7 @@ class RscResponse implements Responsable
     protected function toStreamedHtmlResponse(string $version, \Illuminate\Http\Request $request): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents);
+        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides);
 
         // First yield: {clientChunks: [...], metadata: {...}}
         $meta = $generator->current();

@@ -194,6 +194,26 @@ export function installPhpFn(phpFn: (fn: string, ...args: unknown[]) => Promise<
 // ─── Stream Handler (SPA navigation) ─────────────────────────────────────────
 
 /**
+ * Merge slot overrides into parallelSlots. Overrides replace the slot's
+ * component with a {component, props} object that buildElement uses to
+ * render the interceptor with the target URL's params.
+ */
+function mergeSlotOverrides(
+  parallelSlots: Record<string, string>,
+  slotOverrides?: Record<string, { component: string; props: Record<string, unknown> }>
+): Record<string, string | { component: string; props: Record<string, unknown> }> {
+  if (!slotOverrides) return parallelSlots;
+
+  const merged: Record<string, string | { component: string; props: Record<string, unknown> }> = { ...parallelSlots };
+
+  for (const [slot, override] of Object.entries(slotOverrides)) {
+    merged[slot] = override;
+  }
+
+  return merged;
+}
+
+/**
  * Returns the raw Flight ReadableStream for SPA navigation.
  * PHP streams this directly to the browser with chunked transfer encoding.
  * The browser pipes response.body into createFromReadableStream() for
@@ -202,13 +222,16 @@ export function installPhpFn(phpFn: (fn: string, ...args: unknown[]) => Promise<
 export async function handleRscStream(
   component: string,
   props: Record<string, unknown>,
-  layouts: LayoutEntry[] = [], loadings: string[] = [], parallelSlots: Record<string, string> = {}
+  layouts: LayoutEntry[] = [], loadings: string[] = [], parallelSlots: Record<string, string> = {},
+  slotOverrides?: Record<string, { component: string; props: Record<string, unknown> }>
 ): Promise<{ stream: ReadableStream; clientChunks: string[] }> {
   // php() is installed by the worker via installPhpFn before calling this
+  // Merge slot overrides into parallelSlots for buildElement
+  const mergedSlots = mergeSlotOverrides(parallelSlots, slotOverrides);
 
   const flightStream: ReadableStream = clientManifest
-    ? rscModule.renderRscStream(component, props, clientManifest, layouts, loadings, parallelSlots)
-    : rscModule.renderRscStream(component, props, layouts, loadings, parallelSlots);
+    ? rscModule.renderRscStream(component, props, clientManifest, layouts, loadings, mergedSlots)
+    : rscModule.renderRscStream(component, props, layouts, loadings, mergedSlots);
 
   return { stream: flightStream, clientChunks: browserChunks };
 }
@@ -227,17 +250,19 @@ export async function handleRscStream(
 export async function handleRscHtmlStream(
   component: string,
   props: Record<string, unknown>,
-  layouts: LayoutEntry[] = [], loadings: string[] = [], parallelSlots: Record<string, string> = {}
+  layouts: LayoutEntry[] = [], loadings: string[] = [], parallelSlots: Record<string, string> = {},
+  slotOverrides?: Record<string, { component: string; props: Record<string, unknown> }>
 ): Promise<{
   htmlStream: ReadableStream;
   rscPayloadPromise: Promise<string>;
   clientChunks: string[];
 }> {
   // php() is installed by the worker via installPhpFn (with deferred pattern)
+  const mergedSlots = mergeSlotOverrides(parallelSlots, slotOverrides);
 
   const flightStream: ReadableStream = clientManifest
-    ? rscModule.renderRscStream(component, props, clientManifest, layouts, loadings, parallelSlots)
-    : rscModule.renderRscStream(component, props, layouts, loadings, parallelSlots);
+    ? rscModule.renderRscStream(component, props, clientManifest, layouts, loadings, mergedSlots)
+    : rscModule.renderRscStream(component, props, layouts, loadings, mergedSlots);
 
   // Tee: one branch for HTML SSR, one to collect the full Flight payload
   const [flightForHtml, flightForPayload] = flightStream.tee();

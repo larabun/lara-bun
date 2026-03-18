@@ -70,6 +70,13 @@ class RscRouteManifestCommand extends Command
                 $entry['baseUrl'] = url()->formatScheme().$domain;
             }
 
+            if ($page->interceptRoutes !== []) {
+                $entry['intercepts'] = array_map(fn (array $intercept) => [
+                    'slot' => $intercept['slot'],
+                    'component' => $intercept['component'],
+                ], $page->interceptRoutes);
+            }
+
             $routes[] = $entry;
         }
 

@@ -11,6 +11,11 @@ interface LayoutEntry {
   props: Record<string, unknown>;
 }
 
+interface SlotOverride {
+  component: string;
+  props: Record<string, unknown>;
+}
+
 interface IncomingMessage {
   type: "ping" | "call" | "list" | "ssr" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell";
   function?: string;
@@ -21,6 +26,7 @@ interface IncomingMessage {
   layouts?: LayoutEntry[];
   loadings?: string[];
   parallelSlots?: Record<string, string>;
+  slotOverrides?: Record<string, SlotOverride> | null;
   callbackSocket?: string; // deprecated — use callbackId
   callbackId?: string;
   actionId?: string;
@@ -298,7 +304,8 @@ async function handleRscStreamMessage(
     const { stream, clientChunks } = await rscHandler.handleRscStream(
       message.component,
       message.props ?? {},
-      message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {}
+      message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
+      message.slotOverrides ?? undefined
     );
 
     writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata }));
@@ -400,7 +407,8 @@ async function handleRscHtmlStreamMessage(
       await rscHandler.handleRscHtmlStream(
         message.component,
         message.props ?? {},
-        message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {}
+        message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
+        message.slotOverrides ?? undefined
       );
 
     writeFrame(mainSocket, JSON.stringify({ type: "html-start", clientChunks, metadata }));

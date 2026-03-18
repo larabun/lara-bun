@@ -34,7 +34,25 @@ class PageScanner
                 continue;
             }
 
+            // Skip pages inside intercept directories — they are only used as interceptors
+            $relativePath = $this->relativePath($file->getRealPath());
+
+            if ($this->isInsideInterceptDir($relativePath)) {
+                continue;
+            }
+
             $this->pages[] = $this->buildDefinition($file);
+        }
+
+        // Collect all intercept routes and match them to target pages
+        $allIntercepts = $this->collectAllInterceptRoutes();
+
+        foreach ($this->pages as $page) {
+            foreach ($allIntercepts as $intercept) {
+                if ($page->urlPattern === $intercept['interceptedUrl']) {
+                    $page->interceptRoutes[] = $intercept;
+                }
+            }
         }
 
         usort($this->pages, fn (PageDefinition $a, PageDefinition $b) => strcmp($a->urlPattern, $b->urlPattern));
@@ -246,6 +264,231 @@ class PageScanner
         }
 
         return $slots;
+    }
+
+    /**
+     * Check if a page file lives inside an intercept pattern directory.
+     * e.g. @modal/(.)photo/[id]/page.tsx → true
+     */
+    protected function isInsideInterceptDir(string $relativePath): bool
+    {
+        $segments = explode('/', dirname($relativePath));
+
+        foreach ($segments as $segment) {
+            if (preg_match('/^\(\.{1,3}\)/', $segment)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Scan all @slot directories in the app tree for intercept routes.
+     *
+     * @return list<array{slot: string, component: string, interceptedUrl: string}>
+     */
+    protected function collectAllInterceptRoutes(): array
+    {
+        $intercepts = [];
+        $appDirReal = realpath($this->appDir);
+
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($this->appDir, RecursiveDirectoryIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST,
+        );
+
+        /** @var SplFileInfo $file */
+        foreach ($iterator as $file) {
+            if (! $file->isDir()) {
+                continue;
+            }
+
+            if (! str_starts_with($file->getFilename(), '@')) {
+                continue;
+            }
+
+            $slotDir = $file->getRealPath();
+            $slotName = substr($file->getFilename(), 1);
+            $parentDir = dirname($slotDir);
+
+            $slotIntercepts = $this->scanInterceptPatterns($slotDir, $parentDir, $slotName);
+            $intercepts = array_merge($intercepts, $slotIntercepts);
+        }
+
+        return $intercepts;
+    }
+
+    /**
+     * Detect route interception patterns inside @slot directories.
+     * Returns a map of intercepted URL patterns → slot component names.
+     *
+     * Convention:
+     *   (.)folder  — intercepts at the same segment level
+     *   (..)folder — intercepts one level up
+     *   (...)folder — intercepts from the app root
+     *
+     * @return array<string, array{slot: string, component: string, interceptedUrl: string}>
+     */
+    protected function collectInterceptRoutes(string $pageDir): array
+    {
+        $intercepts = [];
+        $current = $pageDir;
+        $appDirReal = realpath($this->appDir);
+
+        while (true) {
+            if (is_dir($current)) {
+                $entries = scandir($current);
+
+                foreach ($entries as $entry) {
+                    if (! str_starts_with($entry, '@')) {
+                        continue;
+                    }
+
+                    $slotDir = $current.'/'.$entry;
+
+                    if (! is_dir($slotDir)) {
+                        continue;
+                    }
+
+                    $slotName = substr($entry, 1);
+                    $slotIntercepts = $this->scanInterceptPatterns($slotDir, $current, $slotName);
+                    $intercepts = array_merge($intercepts, $slotIntercepts);
+                }
+            }
+
+            if (realpath($current) === $appDirReal) {
+                break;
+            }
+
+            $parent = dirname($current);
+
+            if ($parent === $current) {
+                break;
+            }
+
+            $current = $parent;
+        }
+
+        return $intercepts;
+    }
+
+    /**
+     * @return array<string, array{slot: string, component: string, interceptedUrl: string}>
+     */
+    private function scanInterceptPatterns(string $slotDir, string $parentDir, string $slotName): array
+    {
+        $intercepts = [];
+        $entries = scandir($slotDir);
+
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $entryPath = $slotDir.'/'.$entry;
+
+            if (! is_dir($entryPath)) {
+                continue;
+            }
+
+            // Detect intercept prefixes: (.), (..), (...)
+            $prefix = null;
+            $rest = null;
+
+            if (preg_match('/^\(\.{1,3}\)(.+)$/', $entry, $matches)) {
+                $prefix = substr($entry, 0, strpos($entry, ')') + 1);
+                $rest = $matches[1];
+            }
+
+            if ($prefix === null) {
+                continue;
+            }
+
+            // Find page.tsx recursively under this intercept directory
+            $this->findPagesRecursive($entryPath, $parentDir, $prefix, $rest, $slotName, $intercepts);
+        }
+
+        return $intercepts;
+    }
+
+    private function findPagesRecursive(
+        string $dir,
+        string $parentDir,
+        string $prefix,
+        string $pathAfterPrefix,
+        string $slotName,
+        array &$intercepts
+    ): void {
+        $page = $this->findPage($dir);
+
+        if ($page !== null) {
+            $relativePage = $this->relativePath($page);
+            $componentName = 'app/'.preg_replace('/\.(tsx|ts|jsx|js)$/', '', $relativePage);
+
+            // Calculate the intercepted URL based on the prefix
+            $appDirReal = realpath($this->appDir);
+            $parentRelative = str_replace($appDirReal.'/', '', realpath($parentDir));
+
+            if ($parentRelative === realpath($appDirReal)) {
+                $parentRelative = '';
+            }
+
+            $parentSegments = $parentRelative !== '' ? explode('/', $parentRelative) : [];
+
+            // Strip route groups from parent segments
+            $parentSegments = array_values(array_filter($parentSegments, fn ($s) => ! preg_match('/^\(.*\)$/', $s)));
+
+            // Calculate base URL based on intercept prefix
+            if ($prefix === '(.)') {
+                // Same level — use parent segments as-is
+                $baseSegments = $parentSegments;
+            } elseif ($prefix === '(..)') {
+                // One level up
+                array_pop($parentSegments);
+                $baseSegments = $parentSegments;
+            } else {
+                // (...) — from root
+                $baseSegments = [];
+            }
+
+            // Build the remaining path from the intercept dir structure
+            $interceptDir = $dir;
+            $remainingPath = $pathAfterPrefix;
+
+            // Convert remaining path segments
+            $remainingSegments = explode('/', $remainingPath);
+            $urlSegments = [];
+
+            foreach ($remainingSegments as $seg) {
+                if (preg_match('/^\(.*\)$/', $seg)) {
+                    continue;
+                }
+
+                $urlSegments[] = $this->convertSegment($seg);
+            }
+
+            $allSegments = array_merge($baseSegments, $urlSegments);
+            $interceptedUrl = $allSegments !== [] ? implode('/', $allSegments) : '/';
+
+            $intercepts[] = [
+                'slot' => $slotName,
+                'component' => $componentName,
+                'interceptedUrl' => $interceptedUrl,
+            ];
+        }
+
+        // Check subdirectories for nested pages
+        $entries = scandir($dir);
+
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..' || ! is_dir($dir.'/'.$entry)) {
+                continue;
+            }
+
+            $subPath = $pathAfterPrefix.'/'.$entry;
+            $this->findPagesRecursive($dir.'/'.$entry, $parentDir, $prefix, $subPath, $slotName, $intercepts);
+        }
     }
 
     protected function findPage(string $dir): ?string

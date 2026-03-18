@@ -19,4 +19,8 @@ final class Header
     public const X_RSC_TITLE = 'X-RSC-Title';
 
     public const X_RSC_META = 'X-RSC-Meta';
+
+    public const X_RSC_INTERCEPT = 'X-RSC-Intercept';
+
+    public const X_RSC_REFERER = 'X-RSC-Referer';
 }

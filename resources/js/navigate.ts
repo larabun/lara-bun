@@ -23,12 +23,18 @@ interface CacheEntry {
   expiresAt: number;
 }
 
+interface InterceptEntry {
+  urlPattern: string;
+  slot: string;
+}
+
 let version = "";
 let onNavigate: ((tree: ReactNode) => void) | null = null;
 let flightDeserializer: Deserializer | null = null;
 let callServerFn: CallServerFn | null = null;
 let activeController: AbortController | null = null;
 const cache = new Map<string, CacheEntry>();
+let interceptManifest: InterceptEntry[] = [];
 
 const DEFAULT_PREFETCH_TTL = 30_000;
 
@@ -87,6 +93,41 @@ export function setCallServer(fn: CallServerFn): void {
   callServerFn = fn;
 }
 
+export function setInterceptManifest(entries: InterceptEntry[]): void {
+  interceptManifest = entries;
+}
+
+/**
+ * Check if a URL matches any intercept pattern.
+ * Returns the matching slot name, or null if no match.
+ */
+function matchIntercept(url: string): string | null {
+  if (interceptManifest.length === 0) return null;
+
+  let pathname: string;
+  try {
+    pathname = new URL(url, window.location.origin).pathname;
+  } catch {
+    pathname = url.split("?")[0];
+  }
+
+  for (const entry of interceptManifest) {
+    const regex = new RegExp(
+      "^/" +
+        entry.urlPattern
+          .replace(/\[\.\.\.(\w+)\]/g, "(.+)")
+          .replace(/\[(\w+)\]/g, "([^/]+)") +
+        "$"
+    );
+
+    if (regex.test(pathname)) {
+      return entry.slot;
+    }
+  }
+
+  return null;
+}
+
 export function renderTree(tree: ReactNode): void {
   onNavigate?.(tree);
 }
@@ -98,14 +139,21 @@ export function getCallServer(): CallServerFn {
   return callServerFn;
 }
 
-function fetchRscPayload(url: string, signal?: AbortSignal): Promise<Response> {
-  return fetch(url, {
-    headers: {
-      "X-RSC": "true",
-      "X-RSC-Version": version,
-    },
-    signal,
-  }).then((response) => {
+function fetchRscPayload(url: string, signal?: AbortSignal, interceptSlot?: string, refererUrl?: string): Promise<Response> {
+  const headers: Record<string, string> = {
+    "X-RSC": "true",
+    "X-RSC-Version": version,
+  };
+
+  if (interceptSlot) {
+    headers["X-RSC-Intercept"] = interceptSlot;
+  }
+
+  if (refererUrl) {
+    headers["X-RSC-Referer"] = refererUrl;
+  }
+
+  return fetch(url, { headers, signal }).then((response) => {
     if (response.status === 409) {
       const location = response.headers.get("X-RSC-Location");
       window.location.href = location ?? url;
@@ -178,6 +226,14 @@ export async function navigate(
   const controller = new AbortController();
   activeController = controller;
 
+  // Check if this URL matches an intercept pattern.
+  // If so, send the intercept slot + current URL as referer so the server
+  // renders the full tree with the interceptor in the right slot.
+  const interceptSlot = matchIntercept(url);
+  const currentUrl = interceptSlot
+    ? window.location.pathname + window.location.search
+    : undefined;
+
   try {
     const cached = cache.get(url);
     let treePromise: Promise<ReactNode>;
@@ -192,7 +248,7 @@ export async function navigate(
       cache.delete(url);
     } else {
       cache.delete(url);
-      const response = await fetchRscPayload(url, controller.signal);
+      const response = await fetchRscPayload(url, controller.signal, interceptSlot ?? undefined, currentUrl);
 
       const contentType = response.headers.get("Content-Type") ?? "";
       if (!contentType.includes("text/x-component")) {
@@ -225,8 +281,9 @@ export async function navigate(
 
     onNavigate?.(tree);
 
-    if (!opts?.preserveScroll) {
-      // Wait for React to commit the DOM update before scrolling
+    if (!opts?.preserveScroll && !interceptSlot) {
+      // Wait for React to commit the DOM update before scrolling.
+      // Intercepted navigations preserve scroll (e.g. modal over current page).
       requestAnimationFrame(() => {
         window.scrollTo(0, 0);
       });

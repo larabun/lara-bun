@@ -33,6 +33,7 @@ class PageRouteRegistrar
         $route->defaults('_rsc_layouts', $page->layouts);
         $route->defaults('_rsc_loadings', $page->loadings);
         $route->defaults('_rsc_parallel_slots', $page->parallelSlots);
+        $route->defaults('_rsc_intercepts', $page->interceptRoutes);
 
         // Collect all config paths (directory-level + page-level) for viewData resolution
         $configPaths = $page->directoryConfigPaths;

@@ -150,6 +150,7 @@ interface RouteManifestEntry {
   staticPaths?: Record<string, string[]>;
   where?: Record<string, string[]>;
   baseUrl?: string;
+  intercepts?: { slot: string; component: string }[];
 }
 
 const pageMetadata: PageMetadataInfo[] = [];
@@ -700,7 +701,7 @@ function buildElement(
   props: Record<string, unknown>,
   layouts: LayoutEntry[],
   loadings: string[] = [],
-  parallelSlots: Record<string, string> = {}
+  parallelSlots: Record<string, string | { component: string; props: Record<string, unknown> }> = {}
 ): React.ReactElement {
   const Component = components[component];
 
@@ -722,11 +723,22 @@ function buildElement(
 
   // Render parallel slot components (@folder convention).
   // Each slot becomes a named prop on the layout.
+  // Slots can be a string (component name, uses page props) or an object
+  // {component, props} for route interception overrides.
   const slotElements: Record<string, React.ReactElement> = {};
-  for (const [slotName, slotComponent] of Object.entries(parallelSlots)) {
-    const SlotComponent = components[slotComponent];
-    if (SlotComponent) {
-      slotElements[slotName] = createElement(SlotComponent, props);
+  for (const [slotName, slotInfo] of Object.entries(parallelSlots)) {
+    if (typeof slotInfo === "object" && slotInfo !== null && "component" in slotInfo) {
+      // Route interception override — use the interceptor's component and props
+      const SlotComponent = components[slotInfo.component];
+      if (SlotComponent) {
+        slotElements[slotName] = createElement(SlotComponent, slotInfo.props);
+      }
+    } else {
+      // Normal parallel slot — use page props
+      const SlotComponent = components[slotInfo as string];
+      if (SlotComponent) {
+        slotElements[slotName] = createElement(SlotComponent, props);
+      }
     }
   }
 
@@ -754,7 +766,7 @@ export async function renderRsc(
   props: Record<string, unknown>,
   ${clientManifestParam ? `${clientManifestParam},` : ""}
   layouts: LayoutEntry[] = [],
-  loadings: string[] = [], parallelSlots: Record<string, string> = {}
+  loadings: string[] = [], parallelSlots: Record<string, string | { component: string; props: Record<string, unknown> }> = {}
 ): Promise<string> {
   const element = buildElement(component, props, layouts, loadings, parallelSlots);
   const stream = renderToReadableStream(element, ${clientManifestArg});
@@ -767,7 +779,7 @@ export function renderRscStream(
   props: Record<string, unknown>,
   ${clientManifestParam ? `${clientManifestParam},` : ""}
   layouts: LayoutEntry[] = [],
-  loadings: string[] = [], parallelSlots: Record<string, string> = {}
+  loadings: string[] = [], parallelSlots: Record<string, string | { component: string; props: Record<string, unknown> }> = {}
 ): ReadableStream {
   const element = buildElement(component, props, layouts, loadings, parallelSlots);
   return renderToReadableStream(element, ${clientManifestArg});
@@ -908,6 +920,27 @@ ${domainEntries.length > 0 ? `
   const routesPath = join(sourceDir, "routes.generated.ts");
   writeFileSync(routesPath, routesSource);
   console.log(`Generated: ${routesPath} (${sorted.length} route(s))`);
+
+  // Generate intercept manifest for client-side route interception
+  const interceptEntries: { urlPattern: string; slot: string }[] = [];
+
+  for (const entry of routeManifest) {
+    if (entry.intercepts) {
+      const tsPattern = entry.urlPattern.replace(/\{(\w+)\}/g, "[$1]");
+
+      for (const intercept of entry.intercepts) {
+        interceptEntries.push({ urlPattern: tsPattern, slot: intercept.slot });
+      }
+    }
+  }
+
+  if (interceptEntries.length > 0) {
+    writeFileSync(
+      join(outDir, "intercept-manifest.json"),
+      JSON.stringify(interceptEntries, null, 2)
+    );
+    console.log(`Generated: ${join(outDir, "intercept-manifest.json")} (${interceptEntries.length} intercept(s))`);
+  }
 }
 
 const serverResult = await Bun.build({
@@ -1032,6 +1065,14 @@ const hydrateModuleMap = clientComponents
   .map((c, i) => `  "${c.relativePath}": _M${i},`)
   .join("\n");
 
+// Read the intercept manifest (generated during route manifest phase)
+const interceptManifestPath = join(outDir, "intercept-manifest.json");
+let interceptManifestJson = "[]";
+
+if (existsSync(interceptManifestPath)) {
+  interceptManifestJson = readFileSync(interceptManifestPath, "utf-8");
+}
+
 const hydrateEntrySource = `// Auto-generated hydration entry — do not edit
 // __webpack_require__ and __webpack_chunk_load__ are pre-defined in the
 // inline <script> block rendered by @rscScripts so they exist before this
@@ -1043,9 +1084,11 @@ const modules: Record<string, unknown> = {
 ${hydrateModuleMap}
 };
 
+const interceptManifest: { urlPattern: string; slot: string }[] = ${interceptManifestJson};
+
 const container = document.getElementById("rsc-root");
 if (container) {
-  createRscApp(container, modules);
+  createRscApp(container, modules, interceptManifest);
 }
 `;
 

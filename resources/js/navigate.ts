@@ -18,6 +18,8 @@ interface PageMeta {
 
 interface CacheEntry {
   tree: Promise<ReactNode>;
+  payload?: Promise<ArrayBuffer>;
+  chunks?: string[];
   title: string | null;
   meta: PageMeta | null;
   expiresAt: number;
@@ -183,7 +185,41 @@ export async function navigate(
     let treePromise: Promise<ReactNode>;
 
     if (cached && cached.expiresAt > Date.now()) {
-      treePromise = cached.tree;
+      // Re-deserialize from cached payload bytes for a fresh tree
+      if (cached.payload) {
+        treePromise = cached.payload.then((buf) => {
+          if (!buf) return null;
+
+          // Load any new browser chunks
+          if (cached.chunks) {
+            const existingScripts = new Set(
+              Array.from(document.querySelectorAll<HTMLScriptElement>("script[src]"))
+                .map((s) => s.src)
+            );
+            for (const chunk of cached.chunks) {
+              const absoluteUrl = new URL(chunk, window.location.origin).href;
+              if (!existingScripts.has(absoluteUrl)) {
+                const script = document.createElement("script");
+                script.type = "module";
+                script.src = chunk;
+                document.head.appendChild(script);
+              }
+            }
+          }
+
+          const stream = new ReadableStream({
+            start(c) {
+              c.enqueue(new Uint8Array(buf));
+              c.close();
+            },
+          });
+          return flightDeserializer!(stream, {
+            callServer: callServerFn ?? (async () => { throw new Error("Not initialized"); }),
+          });
+        });
+      } else {
+        treePromise = cached.tree;
+      }
       if (cached.meta) {
         applyMeta(cached.meta);
       } else if (cached.title) {
@@ -250,21 +286,54 @@ export function prefetch(url: string, cacheForMs?: number): void {
     return;
   }
 
+  // Remove stale/failed entries so re-hover works
+  cache.delete(url);
+
   let cachedTitle: string | null = null;
   let cachedMeta: PageMeta | null = null;
+  let cachedChunks: string[] | undefined;
 
-  const tree = fetchRscPayload(url).then((response) => {
+  // Collect the raw Flight payload bytes so we can re-deserialize on navigate.
+  // The deserialized React tree is tied to the stream lifecycle — it can't be
+  // reused after the stream closes. Caching raw bytes lets us create a fresh
+  // stream and tree on each navigation.
+  const payloadPromise = fetchRscPayload(url).then(async (response) => {
     cachedMeta = parseMetaHeader(response);
     if (!cachedMeta) {
       const rawTitle = response.headers.get("X-RSC-Title");
       cachedTitle = rawTitle ? decodeURIComponent(rawTitle) : null;
     }
-    return deserializeResponse(response);
+
+    const chunksHeader = response.headers.get("X-RSC-Chunks");
+    if (chunksHeader) {
+      try { cachedChunks = JSON.parse(chunksHeader); } catch {}
+    }
+
+    return response.arrayBuffer();
+  }).catch(() => {
+    cache.delete(url);
+    return null;
+  });
+
+  // The tree Promise resolves lazily from the payload
+  const tree = payloadPromise.then((buf) => {
+    if (!buf) return null;
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(buf));
+        controller.close();
+      },
+    });
+    return flightDeserializer!(stream, {
+      callServer: callServerFn ?? (async () => { throw new Error("Not initialized"); }),
+    });
   });
 
   cache.set(url, {
     get title() { return cachedTitle; },
     get meta() { return cachedMeta; },
+    get chunks() { return cachedChunks; },
+    payload: payloadPromise as Promise<ArrayBuffer>,
     tree,
     expiresAt: Date.now() + ttl,
   });

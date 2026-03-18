@@ -256,14 +256,7 @@ class RscResponse implements Responsable
             $shellHead = str_ireplace('</head>', $metaTags."\n</head>", $shellHead);
         }
 
-        // Pre-build the initial state and scripts so they can be sent early
-        $initialJson = json_encode([
-            'url' => $url,
-            'component' => $component,
-            'version' => $version,
-        ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
-
-        return new StreamedResponse(function () use ($generator, $clientChunks, $shellHead, $shellTail, $initialJson, $initialMarker, $scriptsMarker): void {
+        return new StreamedResponse(function () use ($generator, $version, $url, $component, $clientChunks, $shellHead, $shellTail, $initialMarker, $scriptsMarker): void {
             while (ob_get_level() > 0) {
                 ob_end_flush();
             }
@@ -275,11 +268,6 @@ class RscResponse implements Responsable
             // Stream HTML body chunks from Bun (shell + Suspense completions)
             $generator->next();
             $rscPayload = '';
-
-            // After the first HTML chunk (React shell), emit the scripts early
-            // so the browser can load JS and enable SPA navigation while
-            // Suspense completions continue streaming.
-            $scriptsEmitted = false;
 
             while ($generator->valid()) {
                 $value = $generator->current();
@@ -293,30 +281,19 @@ class RscResponse implements Responsable
 
                 echo $value;
                 flush();
-
-                // Emit scripts after the first HTML chunk (React shell with Suspense fallbacks).
-                // This lets the browser start loading JS immediately — SPA navigation becomes
-                // available even while Suspense completions are still streaming.
-                if (! $scriptsEmitted) {
-                    $scriptsEmitted = true;
-                    echo BunServiceProvider::renderEarlyScripts($initialJson, $clientChunks);
-                    flush();
-                }
-
                 $generator->next();
             }
 
-            // Inject the Flight payload AFTER streaming completes — the hydration
-            // entry resolves a Promise that waits for this value.
-            $encodedPayload = json_encode($rscPayload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
-            echo "\n<script>window.__rsc_resolve_payload__({$encodedPayload});</script>\n";
-            flush();
+            // Replace the placeholder scripts/initial in the tail
+            $initialJson = json_encode([
+                'url' => $url,
+                'component' => $component,
+                'version' => $version,
+            ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
 
-            // Emit the tail (closing tags) — strip the script placeholders since
-            // scripts were already sent early above
             $tail = str_replace(
                 [$initialMarker, $scriptsMarker],
-                ['{}', ''],
+                [$initialJson, BunServiceProvider::renderRscScripts($rscPayload, $clientChunks)],
                 $shellTail,
             );
 

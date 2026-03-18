@@ -27,14 +27,13 @@ import { ServerValidationError, ServerSessionExpiredError } from "./errors";
 
 declare global {
   interface Window {
-    __RSC_PAYLOAD__: string | Promise<string>;
+    __RSC_PAYLOAD__: string;
     __RSC_INITIAL__: { url: string; component: string; version: string };
     __RSC_MODULES__: Record<string, unknown>;
     __webpack_require__: (id: string) => unknown;
     __webpack_chunk_load__: () => Promise<void>;
     __rsc_navigate: typeof navigate;
     __rsc_prefetch: typeof prefetch;
-    __rsc_resolve_payload__?: (payload: string) => void;
   }
 }
 
@@ -130,23 +129,22 @@ export function createRscApp(
     setVersion(initial.version);
   }
 
-  // Resolve the Flight payload — may be a string (legacy/static) or a
-  // Promise (streaming: resolved by __rsc_resolve_payload__ after Suspense completes)
-  const rawPayload = window.__RSC_PAYLOAD__;
-  if (!rawPayload) {
+  // Deserialize the initial Flight payload
+  const rscPayload = window.__RSC_PAYLOAD__;
+  if (!rscPayload) {
     return;
   }
 
-  Promise.resolve(rawPayload).then((rscPayload: string) => {
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(rscPayload));
-        controller.close();
-      },
-    });
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(rscPayload));
+      controller.close();
+    },
+  });
 
-    return createFromReadableStream(stream, { callServer });
-  }).then((reactTree: any) => {
+  const rootPromise = createFromReadableStream(stream, { callServer });
+
+  Promise.resolve(rootPromise).then((reactTree: any) => {
     const root = hydrateRoot(container, reactTree);
 
     // Wire up SPA navigation: subsequent navigations re-render the root

@@ -214,9 +214,14 @@ export async function navigate(
     return;
   }
 
-  // Abort any in-flight SPA navigation (not the initial HTML stream — that
-  // continues independently and Suspense completions will still arrive).
+  // Abort any in-flight navigation
   activeController?.abort();
+
+  // If the initial HTML stream is still loading (Suspense completions streaming),
+  // stop it so the single-threaded PHP server can handle the new request.
+  if (document.readyState === "loading") {
+    window.stop();
+  }
 
   const controller = new AbortController();
   activeController = controller;

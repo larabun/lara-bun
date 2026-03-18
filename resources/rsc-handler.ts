@@ -202,13 +202,13 @@ export function installPhpFn(phpFn: (fn: string, ...args: unknown[]) => Promise<
 export async function handleRscStream(
   component: string,
   props: Record<string, unknown>,
-  layouts: LayoutEntry[] = []
+  layouts: LayoutEntry[] = [], loadings: string[] = []
 ): Promise<{ stream: ReadableStream; clientChunks: string[] }> {
   // php() is installed by the worker via installPhpFn before calling this
 
   const flightStream: ReadableStream = clientManifest
-    ? rscModule.renderRscStream(component, props, clientManifest, layouts)
-    : rscModule.renderRscStream(component, props, layouts);
+    ? rscModule.renderRscStream(component, props, clientManifest, layouts, loadings)
+    : rscModule.renderRscStream(component, props, layouts, loadings);
 
   return { stream: flightStream, clientChunks: browserChunks };
 }
@@ -227,7 +227,7 @@ export async function handleRscStream(
 export async function handleRscHtmlStream(
   component: string,
   props: Record<string, unknown>,
-  layouts: LayoutEntry[] = []
+  layouts: LayoutEntry[] = [], loadings: string[] = []
 ): Promise<{
   htmlStream: ReadableStream;
   rscPayloadPromise: Promise<string>;
@@ -236,8 +236,8 @@ export async function handleRscHtmlStream(
   // php() is installed by the worker via installPhpFn (with deferred pattern)
 
   const flightStream: ReadableStream = clientManifest
-    ? rscModule.renderRscStream(component, props, clientManifest, layouts)
-    : rscModule.renderRscStream(component, props, layouts);
+    ? rscModule.renderRscStream(component, props, clientManifest, layouts, loadings)
+    : rscModule.renderRscStream(component, props, layouts, loadings);
 
   // Tee: one branch for HTML SSR, one to collect the full Flight payload
   const [flightForHtml, flightForPayload] = flightStream.tee();
@@ -318,7 +318,7 @@ export async function handleAction(
 export async function handleRscPprShell(
   component: string,
   props: Record<string, unknown>,
-  layouts: LayoutEntry[] = []
+  layouts: LayoutEntry[] = [], loadings: string[] = []
 ): Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean; usedDynamicApis: boolean }> {
   let usedDynamicApis = false;
   let timedOut = false;
@@ -338,8 +338,8 @@ export async function handleRscPprShell(
     const renderResult = await Promise.race([
       (async () => {
         const flightStream: ReadableStream = clientManifest
-          ? rscModule.renderRscStream(component, props, clientManifest, layouts)
-          : rscModule.renderRscStream(component, props, layouts);
+          ? rscModule.renderRscStream(component, props, clientManifest, layouts, loadings)
+          : rscModule.renderRscStream(component, props, layouts, loadings);
 
         const consumerManifest = ssrManifest
           ? { serverConsumerManifest: ssrManifest }
@@ -443,7 +443,7 @@ export async function handleRsc(
   component: string,
   props: Record<string, unknown>,
   callbackSocket?: string | null,
-  layouts: LayoutEntry[] = []
+  layouts: LayoutEntry[] = [], loadings: string[] = []
 ): Promise<{ body: string; rscPayload: string; clientChunks: string[]; usedDynamicApis: boolean }> {
   // Create per-render callback client if a callback socket is provided
   let cleanup: (() => void) | null = null;
@@ -543,8 +543,8 @@ export async function handleRsc(
     // Pages with php() + NO callbacks (prerender): renderRsc hangs — but
     // those should use rscPprShell instead.
     const rscPayload: string = clientManifest
-      ? await rscModule.renderRsc(component, props, clientManifest, layouts)
-      : await rscModule.renderRsc(component, props, layouts);
+      ? await rscModule.renderRsc(component, props, clientManifest, layouts, loadings)
+      : await rscModule.renderRsc(component, props, layouts, loadings);
 
     const flightStream = new ReadableStream({
       start(controller) {

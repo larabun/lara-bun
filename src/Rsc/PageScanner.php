@@ -74,6 +74,7 @@ class PageScanner
         $urlPattern = $urlSegments !== [] ? implode('/', $urlSegments) : '/';
         $isDynamic = (bool) preg_match('/\{[^}]+\}/', $urlPattern);
         $layouts = $this->collectLayouts($pageDir);
+        $loadings = $this->collectLoadings($pageDir);
         $routeConfigPath = $this->findRouteConfig($pageDir);
         $directoryConfigPaths = $this->collectDirectoryConfigs($pageDir);
 
@@ -81,6 +82,7 @@ class PageScanner
             componentName: $componentName,
             urlPattern: $urlPattern,
             layouts: $layouts,
+            loadings: $loadings,
             isDynamic: $isDynamic,
             routeConfigPath: $routeConfigPath,
             directoryConfigPaths: $directoryConfigPaths,
@@ -145,6 +147,56 @@ class PageScanner
 
         // Reverse so outermost (root) layout is first
         return array_reverse($layouts);
+    }
+
+    /**
+     * Walk up from page directory to app root, collecting loading files.
+     * Returns outermost-first (app/loading before app/docs/loading).
+     *
+     * @return list<string>
+     */
+    protected function collectLoadings(string $pageDir): array
+    {
+        $loadings = [];
+        $current = $pageDir;
+        $appDirReal = realpath($this->appDir);
+
+        while (true) {
+            $loading = $this->findLoading($current);
+
+            if ($loading !== null) {
+                $loadingRelative = $this->relativePath($loading);
+                $componentName = 'app/'.preg_replace('/\.(tsx|ts|jsx|js)$/', '', $loadingRelative);
+                $loadings[] = $componentName;
+            }
+
+            if (realpath($current) === $appDirReal) {
+                break;
+            }
+
+            $parent = dirname($current);
+
+            if ($parent === $current) {
+                break;
+            }
+
+            $current = $parent;
+        }
+
+        return array_reverse($loadings);
+    }
+
+    protected function findLoading(string $dir): ?string
+    {
+        foreach (['tsx', 'ts', 'jsx', 'js'] as $ext) {
+            $path = $dir.'/loading.'.$ext;
+
+            if (file_exists($path)) {
+                return $path;
+            }
+        }
+
+        return null;
     }
 
     protected function findLayout(string $dir): ?string

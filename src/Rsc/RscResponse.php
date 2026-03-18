@@ -21,6 +21,9 @@ class RscResponse implements Responsable
     /** @var list<array{component: string, props: array<string, mixed>}> */
     protected array $layouts = [];
 
+    /** @var list<string> */
+    protected array $loadingComponents = [];
+
     /**
      * @param  array<string, mixed>  $props
      */
@@ -48,6 +51,21 @@ class RscResponse implements Responsable
         $this->layouts[] = ['component' => $component, 'props' => $props];
 
         return $this;
+    }
+
+    /**
+     * @param  list<string>  $loadings
+     */
+    public function loadings(array $loadings): static
+    {
+        $this->loadingComponents = $loadings;
+
+        return $this;
+    }
+
+    public function getLoadings(): array
+    {
+        return $this->loadingComponents;
     }
 
     public function rootView(string $rootView): static
@@ -105,7 +123,7 @@ class RscResponse implements Responsable
     protected function toStreamedRscResponse(string $version): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts);
+        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents);
 
         // First yield is always {clientChunks, metadata} — read it eagerly
         // so we can set proper headers on the StreamedResponse object.
@@ -158,7 +176,7 @@ class RscResponse implements Responsable
     protected function toStreamedHtmlResponse(string $version, \Illuminate\Http\Request $request): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts);
+        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents);
 
         // First yield: {clientChunks: [...], metadata: {...}}
         $meta = $generator->current();

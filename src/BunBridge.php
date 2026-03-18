@@ -103,13 +103,13 @@ class BunBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{shellHtml: string, clientChunks: string[], timedOut: bool, usedDynamicApis: bool}
      */
-    public function rscPprShell(string $component, array $props = [], array $layouts = []): array
+    public function rscPprShell(string $component, array $props = [], array $layouts = [], array $loadings = []): array
     {
         $response = $this->send(json_encode([
             'type' => 'rsc-ppr-shell',
             'component' => $component,
             'props' => $props,
-            'layouts' => $layouts,
+            'layouts' => $layouts, 'loadings' => $loadings ?? [],
         ], JSON_THROW_ON_ERROR));
 
         if (isset($response['error'])) {
@@ -125,13 +125,13 @@ class BunBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
-    public function rscWithoutCallbacks(string $component, array $props = [], array $layouts = []): array
+    public function rscWithoutCallbacks(string $component, array $props = [], array $layouts = [], array $loadings = []): array
     {
         $response = $this->send(json_encode([
             'type' => 'rsc',
             'component' => $component,
             'props' => $props,
-            'layouts' => $layouts,
+            'layouts' => $layouts, 'loadings' => $loadings ?? [],
         ], JSON_THROW_ON_ERROR));
 
         if (isset($response['error'])) {
@@ -145,7 +145,7 @@ class BunBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
-    public function rsc(string $component, array $props = [], array $layouts = []): array
+    public function rsc(string $component, array $props = [], array $layouts = [], array $loadings = []): array
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -164,7 +164,7 @@ class BunBridge
                 'type' => 'rsc',
                 'component' => $component,
                 'props' => $props,
-                'layouts' => $layouts,
+                'layouts' => $layouts, 'loadings' => $loadings ?? [],
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
 
@@ -238,7 +238,7 @@ class BunBridge
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      */
-    public function rscStream(string $component, array $props = [], array $layouts = []): \Generator
+    public function rscStream(string $component, array $props = [], array $layouts = [], array $loadings = []): \Generator
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -257,7 +257,7 @@ class BunBridge
                 'type' => 'rsc-stream',
                 'component' => $component,
                 'props' => $props,
-                'layouts' => $layouts,
+                'layouts' => $layouts, 'loadings' => $loadings ?? [],
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
 
@@ -344,7 +344,7 @@ class BunBridge
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      */
-    public function rscHtmlStream(string $component, array $props = [], array $layouts = []): \Generator
+    public function rscHtmlStream(string $component, array $props = [], array $layouts = [], array $loadings = []): \Generator
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -363,7 +363,7 @@ class BunBridge
                 'type' => 'rsc-html-stream',
                 'component' => $component,
                 'props' => $props,
-                'layouts' => $layouts,
+                'layouts' => $layouts, 'loadings' => $loadings ?? [],
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
 

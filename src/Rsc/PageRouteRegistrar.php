@@ -31,6 +31,7 @@ class PageRouteRegistrar
 
         $route->defaults('_rsc_component', $page->componentName);
         $route->defaults('_rsc_layouts', $page->layouts);
+        $route->defaults('_rsc_loadings', $page->loadings);
 
         // Collect all config paths (directory-level + page-level) for viewData resolution
         $configPaths = $page->directoryConfigPaths;

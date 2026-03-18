@@ -11,10 +11,12 @@ class PageController
         $route = $request->route();
         $component = $route->defaults['_rsc_component'];
         $layouts = $route->defaults['_rsc_layouts'] ?? [];
+        $loadings = $route->defaults['_rsc_loadings'] ?? [];
         $configPaths = $route->defaults['_rsc_config_paths'] ?? [];
 
         $props = $route->parameters();
         $response = new RscResponse($component, $props);
+        $response->loadings($loadings);
 
         foreach ($layouts as $layout) {
             $response->layout($layout);

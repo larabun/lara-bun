@@ -19,7 +19,8 @@ interface IncomingMessage {
   component?: string;
   props?: Record<string, unknown>;
   layouts?: LayoutEntry[];
-  callbackSocket?: string;
+  callbackSocket?: string; // deprecated — use callbackId
+  callbackId?: string;
   actionId?: string;
   body?: string;
   contentType?: string;
@@ -136,17 +137,29 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
         return '{"error":"Missing component in RSC message"}';
       }
       try {
-        const metadata = await rscHandler.resolveMetadata(
-          message.component,
-          message.props ?? {},
-        );
-        const result = await rscHandler.handleRsc(
-          message.component,
-          message.props ?? {},
-          message.callbackSocket ?? null,
-          message.layouts ?? []
-        );
-        return JSON.stringify({ result: { ...result, metadata } });
+        // Install php() if callback connection is available
+        let cleanupPhp: (() => void) | null = null;
+        if (message.callbackId) {
+          const cbConn = await getCallbackConnection(message.callbackId);
+          cleanupPhp = rscHandler.installPhpFn(createPhpFn(cbConn));
+        }
+
+        try {
+          const metadata = await rscHandler.resolveMetadata(
+            message.component,
+            message.props ?? {},
+          );
+          const result = await rscHandler.handleRsc(
+            message.component,
+            message.props ?? {},
+            message.callbackSocket ?? null, // fallback for old protocol
+            message.layouts ?? []
+          );
+          return JSON.stringify({ result: { ...result, metadata } });
+        } finally {
+          cleanupPhp?.();
+          if (message.callbackId) callbackConnections.delete(message.callbackId);
+        }
       } catch (err) {
         return JSON.stringify({
           error: err instanceof Error ? err.message : String(err),
@@ -194,6 +207,7 @@ await loadEntryPoints();
 
 // Load RSC handler if a bundle is configured
 type RscHandlerModule = {
+  installPhpFn: (phpFn: (fn: string, ...args: unknown[]) => Promise<unknown>) => () => void;
   handleRsc: (
     component: string,
     props: Record<string, unknown>,
@@ -203,20 +217,17 @@ type RscHandlerModule = {
   handleRscStream: (
     component: string,
     props: Record<string, unknown>,
-    callbackSocket?: string | null,
     layouts?: LayoutEntry[]
   ) => Promise<{ stream: ReadableStream; clientChunks: string[] }>;
   handleRscHtmlStream: (
     component: string,
     props: Record<string, unknown>,
-    callbackSocket?: string | null,
     layouts?: LayoutEntry[]
-  ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[]; flushCallbacks?: () => void }>;
+  ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }>;
   handleAction: (
     actionId: string,
     body: string,
     contentType: string,
-    callbackSocket?: string | null
   ) => Promise<{ stream: ReadableStream }>;
   handleRscPprShell: (
     component: string,
@@ -226,7 +237,6 @@ type RscHandlerModule = {
   resolveMetadata: (
     component: string,
     props: Record<string, unknown>,
-    callbackSocket?: string | null
   ) => Promise<Record<string, unknown> | null>;
 };
 
@@ -270,18 +280,22 @@ async function handleRscStreamMessage(
     return;
   }
 
+  let cleanupPhp: (() => void) | null = null;
   try {
-    // Resolve metadata first (no callback socket needed)
+    if (message.callbackId) {
+      const cbConn = await getCallbackConnection(message.callbackId);
+      const phpFn = createPhpFn(cbConn);
+      cleanupPhp = rscHandler.installPhpFn(phpFn);
+    }
+
     const metadata = await rscHandler.resolveMetadata(
       message.component,
       message.props ?? {},
     );
 
-    // Then render stream (needs exclusive callback socket access)
     const { stream, clientChunks } = await rscHandler.handleRscStream(
       message.component,
       message.props ?? {},
-      message.callbackSocket ?? null,
       message.layouts ?? []
     );
 
@@ -310,6 +324,9 @@ async function handleRscStreamMessage(
     } catch {
       // Best effort
     }
+  } finally {
+    cleanupPhp?.();
+    if (message.callbackId) callbackConnections.delete(message.callbackId);
   }
 }
 
@@ -333,19 +350,54 @@ async function handleRscHtmlStreamMessage(
     return;
   }
 
+  let cleanupPhp: (() => void) | null = null;
   try {
-    // Resolve metadata first (no callback socket needed — reads static exports)
+    let deferredPhpFn: ((fn: string, ...args: unknown[]) => Promise<unknown>) | null = null;
+    let flushDeferred: (() => void) | null = null;
+
+    if (message.callbackId) {
+      const cbConn = await getCallbackConnection(message.callbackId);
+      const realPhpFn = createPhpFn(cbConn);
+
+      // Deferred php() for Suspense streaming: queue calls so React
+      // emits fallback HTML first, then flush after first chunk.
+      const pendingCalls: Array<{
+        fn: string; args: unknown[];
+        resolve: (v: unknown) => void; reject: (e: Error) => void;
+      }> = [];
+      let flushed = false;
+
+      const flush = () => {
+        if (flushed) return;
+        flushed = true;
+        for (const call of pendingCalls) {
+          realPhpFn(call.fn, ...call.args).then(call.resolve, call.reject);
+        }
+        pendingCalls.length = 0;
+      };
+
+      const autoFlushTimer = setTimeout(flush, 100);
+
+      deferredPhpFn = (functionName: string, ...args: unknown[]): Promise<unknown> => {
+        if (flushed) return realPhpFn(functionName, ...args);
+        return new Promise((resolve, reject) => {
+          pendingCalls.push({ fn: functionName, args, resolve, reject });
+        });
+      };
+
+      cleanupPhp = rscHandler.installPhpFn(deferredPhpFn);
+      flushDeferred = () => { clearTimeout(autoFlushTimer); flush(); };
+    }
+
     const metadata = await rscHandler.resolveMetadata(
       message.component,
       message.props ?? {},
     );
 
-    // Then render HTML stream (needs exclusive callback socket access)
-    const { htmlStream, rscPayloadPromise, clientChunks, flushCallbacks } =
+    const { htmlStream, rscPayloadPromise, clientChunks } =
       await rscHandler.handleRscHtmlStream(
         message.component,
         message.props ?? {},
-        message.callbackSocket ?? null,
         message.layouts ?? []
       );
 
@@ -367,10 +419,9 @@ async function handleRscHtmlStreamMessage(
       await Bun.sleep(0);
 
       // After the first HTML chunk (shell), flush deferred php() calls.
-      // The auto-flush timer handles the no-Suspense fallback case.
-      if (!callbacksFlushed && flushCallbacks) {
+      if (!callbacksFlushed && flushDeferred) {
         callbacksFlushed = true;
-        flushCallbacks();
+        flushDeferred();
       }
     }
 
@@ -383,6 +434,9 @@ async function handleRscHtmlStreamMessage(
     } catch {
       // Best effort
     }
+  } finally {
+    cleanupPhp?.();
+    if (message.callbackId) callbackConnections.delete(message.callbackId);
   }
 }
 
@@ -406,11 +460,16 @@ async function handleRscActionMessage(
   }
 
   try {
+    let cleanupPhp: (() => void) | null = null;
+    if (message.callbackId) {
+      const cbConn = await getCallbackConnection(message.callbackId);
+      cleanupPhp = rscHandler.installPhpFn(createPhpFn(cbConn));
+    }
+
     const { stream } = await rscHandler.handleAction(
       message.actionId,
       message.body ?? "",
       message.contentType ?? "text/plain",
-      message.callbackSocket ?? null
     );
 
     writeFrame(mainSocket, '{"type":"action-start"}');
@@ -462,6 +521,9 @@ async function handleRscActionMessage(
     } catch {
       // Best effort
     }
+  } finally {
+    cleanupPhp?.();
+    if (message.callbackId) callbackConnections.delete(message.callbackId);
   }
 }
 
@@ -587,12 +649,126 @@ const server = Bun.listen({
 log(`Listening on ${socketPath}`);
 log(`Discovered ${Object.keys(functions).length} functions: ${Object.keys(functions).join(", ")}`);
 
+// ─── Persistent Callback Server ─────────────────────────────────────────────
+// PHP connects here for php() callbacks instead of per-request temp sockets.
+// Each connection registers with a callbackId that matches the render request.
+
+const callbackSocketPath = socketPath + ".cb";
+try { unlinkSync(callbackSocketPath); } catch {}
+
+const callbackConnections = new Map<string, SocketLike>();
+const cbSocketBuffers = new Map<unknown, Buffer>();
+const pendingPhpCallbacks = new Map<string, {
+  resolve: (value: unknown) => void;
+  reject: (reason: Error) => void;
+}>();
+
+function handleCbResponse(response: Record<string, unknown>): void {
+  const id = response.id as string;
+  const pending = pendingPhpCallbacks.get(id);
+  if (!pending) return;
+  pendingPhpCallbacks.delete(id);
+
+  if (response.unauthenticated) {
+    pending.reject(new ServerAuthenticationError(response.error as string));
+  } else if (response.unauthorized) {
+    pending.reject(new ServerAuthorizationError(response.error as string));
+  } else if (response.validation_errors) {
+    pending.reject(new ServerValidationError(
+      (response.error as string) ?? "Validation failed",
+      response.validation_errors as Record<string, string[]>
+    ));
+  } else if (response.redirect) {
+    pending.reject(new ServerRedirectError(response.redirect as string));
+  } else if (response.error) {
+    pending.reject(new Error(response.error as string));
+  } else {
+    pending.resolve(response.result);
+  }
+}
+
+const cbServer = Bun.listen({
+  unix: callbackSocketPath,
+  socket: {
+    data(socket, rawData) {
+      let buf = cbSocketBuffers.get(socket);
+      buf = buf ? Buffer.concat([buf, Buffer.from(rawData)]) : Buffer.from(rawData);
+
+      while (buf.length >= 4) {
+        const frameLength = buf.readUInt32BE(0);
+        if (frameLength <= 0 || frameLength > MAX_FRAME_SIZE) {
+          cbSocketBuffers.delete(socket);
+          return;
+        }
+        if (buf.length < 4 + frameLength) break;
+
+        const json = buf.subarray(4, 4 + frameLength).toString("utf-8");
+        buf = buf.subarray(4 + frameLength);
+
+        try {
+          const msg = JSON.parse(json);
+          if (msg.type === "register" && msg.id) {
+            callbackConnections.set(msg.id, socket);
+          } else {
+            handleCbResponse(msg);
+          }
+        } catch {}
+      }
+
+      if (buf.length > 0) {
+        cbSocketBuffers.set(socket, buf);
+      } else {
+        cbSocketBuffers.delete(socket);
+      }
+    },
+    open() {},
+    close(socket) {
+      for (const [id, s] of callbackConnections) {
+        if (s === socket) { callbackConnections.delete(id); break; }
+      }
+      cbSocketBuffers.delete(socket);
+    },
+    drain(socket) { drainSocket(socket); },
+    error() {},
+  },
+});
+
+log(`Callback listener on ${callbackSocketPath}`);
+
+let cbIdCounter = 0;
+
+function getCallbackConnection(id: string, timeoutMs = 3000): Promise<SocketLike> {
+  const existing = callbackConnections.get(id);
+  if (existing) return Promise.resolve(existing);
+
+  return new Promise((resolve, reject) => {
+    const check = setInterval(() => {
+      const conn = callbackConnections.get(id);
+      if (conn) { clearInterval(check); clearTimeout(timer); resolve(conn); }
+    }, 5);
+    const timer = setTimeout(() => {
+      clearInterval(check);
+      reject(new Error(`Callback ${id} not registered within ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+}
+
+function createPhpFn(cbSocket: SocketLike): (fn: string, ...args: unknown[]) => Promise<unknown> {
+  return (functionName: string, ...args: unknown[]): Promise<unknown> => {
+    const id = `cb_${++cbIdCounter}`;
+    writeFrame(cbSocket, JSON.stringify({ type: "callback", id, function: functionName, args }));
+    return new Promise((resolve, reject) => {
+      pendingPhpCallbacks.set(id, { resolve, reject });
+    });
+  };
+}
+
 function shutdown(signal: string): void {
   log(`Received ${signal}, shutting down`);
   server.stop();
-  try {
-    unlinkSync(socketPath);
-  } catch {}
+  cbServer.stop();
+  try { unlinkSync(socketPath); } catch {}
+  try { unlinkSync(callbackSocketPath); } catch {}
   process.exit(0);
 }
 

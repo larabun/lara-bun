@@ -149,25 +149,12 @@ const emptyManifest = {
 export async function resolveMetadata(
   component: string,
   props: Record<string, unknown>,
-  callbackSocket?: string | null
 ): Promise<Record<string, unknown> | null> {
   if (typeof rscModule.resolveMetadata !== "function") {
     return null;
   }
 
-  let cleanup: (() => void) | null = null;
-
-  if (callbackSocket) {
-    const client = new PhpCallbackClient();
-    await client.connect(callbackSocket);
-    cleanup = installPhp(client);
-  }
-
-  try {
-    return await rscModule.resolveMetadata(component, props);
-  } finally {
-    cleanup?.();
-  }
+  return await rscModule.resolveMetadata(component, props);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -190,6 +177,20 @@ function installPhp(client: PhpCallbackClient): () => void {
   };
 }
 
+/**
+ * Install a php() function provided by the worker (via persistent callback channel).
+ * Returns a cleanup function.
+ */
+export function installPhpFn(phpFn: (fn: string, ...args: unknown[]) => Promise<unknown>): () => void {
+  (globalThis as any).php = phpFn;
+
+  return () => {
+    if ((globalThis as any).php === phpFn) {
+      delete (globalThis as any).php;
+    }
+  };
+}
+
 // ─── Stream Handler (SPA navigation) ─────────────────────────────────────────
 
 /**
@@ -201,42 +202,13 @@ function installPhp(client: PhpCallbackClient): () => void {
 export async function handleRscStream(
   component: string,
   props: Record<string, unknown>,
-  callbackSocket?: string | null,
   layouts: LayoutEntry[] = []
 ): Promise<{ stream: ReadableStream; clientChunks: string[] }> {
-  let cleanup: (() => void) | null = null;
-
-  if (callbackSocket) {
-    const client = new PhpCallbackClient();
-    await client.connect(callbackSocket);
-    cleanup = installPhp(client);
-  }
+  // php() is installed by the worker via installPhpFn before calling this
 
   const flightStream: ReadableStream = clientManifest
     ? rscModule.renderRscStream(component, props, clientManifest, layouts)
     : rscModule.renderRscStream(component, props, layouts);
-
-  // Wrap the stream to clean up the callback client when done
-  if (cleanup) {
-    const cleanupFn = cleanup;
-    const reader = flightStream.getReader();
-    const wrappedStream = new ReadableStream({
-      async pull(controller) {
-        const { done, value } = await reader.read();
-        if (done) {
-          controller.close();
-          cleanupFn();
-        } else {
-          controller.enqueue(value);
-        }
-      },
-      cancel() {
-        reader.cancel();
-        cleanupFn();
-      },
-    });
-    return { stream: wrappedStream, clientChunks: browserChunks };
-  }
 
   return { stream: flightStream, clientChunks: browserChunks };
 }
@@ -255,73 +227,14 @@ export async function handleRscStream(
 export async function handleRscHtmlStream(
   component: string,
   props: Record<string, unknown>,
-  callbackSocket?: string | null,
   layouts: LayoutEntry[] = []
 ): Promise<{
   htmlStream: ReadableStream;
   rscPayloadPromise: Promise<string>;
   clientChunks: string[];
-  flushCallbacks?: () => void;
 }> {
-  let cleanup: (() => void) | null = null;
-  let flushCallbacks: (() => void) | undefined;
+  // php() is installed by the worker via installPhpFn (with deferred pattern)
 
-  if (callbackSocket) {
-    // Connect immediately so PHP's callback acceptance doesn't block,
-    // but defer php() call execution to enable Suspense streaming.
-    // React sees unresolved Promises, hits Suspense boundaries, and emits
-    // fallback HTML first. After the first HTML chunk, flushCallbacks()
-    // sends queued calls to PHP and results stream in progressively.
-    const client = new PhpCallbackClient();
-    await client.connect(callbackSocket);
-
-    const pendingCalls: Array<{
-      fn: string;
-      args: unknown[];
-      resolve: (value: unknown) => void;
-      reject: (reason: Error) => void;
-    }> = [];
-    let flushed = false;
-
-    const flush = () => {
-      if (flushed) return;
-      flushed = true;
-      for (const call of pendingCalls) {
-        client.call(call.fn, ...call.args).then(call.resolve, call.reject);
-      }
-      pendingCalls.length = 0;
-    };
-
-    // Auto-flush after 100ms to prevent deadlock when no Suspense boundary
-    // exists. Once flushed, php() calls execute directly without queueing.
-    const autoFlushTimer = setTimeout(flush, 100);
-
-    const deferredPhpFn = (functionName: string, ...args: unknown[]): Promise<unknown> => {
-      if (flushed) {
-        return client.call(functionName, ...args);
-      }
-      return new Promise((resolve, reject) => {
-        pendingCalls.push({ fn: functionName, args, resolve, reject });
-      });
-    };
-    (globalThis as any).php = deferredPhpFn;
-
-    flushCallbacks = () => {
-      clearTimeout(autoFlushTimer);
-      flush();
-    };
-
-    cleanup = () => {
-      clearTimeout(autoFlushTimer);
-      flush();
-      try { client.disconnect(); } catch {}
-      if ((globalThis as any).php === deferredPhpFn) {
-        delete (globalThis as any).php;
-      }
-    };
-  }
-
-  // Render Flight as a stream (progressive — Suspense boundaries emit lazily)
   const flightStream: ReadableStream = clientManifest
     ? rscModule.renderRscStream(component, props, clientManifest, layouts)
     : rscModule.renderRscStream(component, props, layouts);
@@ -344,30 +257,7 @@ export async function handleRscHtmlStream(
   // <template> + <script> completion tags as async content resolves.
   const htmlStream = await renderToReadableStream(reactTree);
 
-  // Wrap to clean up callback client when HTML stream closes
-  if (cleanup) {
-    const cleanupFn = cleanup;
-    const reader = htmlStream.getReader();
-    const wrappedStream = new ReadableStream({
-      async pull(controller) {
-        const { done, value } = await reader.read();
-        if (done) {
-          controller.close();
-          await rscPayloadPromise.catch(() => {});
-          cleanupFn();
-        } else {
-          controller.enqueue(value);
-        }
-      },
-      cancel() {
-        reader.cancel();
-        cleanupFn();
-      },
-    });
-    return { htmlStream: wrappedStream, rscPayloadPromise, clientChunks: browserChunks, flushCallbacks };
-  }
-
-  return { htmlStream, rscPayloadPromise, clientChunks: browserChunks, flushCallbacks };
+  return { htmlStream, rscPayloadPromise, clientChunks: browserChunks };
 }
 
 // ─── Action Handler (server actions) ──────────────────────────────────────────
@@ -381,7 +271,6 @@ export async function handleAction(
   actionId: string,
   body: string,
   contentType: string,
-  callbackSocket?: string | null
 ): Promise<{ stream: ReadableStream }> {
   if (typeof rscModule.getServerAction !== "function") {
     throw new Error("No server actions registered. Rebuild with: bun run build:rsc");
@@ -403,62 +292,25 @@ export async function handleAction(
     throw new Error(`Unknown server action: "${actionId}"`);
   }
 
-  let cleanup: (() => void) | null = null;
+  // php() is installed by the worker via installPhpFn
 
-  if (callbackSocket) {
-    const client = new PhpCallbackClient();
-    await client.connect(callbackSocket);
-    cleanup = installPhp(client);
+  let decodable: string | FormData;
+
+  if (contentType.includes("multipart/form-data")) {
+    const response = new Response(body, {
+      headers: { "Content-Type": contentType },
+    });
+    decodable = await response.formData();
+  } else {
+    decodable = body;
   }
 
-  try {
-    // Reconstruct the original body format for decodeReply.
-    // The client serializes FormData to raw bytes and sends with an opaque
-    // content-type to prevent PHP from consuming the body. We use the real
-    // content-type header to reconstruct FormData when needed.
-    let decodable: string | FormData;
+  const args = await rscModule.decodeReply(decodable);
+  const result = await actionFn(...(args as unknown[]));
 
-    if (contentType.includes("multipart/form-data")) {
-      const response = new Response(body, {
-        headers: { "Content-Type": contentType },
-      });
-      decodable = await response.formData();
-    } else {
-      decodable = body;
-    }
+  const stream = rscModule.renderActionStream(result, clientManifest ?? {});
 
-    const args = await rscModule.decodeReply(decodable);
-    const result = await actionFn(...(args as unknown[]));
-
-    const stream = rscModule.renderActionStream(result, clientManifest ?? {});
-
-    // Wrap to clean up callback client when stream closes
-    if (cleanup) {
-      const cleanupFn = cleanup;
-      const reader = stream.getReader();
-      const wrappedStream = new ReadableStream({
-        async pull(controller) {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.close();
-            cleanupFn();
-          } else {
-            controller.enqueue(value);
-          }
-        },
-        cancel() {
-          reader.cancel();
-          cleanupFn();
-        },
-      });
-      return { stream: wrappedStream };
-    }
-
-    return { stream };
-  } catch (err) {
-    cleanup?.();
-    throw err;
-  }
+  return { stream };
 }
 
 // ─── PPR Shell Handler (build-time: captures shell with Suspense fallbacks) ──

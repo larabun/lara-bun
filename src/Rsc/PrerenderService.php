@@ -86,9 +86,7 @@ class PrerenderService
         );
 
         if ($shell['timedOut']) {
-            throw new \RuntimeException(
-                "Prerender timed out for {$url}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
-            );
+            return ['type' => 'dynamic', 'reason' => 'awaits async data'];
         }
 
         // If page uses php() or other dynamic APIs, it's PPR — skip full render
@@ -186,11 +184,9 @@ class PrerenderService
             $rscResponse->getLayouts(),
         );
 
-        if ($result['timedOut']) {
-            throw new \RuntimeException(
-                "PPR shell timed out for {$uri}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
-            );
-        }
+        $shellBody = $result['timedOut']
+            ? '<div style="padding:40px"><div style="height:32px;width:280px;background:rgba(255,255,255,0.06);border-radius:8px;margin-bottom:16px;animation:pulse 1.5s ease-in-out infinite"></div><div style="height:200px;background:rgba(255,255,255,0.03);border-radius:12px;border:1px solid rgba(255,255,255,0.06);animation:pulse 1.5s ease-in-out infinite"></div><style>@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.8}}</style></div>'
+            : $result['shellHtml'];
 
         $version = $rscResponse->getVersion();
 
@@ -204,7 +200,7 @@ class PrerenderService
 
         $html = view($rootView, [
             ...$rscResponse->getViewData(),
-            'body' => $result['shellHtml'],
+            'body' => $shellBody,
             'initialJson' => $initialJson,
             'scripts' => self::PPR_PAYLOAD_MARKER,
         ])->render();
@@ -253,11 +249,9 @@ class PrerenderService
             $rscResponse->getLayouts(),
         );
 
-        if ($result['timedOut']) {
-            throw new \RuntimeException(
-                "PPR shell timed out for {$url}. Async content must be wrapped in <Suspense> or provide a loading.tsx."
-            );
-        }
+        $shellBody = $result['timedOut']
+            ? '<div style="padding:40px"><div style="height:32px;width:280px;background:rgba(255,255,255,0.06);border-radius:8px;margin-bottom:16px;animation:pulse 1.5s ease-in-out infinite"></div><div style="height:200px;background:rgba(255,255,255,0.03);border-radius:12px;border:1px solid rgba(255,255,255,0.06);animation:pulse 1.5s ease-in-out infinite"></div><style>@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.8}}</style></div>'
+            : $result['shellHtml'];
 
         $version = $rscResponse->getVersion();
 
@@ -271,7 +265,7 @@ class PrerenderService
 
         $html = view($rootView, [
             ...$rscResponse->getViewData(),
-            'body' => $result['shellHtml'],
+            'body' => $shellBody,
             'initialJson' => $initialJson,
             'scripts' => self::PPR_PAYLOAD_MARKER,
         ])->render();

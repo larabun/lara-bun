@@ -469,6 +469,7 @@ export async function handleRscPprShell(
   layouts: LayoutEntry[] = []
 ): Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean; usedDynamicApis: boolean }> {
   let usedDynamicApis = false;
+  let timedOut = false;
   const mockPhpFn = (): Promise<never> => {
     usedDynamicApis = true;
     return new Promise(() => {});
@@ -477,51 +478,68 @@ export async function handleRscPprShell(
   (globalThis as any).php = mockPhpFn;
 
   try {
-    const flightStream: ReadableStream = clientManifest
-      ? rscModule.renderRscStream(component, props, clientManifest, layouts)
-      : rscModule.renderRscStream(component, props, layouts);
-
-    const consumerManifest = ssrManifest
-      ? { serverConsumerManifest: ssrManifest }
-      : emptyManifest;
-
-    const reactTree = await createFromReadableStream(flightStream, consumerManifest);
-    const htmlStream = await renderToReadableStream(reactTree);
-    const reader = htmlStream.getReader();
-    const decoder = new TextDecoder();
-
-    let shellHtml = "";
-    let timedOut = false;
     const TIMEOUT = 5000;
 
-    while (true) {
-      const result = await Promise.race([
-        reader.read(),
-        new Promise<{ done: true; value: undefined }>((resolve) =>
-          setTimeout(() => {
-            timedOut = true;
-            resolve({ done: true, value: undefined });
-          }, TIMEOUT)
-        ),
-      ]);
+    // Wrap the entire render in a timeout. If createFromReadableStream blocks
+    // (async component awaits mock php()), we still return a PPR result
+    // so the page can render dynamically at runtime.
+    const renderResult = await Promise.race([
+      (async () => {
+        const flightStream: ReadableStream = clientManifest
+          ? rscModule.renderRscStream(component, props, clientManifest, layouts)
+          : rscModule.renderRscStream(component, props, layouts);
 
-      if (result.done) break;
+        const consumerManifest = ssrManifest
+          ? { serverConsumerManifest: ssrManifest }
+          : emptyManifest;
 
-      const chunk = decoder.decode(result.value, { stream: true });
-      shellHtml += chunk;
+        const reactTree = await createFromReadableStream(flightStream, consumerManifest);
+        const htmlStream = await renderToReadableStream(reactTree);
+        const reader = htmlStream.getReader();
+        const decoder = new TextDecoder();
 
-      if (chunk.includes('hidden id="S:') || chunk.includes("$RC(") || chunk.includes("$RS(")) {
-        const completionStart = shellHtml.search(/<div hidden id="S:/);
-        if (completionStart !== -1) {
-          shellHtml = shellHtml.slice(0, completionStart);
+        let shellHtml = "";
+
+        while (true) {
+          const result = await Promise.race([
+            reader.read(),
+            new Promise<{ done: true; value: undefined }>((resolve) =>
+              setTimeout(() => resolve({ done: true, value: undefined }), TIMEOUT)
+            ),
+          ]);
+
+          if (result.done) break;
+
+          const chunk = decoder.decode(result.value, { stream: true });
+          shellHtml += chunk;
+
+          if (chunk.includes('hidden id="S:') || chunk.includes("$RC(") || chunk.includes("$RS(")) {
+            const completionStart = shellHtml.search(/<div hidden id="S:/);
+            if (completionStart !== -1) {
+              shellHtml = shellHtml.slice(0, completionStart);
+            }
+            break;
+          }
         }
-        break;
-      }
+
+        try { reader.cancel(); } catch {}
+
+        return shellHtml;
+      })(),
+      new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), TIMEOUT)
+      ),
+    ]);
+
+    if (renderResult === null) {
+      // Timed out — page has async content that blocks Flight deserialization.
+      // Still classifiable as PPR (renders dynamically at runtime).
+      timedOut = true;
+      usedDynamicApis = true;
+      return { shellHtml: "", clientChunks: browserChunks, timedOut, usedDynamicApis };
     }
 
-    try { reader.cancel(); } catch {}
-
-    return { shellHtml, clientChunks: browserChunks, timedOut, usedDynamicApis };
+    return { shellHtml: renderResult, clientChunks: browserChunks, timedOut, usedDynamicApis };
   } finally {
     if ((globalThis as any).php === mockPhpFn) {
       if (previousPhp) {

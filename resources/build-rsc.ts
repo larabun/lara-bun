@@ -78,6 +78,34 @@ try {
 
 const sourceDir = process.argv[2] ?? join(process.cwd(), "resources/js/rsc");
 const outDir = process.argv[3] ?? join(process.cwd(), "bootstrap/rsc");
+
+// Auto-create tsconfig.json if it doesn't exist — needed for php.d.ts global types
+const tsconfigPath = join(process.cwd(), "tsconfig.json");
+if (!existsSync(tsconfigPath)) {
+  const phpDtsPath = existsSync(join(process.cwd(), "vendor/larabun/lara-bun/resources/php.d.ts"))
+    ? "vendor/larabun/lara-bun/resources/php.d.ts"
+    : join(resolve(join(import.meta.dir, "..")), "resources/php.d.ts");
+
+  writeFileSync(tsconfigPath, JSON.stringify({
+    compilerOptions: {
+      target: "ESNext",
+      module: "ESNext",
+      moduleResolution: "bundler",
+      jsx: "react-jsx",
+      strict: true,
+      esModuleInterop: true,
+      skipLibCheck: true,
+      forceConsistentCasingInFileNames: true,
+      paths: { "~/*": ["./resources/js/*"] },
+    },
+    include: [
+      "resources/**/*.ts",
+      "resources/**/*.tsx",
+      phpDtsPath,
+    ],
+  }, null, 2) + "\n");
+  console.log(`Generated: ${tsconfigPath}`);
+}
 const clientOutDir = join(outDir, "client");
 const browserOutDir = join(process.cwd(), "public/build/rsc");
 

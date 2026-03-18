@@ -3,8 +3,11 @@
 import {
   type AnchorHTMLAttributes,
   type MouseEvent,
+  createContext,
   useCallback,
+  useContext,
   useEffect,
+  useState,
 } from "react";
 
 type PrefetchStrategy = "hover" | "mount" | "click" | "none" | boolean;
@@ -17,10 +20,15 @@ interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"
   preserveScroll?: boolean;
 }
 
+const LinkStatusContext = createContext<{ pending: boolean }>({ pending: false });
+
+export function useLinkStatus(): { pending: boolean } {
+  return useContext(LinkStatusContext);
+}
+
 function isExternalUrl(url: string): boolean {
   try {
-    const parsed = new URL(url, window.location.origin);
-    return parsed.origin !== window.location.origin;
+    return new URL(url, window.location.origin).origin !== window.location.origin;
   } catch {
     return false;
   }
@@ -48,7 +56,8 @@ export default function Link({
   onMouseEnter,
   ...rest
 }: LinkProps) {
-  // Normalize boolean: true → "hover", false → "none"
+  const [pending, setPending] = useState(false);
+
   const prefetchStrategy = prefetchProp === true
     ? "hover"
     : prefetchProp === false
@@ -56,17 +65,12 @@ export default function Link({
       : prefetchProp;
 
   const doPrefetch = useCallback(() => {
-    if (isExternalUrl(href)) {
-      return;
-    }
-
-    // The prefetch() function handles deduplication via its cache.
-    // No need for a ref guard — expired/consumed cache entries are
-    // removed, so re-hover correctly triggers a new prefetch.
+    if (isExternalUrl(href)) return;
     const fn = (window as any).__rsc_prefetch;
     fn?.(href, cacheFor);
   }, [href, cacheFor]);
 
+  // Only useEffect needed: prefetch on mount strategy
   useEffect(() => {
     if (prefetchStrategy === "mount") {
       doPrefetch();
@@ -77,23 +81,22 @@ export default function Link({
     (e: MouseEvent<HTMLAnchorElement>) => {
       onClick?.(e);
 
-      if (e.defaultPrevented) {
-        return;
-      }
+      if (e.defaultPrevented) return;
 
       const target = (e.currentTarget as HTMLAnchorElement).target;
-      if (target && target !== "_self") {
-        return;
-      }
-
-      if (!shouldInterceptClick(e) || isExternalUrl(href)) {
-        return;
-      }
+      if (target && target !== "_self") return;
+      if (!shouldInterceptClick(e) || isExternalUrl(href)) return;
 
       e.preventDefault();
+      setPending(true);
 
+      // navigate() returns a Promise — clear pending when it resolves or rejects
       const nav = (window as any).__rsc_navigate;
-      nav?.(href, { replace, preserveScroll });
+      const promise = nav?.(href, { replace, preserveScroll });
+      promise?.then(
+        () => setPending(false),
+        () => setPending(false),
+      );
     },
     [href, replace, preserveScroll, onClick]
   );
@@ -101,7 +104,6 @@ export default function Link({
   const handleMouseEnter = useCallback(
     (e: MouseEvent<HTMLAnchorElement>) => {
       onMouseEnter?.(e);
-
       if (prefetchStrategy === "hover" || prefetchStrategy === "click") {
         doPrefetch();
       }
@@ -109,7 +111,6 @@ export default function Link({
     [prefetchStrategy, doPrefetch, onMouseEnter]
   );
 
-  // Prefetch on touchstart for mobile — fires ~100ms before tap completes
   const handleTouchStart = useCallback(() => {
     if (prefetchStrategy === "hover" || prefetchStrategy === "click") {
       doPrefetch();
@@ -117,14 +118,17 @@ export default function Link({
   }, [prefetchStrategy, doPrefetch]);
 
   return (
-    <a
-      href={href}
-      onClick={handleClick}
-      onMouseEnter={handleMouseEnter}
-      onTouchStart={handleTouchStart}
-      {...rest}
-    >
-      {children}
-    </a>
+    <LinkStatusContext.Provider value={{ pending }}>
+      <a
+        href={href}
+        onClick={handleClick}
+        onMouseEnter={handleMouseEnter}
+        onTouchStart={handleTouchStart}
+        data-pending={pending ? "" : undefined}
+        {...rest}
+      >
+        {children}
+      </a>
+    </LinkStatusContext.Provider>
   );
 }

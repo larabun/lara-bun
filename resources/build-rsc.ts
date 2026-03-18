@@ -699,7 +699,8 @@ function buildElement(
   component: string,
   props: Record<string, unknown>,
   layouts: LayoutEntry[],
-  loadings: string[] = []
+  loadings: string[] = [],
+  parallelSlots: Record<string, string> = {}
 ): React.ReactElement {
   const Component = components[component];
 
@@ -712,8 +713,6 @@ function buildElement(
   let element = createElement(Component, props);
 
   // Wrap in loading.tsx Suspense boundaries (innermost first).
-  // Each loading component in the hierarchy wraps the content below it.
-  // loadings[0] is outermost, loadings[last] is innermost (nearest to page).
   for (let i = loadings.length - 1; i >= 0; i--) {
     const Loading = components[loadings[i]];
     if (Loading) {
@@ -721,7 +720,18 @@ function buildElement(
     }
   }
 
-  // Wrap in layouts: layouts[0] is outermost, layouts[last] is innermost
+  // Render parallel slot components (@folder convention).
+  // Each slot becomes a named prop on the layout.
+  const slotElements: Record<string, React.ReactElement> = {};
+  for (const [slotName, slotComponent] of Object.entries(parallelSlots)) {
+    const SlotComponent = components[slotComponent];
+    if (SlotComponent) {
+      slotElements[slotName] = createElement(SlotComponent, props);
+    }
+  }
+
+  // Wrap in layouts: layouts[0] is outermost, layouts[last] is innermost.
+  // The innermost layout receives parallel slots as props alongside children.
   for (let i = layouts.length - 1; i >= 0; i--) {
     const Layout = components[layouts[i].component];
     if (!Layout) {
@@ -729,7 +739,11 @@ function buildElement(
         \`Unknown layout component: "\${layouts[i].component}". Available: \${Object.keys(components).join(", ")}\`
       );
     }
-    element = createElement(Layout, { ...layouts[i].props, children: element });
+    // Pass parallel slots to the innermost layout (closest to page)
+    const layoutProps = i === layouts.length - 1
+      ? { ...layouts[i].props, ...slotElements, children: element }
+      : { ...layouts[i].props, children: element };
+    element = createElement(Layout, layoutProps);
   }
 
   return element;
@@ -740,9 +754,9 @@ export async function renderRsc(
   props: Record<string, unknown>,
   ${clientManifestParam ? `${clientManifestParam},` : ""}
   layouts: LayoutEntry[] = [],
-  loadings: string[] = []
+  loadings: string[] = [], parallelSlots: Record<string, string> = {}
 ): Promise<string> {
-  const element = buildElement(component, props, layouts, loadings);
+  const element = buildElement(component, props, layouts, loadings, parallelSlots);
   const stream = renderToReadableStream(element, ${clientManifestArg});
 
   return await new Response(stream).text();
@@ -753,9 +767,9 @@ export function renderRscStream(
   props: Record<string, unknown>,
   ${clientManifestParam ? `${clientManifestParam},` : ""}
   layouts: LayoutEntry[] = [],
-  loadings: string[] = []
+  loadings: string[] = [], parallelSlots: Record<string, string> = {}
 ): ReadableStream {
-  const element = buildElement(component, props, layouts, loadings);
+  const element = buildElement(component, props, layouts, loadings, parallelSlots);
   return renderToReadableStream(element, ${clientManifestArg});
 }
 `;

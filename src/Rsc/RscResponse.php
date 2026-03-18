@@ -24,6 +24,9 @@ class RscResponse implements Responsable
     /** @var list<string> */
     protected array $loadingComponents = [];
 
+    /** @var array<string, string> */
+    protected array $parallelSlotComponents = [];
+
     /**
      * @param  array<string, mixed>  $props
      */
@@ -66,6 +69,24 @@ class RscResponse implements Responsable
     public function getLoadings(): array
     {
         return $this->loadingComponents;
+    }
+
+    /**
+     * @param  array<string, string>  $slots
+     */
+    public function parallelSlots(array $slots): static
+    {
+        $this->parallelSlotComponents = $slots;
+
+        return $this;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function getParallelSlots(): array
+    {
+        return $this->parallelSlotComponents;
     }
 
     public function rootView(string $rootView): static
@@ -123,7 +144,7 @@ class RscResponse implements Responsable
     protected function toStreamedRscResponse(string $version): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents);
+        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents);
 
         // First yield is always {clientChunks, metadata} — read it eagerly
         // so we can set proper headers on the StreamedResponse object.
@@ -176,7 +197,7 @@ class RscResponse implements Responsable
     protected function toStreamedHtmlResponse(string $version, \Illuminate\Http\Request $request): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents);
+        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents);
 
         // First yield: {clientChunks: [...], metadata: {...}}
         $meta = $generator->current();

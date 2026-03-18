@@ -20,6 +20,7 @@ interface IncomingMessage {
   props?: Record<string, unknown>;
   layouts?: LayoutEntry[];
   loadings?: string[];
+  parallelSlots?: Record<string, string>;
   callbackSocket?: string; // deprecated — use callbackId
   callbackId?: string;
   actionId?: string;
@@ -154,7 +155,7 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
             message.component,
             message.props ?? {},
             message.callbackSocket ?? null, // fallback for old protocol
-            message.layouts ?? [], message.loadings ?? []
+            message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {}
           );
           return JSON.stringify({ result: { ...result, metadata } });
         } finally {
@@ -179,7 +180,7 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
         const result = await rscHandler.handleRscPprShell(
           message.component,
           message.props ?? {},
-          message.layouts ?? [], message.loadings ?? []
+          message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {}
         );
         return JSON.stringify({ result });
       } catch (err) {
@@ -297,7 +298,7 @@ async function handleRscStreamMessage(
     const { stream, clientChunks } = await rscHandler.handleRscStream(
       message.component,
       message.props ?? {},
-      message.layouts ?? [], message.loadings ?? []
+      message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {}
     );
 
     writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata }));
@@ -399,7 +400,7 @@ async function handleRscHtmlStreamMessage(
       await rscHandler.handleRscHtmlStream(
         message.component,
         message.props ?? {},
-        message.layouts ?? [], message.loadings ?? []
+        message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {}
       );
 
     writeFrame(mainSocket, JSON.stringify({ type: "html-start", clientChunks, metadata }));

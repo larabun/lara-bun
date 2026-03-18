@@ -88,19 +88,24 @@ if (!existsSync(tsconfigPath)) {
 
   writeFileSync(tsconfigPath, JSON.stringify({
     compilerOptions: {
+      allowJs: true,
       target: "ESNext",
       module: "ESNext",
       moduleResolution: "bundler",
       jsx: "react-jsx",
       strict: true,
+      isolatedModules: true,
       esModuleInterop: true,
       skipLibCheck: true,
       forceConsistentCasingInFileNames: true,
+      noEmit: true,
+      verbatimModuleSyntax: true,
       paths: { "~/*": ["./resources/js/*"] },
     },
     include: [
       "resources/**/*.ts",
       "resources/**/*.tsx",
+      "resources/**/*.d.ts",
       phpDtsPath,
     ],
   }, null, 2) + "\n");

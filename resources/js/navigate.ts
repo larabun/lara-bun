@@ -226,7 +226,10 @@ export async function navigate(
     onNavigate?.(tree);
 
     if (!opts?.preserveScroll) {
-      window.scrollTo(0, 0);
+      // Wait for React to commit the DOM update before scrolling
+      requestAnimationFrame(() => {
+        window.scrollTo(0, 0);
+      });
     }
 
     window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));

@@ -269,16 +269,17 @@ export async function navigate(
       treePromise = deserializeResponse(response);
     }
 
-    // Don't await the full tree — pass the Thenable directly to React.
-    // React uses `use()` internally to unwrap it, rendering Suspense
-    // fallbacks immediately while async components stream in progressively.
+    const tree = await treePromise;
+
+    if (controller.signal.aborted) return;
+
     if (opts?.replace) {
       history.replaceState({ rscUrl: url }, "", url);
     } else {
       history.pushState({ rscUrl: url }, "", url);
     }
 
-    onNavigate?.(treePromise);
+    onNavigate?.(tree);
 
     if (!opts?.preserveScroll && !interceptSlot) {
       // Wait for React to commit the DOM update before scrolling.

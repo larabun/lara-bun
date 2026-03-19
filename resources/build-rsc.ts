@@ -100,7 +100,7 @@ if (!existsSync(tsconfigPath)) {
       forceConsistentCasingInFileNames: true,
       noEmit: true,
       verbatimModuleSyntax: true,
-      paths: { "~/*": ["./resources/js/*"] },
+      paths: { "@/*": ["./resources/js/*"] },
     },
     include: [
       "resources/**/*.ts",

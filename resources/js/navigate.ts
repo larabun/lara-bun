@@ -236,7 +236,7 @@ export async function navigate(
     : undefined;
 
   try {
-    const cached = cache.get(url);
+    const cached = !interceptSlot ? cache.get(url) : undefined;
     let treePromise: Promise<ReactNode>;
 
     if (cached && cached.expiresAt > Date.now()) {

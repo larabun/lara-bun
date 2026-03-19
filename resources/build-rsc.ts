@@ -336,6 +336,19 @@ for await (const path of glob.scan(sourceDir)) {
     serverComponents.push(info);
   }
 
+  // Detect metadata exports from layout files (app/**/layout.tsx)
+  if (path.startsWith("app/") && basename(path).match(/^layout\.(tsx|ts|jsx|js)$/)) {
+    const meta = detectMetadataExports(absolutePath);
+    if (meta.hasStatic || meta.hasDynamic) {
+      pageMetadata.push({
+        componentName: info.name,
+        absolutePath,
+        hasStatic: meta.hasStatic,
+        hasDynamic: meta.hasDynamic,
+      });
+    }
+  }
+
   // Detect metadata exports and collect route info from page files (app/**/page.tsx)
   if (path.startsWith("app/") && basename(path).match(/^page\.(tsx|ts|jsx|js)$/)) {
     const meta = detectMetadataExports(absolutePath);
@@ -676,14 +689,54 @@ ${metadataMapEntries}
 
 export async function resolveMetadata(
   component: string,
-  props: Record<string, unknown>
+  props: Record<string, unknown>,
+  layouts: { component: string }[] = []
 ): Promise<Record<string, unknown> | null> {
   const entry = metadataMap[component];
   if (!entry) return null;
-  if (entry.generate) {
-    return (await entry.generate(props)) as Record<string, unknown>;
+
+  const metadata = entry.generate
+    ? (await entry.generate(props)) as Record<string, unknown>
+    : { ...(entry.static ?? {}) };
+
+  if (!metadata) return null;
+
+  // Apply title.template from the nearest layout that defines one.
+  // Layouts are ordered outermost-first, so iterate in reverse to find
+  // the closest layout with a template.
+  if (metadata.title && typeof metadata.title === "string") {
+    for (let i = layouts.length - 1; i >= 0; i--) {
+      const layoutMeta = metadataMap[layouts[i].component];
+      if (!layoutMeta) continue;
+
+      const layoutData = layoutMeta.static as Record<string, unknown> | undefined;
+      const titleConfig = layoutData?.title;
+
+      if (titleConfig && typeof titleConfig === "object" && titleConfig !== null && "template" in titleConfig) {
+        const template = (titleConfig as { template: string }).template;
+        metadata.title = template.replace("%s", metadata.title as string);
+        break;
+      }
+    }
   }
-  return entry.static ?? null;
+
+  // If no page title but layout has a default title, use it
+  if (!metadata.title) {
+    for (let i = layouts.length - 1; i >= 0; i--) {
+      const layoutMeta = metadataMap[layouts[i].component];
+      if (!layoutMeta) continue;
+
+      const layoutData = layoutMeta.static as Record<string, unknown> | undefined;
+      const titleConfig = layoutData?.title;
+
+      if (titleConfig && typeof titleConfig === "object" && titleConfig !== null && "default" in titleConfig) {
+        metadata.title = (titleConfig as { default: string }).default;
+        break;
+      }
+    }
+  }
+
+  return metadata;
 }
 `
   : `

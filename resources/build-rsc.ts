@@ -1398,35 +1398,51 @@ console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);
 
 if (collectedCssFiles.size > 0) {
   const cssOutDir = join(process.cwd(), "public/build/css");
+  // Clean previous CSS builds (old hashes)
+  rmSync(cssOutDir, { recursive: true, force: true });
   mkdirSync(cssOutDir, { recursive: true });
 
   const cssChunks: string[] = [];
 
   for (const cssFile of collectedCssFiles) {
     const name = basename(cssFile, ".css");
-    const outFile = join(cssOutDir, `${name}.css`);
+
+    // Compile to a temp file first, then hash the content for cache busting
+    const tmpFile = join(cssOutDir, `${name}.tmp.css`);
 
     // Try Tailwind CLI first (handles @tailwindcss, @source, etc.)
     const twProc = Bun.spawn(
-      ["npx", "--yes", "@tailwindcss/cli@latest", "-i", cssFile, "-o", outFile, "--minify"],
+      ["npx", "--yes", "@tailwindcss/cli@latest", "-i", cssFile, "-o", tmpFile, "--minify"],
       { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" }
     );
 
     const twExit = await twProc.exited;
 
+    let cssContent: string;
+
     if (twExit === 0) {
-      const relativePath = `/build/css/${name}.css`;
-      cssChunks.push(relativePath);
-      console.log(`Built CSS: ${outFile}`);
+      cssContent = readFileSync(tmpFile, "utf-8");
     } else {
       const stderr = await new Response(twProc.stderr).text();
       console.warn(`Warning: Tailwind CSS compilation failed for ${cssFile}. Falling back to raw copy.`);
       if (stderr.trim()) console.warn(stderr.trim());
-
-      // Fallback: copy raw CSS (won't have Tailwind utilities compiled)
-      writeFileSync(outFile, readFileSync(cssFile, "utf-8"));
-      cssChunks.push(`/build/css/${name}.css`);
+      cssContent = readFileSync(cssFile, "utf-8");
     }
+
+    // Generate content hash for cache busting (same pattern as JS bundles)
+    const hasher = new Bun.CryptoHasher("md5");
+    hasher.update(cssContent);
+    const hash = hasher.digest("hex").slice(0, 8);
+
+    const hashedName = `${name}-${hash}.css`;
+    const outFile = join(cssOutDir, hashedName);
+    writeFileSync(outFile, cssContent);
+
+    // Clean up temp file
+    try { rmSync(tmpFile); } catch {}
+
+    cssChunks.push(`/build/css/${hashedName}`);
+    console.log(`Built CSS: ${outFile}`);
   }
 
   writeFileSync(

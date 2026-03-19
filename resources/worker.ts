@@ -156,6 +156,7 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
           const metadata = await rscHandler.resolveMetadata(
             message.component,
             message.props ?? {},
+            message.layouts ?? [],
           );
           const result = await rscHandler.handleRsc(
             message.component,
@@ -299,6 +300,7 @@ async function handleRscStreamMessage(
     const metadata = await rscHandler.resolveMetadata(
       message.component,
       message.props ?? {},
+      message.layouts ?? [],
     );
 
     const { stream, clientChunks } = await rscHandler.handleRscStream(
@@ -415,6 +417,7 @@ async function handleRscHtmlStreamMessage(
     const metadata = await rscHandler.resolveMetadata(
       message.component,
       message.props ?? {},
+      message.layouts ?? [],
     );
 
     const { htmlStream, rscPayloadPromise, clientChunks } =

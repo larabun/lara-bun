@@ -149,12 +149,13 @@ const emptyManifest = {
 export async function resolveMetadata(
   component: string,
   props: Record<string, unknown>,
+  layouts: LayoutEntry[] = [],
 ): Promise<Record<string, unknown> | null> {
   if (typeof rscModule.resolveMetadata !== "function") {
     return null;
   }
 
-  return await rscModule.resolveMetadata(component, props);
+  return await rscModule.resolveMetadata(component, props, layouts);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

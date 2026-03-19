@@ -117,6 +117,7 @@ const gitignorePath = join(process.cwd(), ".gitignore");
 const rscIgnoreEntries = [
   "/bootstrap/rsc",
   "/public/build/rsc",
+  "/public/build/css",
   "resources/js/rsc/routes.generated.ts",
   "resources/js/rsc/server-actions.generated.ts",
   "storage/framework/rsc-dev",
@@ -597,7 +598,35 @@ ${proxyExports}
   },
 };
 
-const serverPlugins: BunPlugin[] = [packageAliasPlugin];
+// ─── CSS Collection Plugin ───────────────────────────────────────────────────
+// Collects CSS file imports from server components (e.g. `import "./app.css"`)
+// and strips them from the server bundle. The collected files are compiled
+// with Tailwind CSS and output to public/build/css/.
+const collectedCssFiles = new Set<string>();
+
+const cssCollectorPlugin: BunPlugin = {
+  name: "css-collector",
+  setup(build) {
+    build.onResolve({ filter: /\.css$/ }, (args) => {
+      const resolved = args.importer
+        ? resolve(join(args.importer, ".."), args.path)
+        : resolve(args.path);
+
+      if (existsSync(resolved)) {
+        collectedCssFiles.add(resolved);
+      }
+
+      // Return empty module — server doesn't need CSS
+      return { path: resolved, namespace: "css-stub" };
+    });
+
+    build.onLoad({ filter: /.*/, namespace: "css-stub" }, () => {
+      return { contents: "", loader: "js" };
+    });
+  },
+};
+
+const serverPlugins: BunPlugin[] = [packageAliasPlugin, cssCollectorPlugin];
 if (clientComponents.length > 0) {
   serverPlugins.push(useClientPlugin);
 }
@@ -1319,3 +1348,48 @@ writeFileSync(
   JSON.stringify(browserChunks, null, 2)
 );
 console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);
+
+// ─── CSS Compilation ─────────────────────────────────────────────────────────
+// Compile collected CSS files (from server component imports) with Tailwind CSS.
+// Output to public/build/css/ and record paths in css-chunks.json for the
+// Blade template to link.
+
+if (collectedCssFiles.size > 0) {
+  const cssOutDir = join(process.cwd(), "public/build/css");
+  mkdirSync(cssOutDir, { recursive: true });
+
+  const cssChunks: string[] = [];
+
+  for (const cssFile of collectedCssFiles) {
+    const name = basename(cssFile, ".css");
+    const outFile = join(cssOutDir, `${name}.css`);
+
+    // Try Tailwind CLI first (handles @tailwindcss, @source, etc.)
+    const twProc = Bun.spawn(
+      ["npx", "--yes", "@tailwindcss/cli@latest", "-i", cssFile, "-o", outFile, "--minify"],
+      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" }
+    );
+
+    const twExit = await twProc.exited;
+
+    if (twExit === 0) {
+      const relativePath = `/build/css/${name}.css`;
+      cssChunks.push(relativePath);
+      console.log(`Built CSS: ${outFile}`);
+    } else {
+      const stderr = await new Response(twProc.stderr).text();
+      console.warn(`Warning: Tailwind CSS compilation failed for ${cssFile}. Falling back to raw copy.`);
+      if (stderr.trim()) console.warn(stderr.trim());
+
+      // Fallback: copy raw CSS (won't have Tailwind utilities compiled)
+      writeFileSync(outFile, readFileSync(cssFile, "utf-8"));
+      cssChunks.push(`/build/css/${name}.css`);
+    }
+  }
+
+  writeFileSync(
+    join(outDir, "css-chunks.json"),
+    JSON.stringify(cssChunks, null, 2)
+  );
+  console.log(`Generated: ${join(outDir, "css-chunks.json")} (${cssChunks.length} file(s))`);
+}

@@ -511,59 +511,6 @@ export default createClientModuleProxy("${moduleId}");
 
 // User path alias plugin — resolves @/* and ~/* imports from tsconfig.json paths.
 // Reads the tsconfig to support whatever alias the user has configured.
-const userAliasPlugin: BunPlugin = {
-  name: "user-alias",
-  setup(build) {
-    // Read tsconfig paths
-    let aliases: Record<string, string> = {};
-
-    if (existsSync(tsconfigPath)) {
-      try {
-        const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf-8"));
-        const paths = tsconfig?.compilerOptions?.paths ?? {};
-
-        for (const [pattern, targets] of Object.entries(paths)) {
-          if (!pattern.endsWith("/*") || !Array.isArray(targets) || targets.length === 0) continue;
-          const prefix = pattern.slice(0, -2); // "@" or "~"
-          const target = (targets[0] as string).replace(/\/\*$/, "");
-          aliases[prefix] = resolve(process.cwd(), target);
-        }
-      } catch {}
-    }
-
-    // Also support ~/ as a common convention even if not in tsconfig
-    if (!aliases["~"]) {
-      aliases["~"] = resolve(process.cwd(), "resources/js");
-    }
-
-    for (const [prefix, targetDir] of Object.entries(aliases)) {
-      const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const filter = new RegExp(`^${escaped}/`);
-
-      build.onResolve({ filter }, (args) => {
-        const subPath = args.path.replace(filter, "");
-        const candidates = [
-          join(targetDir, subPath),
-          join(targetDir, `${subPath}.tsx`),
-          join(targetDir, `${subPath}.ts`),
-          join(targetDir, `${subPath}.jsx`),
-          join(targetDir, `${subPath}.js`),
-          join(targetDir, subPath, "index.tsx"),
-          join(targetDir, subPath, "index.ts"),
-        ];
-
-        for (const candidate of candidates) {
-          if (existsSync(candidate)) {
-            return { path: candidate };
-          }
-        }
-
-        return undefined;
-      });
-    }
-  },
-};
-
 // Package alias plugin — resolves "lara-bun/*" imports to the package directory
 // so server components can `import Link from 'lara-bun/Link'`
 const packageAliasPlugin: BunPlugin = {
@@ -694,7 +641,7 @@ const cssCollectorPlugin: BunPlugin = {
   },
 };
 
-const serverPlugins: BunPlugin[] = [userAliasPlugin, packageAliasPlugin, cssCollectorPlugin];
+const serverPlugins: BunPlugin[] = [packageAliasPlugin, cssCollectorPlugin];
 if (clientComponents.length > 0) {
   serverPlugins.push(useClientPlugin);
 }
@@ -1174,7 +1121,7 @@ mkdirSync(clientOutDir, { recursive: true });
 // Note: React Compiler is NOT applied to SSR builds.
 // The compiler's runtime (`react/compiler-runtime`) uses createContext,
 // which is unavailable under react-server conditions in the Bun worker.
-const ssrPlugins: BunPlugin[] = [userAliasPlugin, packageAliasPlugin];
+const ssrPlugins: BunPlugin[] = [packageAliasPlugin];
 
 const ssrResult = await Bun.build({
   entrypoints: clientComponents.map((c) => c.absolutePath),
@@ -1298,7 +1245,7 @@ ${exports}
   },
 };
 
-const browserPlugins: BunPlugin[] = [userAliasPlugin, packageAliasPlugin];
+const browserPlugins: BunPlugin[] = [packageAliasPlugin];
 if (actionFiles.length > 0) {
   browserPlugins.push(useServerPlugin);
 }

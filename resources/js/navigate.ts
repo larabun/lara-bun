@@ -269,16 +269,17 @@ export async function navigate(
       treePromise = deserializeResponse(response);
     }
 
+    const tree = await treePromise;
+
+    if (controller.signal.aborted) return;
+
     if (opts?.replace) {
       history.replaceState({ rscUrl: url }, "", url);
     } else {
       history.pushState({ rscUrl: url }, "", url);
     }
 
-    // Pass the Thenable directly — TreeRenderer + startTransition in
-    // createRscApp keeps the current page visible while React resolves
-    // the new tree. No await needed.
-    onNavigate?.(treePromise);
+    onNavigate?.(tree);
 
     if (!opts?.preserveScroll && !interceptSlot) {
       // Wait for React to commit the DOM update before scrolling.

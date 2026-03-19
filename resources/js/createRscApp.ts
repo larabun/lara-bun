@@ -13,7 +13,6 @@
  */
 import { createFromReadableStream, encodeReply } from "react-server-dom-webpack/client.browser";
 import { hydrateRoot } from "react-dom/client";
-import { startTransition, use, createElement } from "react";
 import {
   setVersion,
   setNavigateHandler,
@@ -148,19 +147,9 @@ export function createRscApp(
   Promise.resolve(rootPromise).then((reactTree: any) => {
     const root = hydrateRoot(container, reactTree);
 
-    // Wire up SPA navigation.
-    // The tree may be a Thenable (from createFromReadableStream) or a
-    // resolved ReactElement. TreeRenderer uses use() to unwrap Thenables.
-    // startTransition keeps the current page visible while the new tree
-    // loads — no flash of empty content.
-    function TreeRenderer({ tree }: { tree: any }) {
-      return typeof tree?.then === "function" ? use(tree) : tree;
-    }
-
+    // Wire up SPA navigation: subsequent navigations re-render the root
     setNavigateHandler((newTree: any) => {
-      startTransition(() => {
-        root.render(createElement(TreeRenderer, { tree: newTree }));
-      });
+      root.render(newTree);
     });
 
     // Handle browser back/forward

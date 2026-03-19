@@ -100,7 +100,7 @@ if (!existsSync(tsconfigPath)) {
       forceConsistentCasingInFileNames: true,
       noEmit: true,
       verbatimModuleSyntax: true,
-      paths: { "@/*": ["./resources/js/*"] },
+      paths: { "@/*": ["./resources/js/rsc/*"] },
     },
     include: [
       "resources/**/*.ts",
@@ -194,6 +194,15 @@ function detectMetadataExports(filePath: string): { hasStatic: boolean; hasDynam
 const serverComponents: ComponentInfo[] = [];
 const clientComponents: ComponentInfo[] = [];
 let aliasIndex = 0;
+
+function hasDefaultExport(filePath: string): boolean {
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    return /export\s+default\b/.test(content);
+  } catch {
+    return false;
+  }
+}
 
 function isClientFile(filePath: string): boolean {
   try {
@@ -300,6 +309,19 @@ for await (const path of glob.scan(sourceDir)) {
   }
 
   const absolutePath = resolve(sourceDir, path);
+  const base = basename(path).replace(/\.(tsx|ts|jsx|js)$/, "");
+
+  // Only register entry-point files as components:
+  // - page.*, layout.*, loading.*, default.* (RSC entry points)
+  // - "use client" files (client component boundaries)
+  // - "use server" files (server actions)
+  // Everything else (lib/utils.ts, components/ui/button.tsx, etc.)
+  // is bundled transitively when imported by entry points.
+  const isEntryPoint = ["page", "layout", "loading", "default"].includes(base);
+
+  if (!isEntryPoint && !isClientFile(absolutePath) && !isServerActionFile(absolutePath)) {
+    continue;
+  }
 
   // Server action files are NOT components — handle them separately
   if (isServerActionFile(absolutePath)) {

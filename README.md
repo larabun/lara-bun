@@ -11,7 +11,7 @@ A Laravel-to-Bun bridge that lets you call JavaScript/TypeScript functions from 
 ## Installation
 
 ```bash
-composer require ramonmalcolm10/lara-bun
+composer require larabun/lara-bun
 ```
 
 The service provider and `Bun` facade are auto-discovered.
@@ -50,7 +50,7 @@ This starts a Bun process that listens on a Unix socket, auto-discovers all `.ts
 ### Via dependency injection
 
 ```php
-use RamonMalcolm\LaraBun\BunBridge;
+use LaraBun\BunBridge;
 
 class MyController extends Controller
 {
@@ -66,7 +66,7 @@ class MyController extends Controller
 ### Via the Bun facade
 
 ```php
-use RamonMalcolm\LaraBun\Facades\Bun;
+use LaraBun\Facades\Bun;
 
 $greeting = Bun::call('greet', ['name' => 'World']);
 
@@ -81,6 +81,7 @@ $isRunning = Bun::ping();
 |--------|-------------|
 | `call(string $function, array $args = []): mixed` | Call a Bun function by name |
 | `ssr(array $page): array` | Render an Inertia page via SSR |
+| `rsc(string $component, array $props = []): array` | Render a React Server Component to HTML. Returns `{body, rscPayload, clientChunks}` |
 | `list(): array` | List all discovered function names |
 | `ping(): bool` | Check if the Bun bridge is running |
 | `disconnect(): void` | Close all socket connections |
@@ -109,6 +110,13 @@ return [
 | `functions_dir` | `BUN_BRIDGE_FUNCTIONS_DIR` | `resources/bun` | Directory to scan for functions |
 | `workers` | `BUN_WORKERS` | `1` | Number of Bun worker processes |
 | `ssr.enabled` | `BUN_SSR_ENABLED` | `false` | Enable Bun-based Inertia SSR |
+| `rsc.enabled` | `BUN_RSC_ENABLED` | `false` | Enable React Server Components rendering |
+| `rsc.bundle` | `BUN_RSC_BUNDLE` | `bootstrap/rsc/entry.rsc.js` | Path to the pre-built RSC bundle |
+| `rsc.source_dir` | `BUN_RSC_SOURCE_DIR` | `resources/js/rsc` | Directory containing RSC component files |
+| `rsc.callables` | — | `[]` | Explicit mapping of names to PHP callables for `php()` |
+| `rsc.callables_dir` | — | `null` | Directory to auto-discover PHP callables from |
+| `rsc.callback_timeout` | — | `5` | Timeout in seconds for callback socket operations |
+| `rsc.actions_dir` | — | `app/RSC/Actions` | Directory to auto-discover server action classes from |
 | `entry_points` | `BUN_BRIDGE_ENTRY_POINTS` | `[]` | Comma-separated paths to additional JS/TS bundles |
 
 ## Multi-Worker Support
@@ -260,6 +268,320 @@ BUN_BRIDGE_ENTRY_POINTS=dist/my-bundle.js,dist/another.js
 
 Each exported function from these files becomes callable via `BunBridge::call()`.
 
+## React Server Components
+
+Lara Bun can render React Server Components (RSC) to HTML via the Unix socket. Async server components run in Bun, fetch data server-side, and return fully rendered HTML with zero client JavaScript.
+
+### 1. Enable RSC
+
+Install the required npm dependencies:
+
+```bash
+bun add react react-dom react-server-dom-webpack
+```
+
+Add to your `.env`:
+
+```env
+BUN_RSC_ENABLED=true
+```
+
+### 2. Create pages with file-based routing
+
+Place your components in `resources/js/rsc/app/`. Pages and layouts are auto-discovered using Next.js App Router conventions:
+
+```
+resources/js/rsc/app/
+├── layout.tsx                    → root layout (wraps all pages)
+├── page.tsx                      → GET /
+├── about/
+│   └── page.tsx                  → GET /about
+├── docs/
+│   ├── layout.tsx                → nested layout for /docs/*
+│   ├── route.php                 → directory-level config (middleware, etc.)
+│   ├── page.tsx                  → GET /docs
+│   ├── sidebar.tsx               → colocated component (NOT a route)
+│   └── [slug]/
+│       ├── page.tsx              → GET /docs/{slug}
+│       └── route.php             → page-level config (staticPaths, viewData)
+├── blog/
+│   └── [...path]/
+│       └── page.tsx              → GET /blog/{path} (catch-all)
+├── (marketing)/                  → route group (no URL segment)
+│   ├── pricing/
+│   │   └── page.tsx              → GET /pricing
+│   └── features/
+│       └── page.tsx              → GET /features
+└── @admin.example.com/           → domain routing
+    └── page.tsx                  → GET / on admin.example.com
+```
+
+**Special files:**
+- `page.tsx` — defines a route (only files named `page.*` create routes)
+- `layout.tsx` — wraps all pages in the same directory and below
+- `route.php` — optional PHP config for middleware, auth, static paths
+
+Everything else is a colocated component importable by pages and layouts.
+
+### Route configuration (`route.php`)
+
+Use `route.php` files to add middleware, authorization, static paths, and view data:
+
+```php
+// app/docs/route.php — applies to all routes in /docs/*
+<?php
+use LaraBun\Rsc\PageRoute;
+
+return PageRoute::make()
+    ->middleware(['auth', 'verified']);
+```
+
+```php
+// app/docs/[slug]/route.php — applies to this specific route
+<?php
+use LaraBun\Rsc\PageRoute;
+
+return PageRoute::make()
+    ->middleware(['auth'])
+    ->staticPaths(fn () => Post::pluck('slug')->all())
+    ->viewData(fn (string $slug) => ['title' => "Doc: $slug"]);
+```
+
+Available methods: `middleware()`, `can()`, `staticPaths()`, `viewData()`, `name()`, `where()`.
+
+### Auto-static detection
+
+Pages **without** dynamic segments (e.g., `app/about/page.tsx`) are automatically static — the `ServeStaticRsc` middleware is applied and `rsc:prerender` picks them up with no extra config. Pages **with** `[param]` segments are dynamic by default; provide `staticPaths()` in `route.php` to make them prerenderable.
+
+### Diagnostic command
+
+```bash
+php artisan rsc:pages
+```
+
+Shows a table of all discovered routes with their URL, component, layouts, type (static/dynamic), middleware, and domain.
+
+### Navigation
+
+The package ships a `Link` component for SPA navigation between RSC pages. On click, it fetches the Flight payload instead of doing a full page load.
+
+```tsx
+import Link from 'lara-bun/Link';
+
+<Link href="/docs/installation">Docs</Link>
+```
+
+**Props:**
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `href` | `string` | — | Target URL |
+| `prefetch` | `"hover" \| "mount" \| "click" \| "none" \| boolean` | `"hover"` | When to prefetch the route |
+| `cacheFor` | `number` | `30000` | Prefetch cache TTL in milliseconds |
+| `replace` | `boolean` | `false` | Replace current history entry instead of pushing |
+| `preserveScroll` | `boolean` | `false` | Keep scroll position after navigation (default scrolls to top) |
+
+By default, navigation scrolls to the top of the page. Use `preserveScroll` to opt out:
+
+```tsx
+<Link href="/docs/rsc" preserveScroll>Stay here</Link>
+```
+
+You can also navigate programmatically via the global `__rsc_navigate`:
+
+```ts
+window.__rsc_navigate('/about', { preserveScroll: true });
+```
+
+### 3. Build the RSC bundle
+
+```bash
+bun vendor/larabun/lara-bun/resources/build-rsc.ts
+```
+
+Components inside `app/` get path-based names (e.g., `app/docs/[slug]/page`). Components outside `app/` use flat basename naming.
+
+During development, use `--watch` to auto-rebuild on file changes:
+
+```bash
+bun --watch vendor/larabun/lara-bun/resources/build-rsc.ts
+```
+
+Or add both scripts to your `package.json`:
+
+```json
+{
+  "scripts": {
+    "build:rsc": "bun vendor/larabun/lara-bun/resources/build-rsc.ts",
+    "dev:rsc": "bun --watch vendor/larabun/lara-bun/resources/build-rsc.ts"
+  }
+}
+```
+
+### 4. Pre-render static pages
+
+```bash
+php artisan rsc:prerender
+```
+
+Automatically discovers all static routes and pre-renders them as HTML and Flight payloads.
+
+### How RSC rendering works
+
+```
+PHP: $bridge->rsc('Component', $props)
+  → Unix socket → worker.ts "rsc" handler
+    → rsc-handler.ts loads pre-built RSC bundle
+    → renderRsc() → Flight payload (serialized React tree)
+    → createFromReadableStream() → deserialize into React elements
+    → renderToReadableStream() → HTML string
+  ← returns { body, rscPayload }
+```
+
+The Flight protocol serializes the React component tree (including async components) into a streamable format. The handler deserializes it back into React elements and renders them to HTML. Both the rendered HTML and the raw Flight payload are returned, allowing you to use the HTML directly or hydrate on the client if needed.
+
+### Client components (`"use client"`)
+
+Server components are non-interactive by default. To add interactivity, create a component with `"use client"` at the top and import it from a server component:
+
+```tsx
+// resources/js/rsc/Counter.tsx — client component
+"use client";
+
+import { useState } from "react";
+
+export default function Counter() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount(c => c + 1)}>Count: {count}</button>;
+}
+```
+
+```tsx
+// resources/js/rsc/Dashboard.tsx — server component
+import Counter from "./Counter";
+
+export default async function Dashboard() {
+  return (
+    <div>
+      <h1>Dashboard</h1>
+      <Counter />
+    </div>
+  );
+}
+```
+
+The build script (`build-rsc.ts`) automatically detects `"use client"` files and generates:
+- **Server bundle** — client imports become Flight-serializable proxies
+- **SSR bundles** — for server-side HTML rendering of client components
+- **Browser bundles** — for client-side hydration
+
+### Hydrating client components
+
+Use the `@rscScripts` Blade directive to inject the hydration scripts:
+
+```blade
+<div id="rsc-root">{!! $body !!}</div>
+
+@rscScripts($rscPayload, $clientChunks)
+```
+
+The directive renders the Flight payload and module script tags needed for `react-server-dom-webpack` to hydrate client component boundaries in the browser.
+
+### Calling PHP from server components (`php()`)
+
+Server components can call PHP functions directly during rendering — no HTTP requests needed. Calls go over a dedicated Unix socket back to the PHP process, execute Eloquent queries or service methods, and return results inline.
+
+#### 1. Register callables
+
+**Option A: Explicit mapping** in `config/bun.php`:
+
+```php
+'rsc' => [
+    'callables' => [
+        'getUser' => [App\Rsc\Callables\UserCallable::class, 'getUser'],
+        'getPosts' => App\Rsc\Callables\PostCallable::class, // invokable
+    ],
+],
+```
+
+**Option B: Auto-discover from a directory:**
+
+```php
+'rsc' => [
+    'callables_dir' => app_path('Rsc/Callables'),
+],
+```
+
+Auto-discovered names follow the pattern `ClassName.methodName`. For example, a class `UserCallable` with a `getUser` method becomes callable as `UserCallable.getUser`. Invokable classes (`__invoke`) are registered as just `ClassName`. Explicit registrations take precedence.
+
+#### 2. Create a callable class
+
+```php
+// app/Rsc/Callables/UserCallable.php
+namespace App\Rsc\Callables;
+
+use App\Models\User;
+
+class UserCallable
+{
+    public function getUser(array $args): array
+    {
+        return User::findOrFail($args['id'])->toArray();
+    }
+}
+```
+
+Callables are resolved through the container, so constructor injection works.
+
+#### 3. Call from a server component
+
+```tsx
+// resources/js/rsc/app/page.tsx
+export default async function Home({ userId }: { userId: number }) {
+  const user = await php('UserCallable.getUser', { id: userId });
+  return <div>{user.name}</div>;
+}
+```
+
+The `php()` function is available as a global during RSC rendering. Add the type reference for editor support:
+
+```tsx
+/// <reference path="../../../vendor/larabun/lara-bun/resources/php.d.ts" />
+```
+
+#### How callbacks work
+
+```
+PHP                                          Bun
+────                                         ────
+1. Create temp callback socket
+   /tmp/rsc-cb-{random}.sock
+
+2. Send RSC request with callbackSocket ───> Receive request, connect to callback socket
+
+3. socket_select() loop                      Component calls php('getUser', {id:1})
+   monitoring main + callback sockets  <──── Send callback request on callback socket
+   Execute PHP callable via registry
+   Send response back on callback    ──────> Receive response, resume rendering
+
+   ... repeat for more callbacks ...
+
+4. select() fires on main socket     <────── Render complete, send final result
+   Return {body, rscPayload, clientChunks}
+```
+
+Each render creates a unique callback socket path, so concurrent Octane requests don't interfere. Both sides clean up sockets in `finally` blocks.
+
+## Development Server
+
+When using `php artisan serve`, enable multiple workers so streaming responses don't block concurrent requests:
+
+```bash
+PHP_CLI_SERVER_WORKERS=4 php artisan serve --no-reload
+```
+
+PHP's built-in server is single-threaded by default. Without multiple workers, navigating away from a page that is still streaming (e.g. Suspense fallbacks resolving) will block until the stream completes. This is only a development concern — production servers (nginx + php-fpm, Octane, Herd) handle concurrent requests natively.
+
 ## Laravel Octane
 
 If you're using Laravel Octane, add `BunBridge` to the `warm` array in `config/octane.php` to keep the socket connection alive across requests:
@@ -267,7 +589,7 @@ If you're using Laravel Octane, add `BunBridge` to the `warm` array in `config/o
 ```php
 'warm' => [
     ...Octane::defaultServicesToWarm(),
-    \RamonMalcolm\LaraBun\BunBridge::class,
+    \LaraBun\BunBridge::class,
 ],
 ```
 

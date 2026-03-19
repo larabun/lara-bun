@@ -236,7 +236,8 @@ export async function navigate(
     : undefined;
 
   try {
-    const cached = !interceptSlot ? cache.get(url) : undefined;
+    const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
+    const cached = cache.get(cacheKey);
     let treePromise: Promise<ReactNode>;
 
     if (cached && cached.expiresAt > Date.now()) {
@@ -246,9 +247,9 @@ export async function navigate(
       } else if (cached.title) {
         document.title = cached.title;
       }
-      cache.delete(url);
+      cache.delete(cacheKey);
     } else {
-      cache.delete(url);
+      cache.delete(cacheKey);
       const response = await fetchRscPayload(url, controller.signal, interceptSlot ?? undefined, currentUrl);
 
       const contentType = response.headers.get("Content-Type") ?? "";
@@ -304,19 +305,37 @@ export function prefetch(url: string, cacheForMs?: number): void {
   if (isExternalUrl(url)) return;
 
   const ttl = cacheForMs ?? DEFAULT_PREFETCH_TTL;
-  const existing = cache.get(url);
+  const interceptSlot = matchIntercept(url);
+
+  if (interceptSlot) {
+    // Intercepted route — only prefetch the intercepted variant
+    const currentUrl = window.location.pathname + window.location.search;
+    const cacheKey = `__intercept:${interceptSlot}:${url}`;
+    prefetchUrl(cacheKey, url, ttl, interceptSlot, currentUrl);
+  } else {
+    prefetchUrl(url, url, ttl);
+  }
+}
+
+function prefetchUrl(
+  cacheKey: string,
+  url: string,
+  ttl: number,
+  interceptSlot?: string,
+  refererUrl?: string
+): void {
+  const existing = cache.get(cacheKey);
 
   if (existing && existing.expiresAt > Date.now()) {
     return;
   }
 
-  // Remove stale/failed entries so re-hover works
-  cache.delete(url);
+  cache.delete(cacheKey);
 
   let cachedTitle: string | null = null;
   let cachedMeta: PageMeta | null = null;
 
-  const tree = fetchRscPayload(url).then((response) => {
+  const tree = fetchRscPayload(url, undefined, interceptSlot, refererUrl).then((response) => {
     cachedMeta = parseMetaHeader(response);
     if (!cachedMeta) {
       const rawTitle = response.headers.get("X-RSC-Title");
@@ -324,12 +343,11 @@ export function prefetch(url: string, cacheForMs?: number): void {
     }
     return deserializeResponse(response);
   }).catch(() => {
-    // Prefetch failed — remove from cache so next hover retries
-    cache.delete(url);
+    cache.delete(cacheKey);
     return null;
   });
 
-  cache.set(url, {
+  cache.set(cacheKey, {
     get title() { return cachedTitle; },
     get meta() { return cachedMeta; },
     tree,

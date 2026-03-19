@@ -294,8 +294,8 @@ class BunBridge
                     throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
                 }
 
-                // Always drain the main socket first — stream chunks should be
-                // yielded before blocking on callback processing.
+                // Always drain the main socket first — yield stream chunks to
+                // the browser before blocking on potentially slow callbacks.
                 if (in_array($mainSocket, $read, true)) {
                     $frame = $this->readFrame($mainSocket);
 
@@ -322,6 +322,38 @@ class BunBridge
                 }
 
                 if ($callbackSocket !== null && in_array($callbackSocket, $read, true)) {
+                    // Before processing the callback (which may block), check
+                    // if the main socket also has data and drain it first.
+                    $mainCheck = [$mainSocket];
+                    $w = [];
+                    $e = [];
+
+                    while (socket_select($mainCheck, $w, $e, 0) > 0) {
+                        $frame = $this->readFrame($mainSocket);
+                        $this->throwIfAuthError($frame);
+
+                        if (isset($frame['error'])) {
+                            throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
+                        }
+
+                        $type = $frame['type'] ?? '';
+
+                        if ($type === 'stream-chunk') {
+                            yield $frame['data'] ?? '';
+                        }
+
+                        if ($type === 'stream-end') {
+                            $this->release($index, $mainSocket);
+                            $mainSocket = null;
+
+                            break 2;
+                        }
+
+                        $mainCheck = [$mainSocket];
+                        $w = [];
+                        $e = [];
+                    }
+
                     $this->handleCallbackData($callbackSocket, $callbackBuffer, $registry);
                 }
             }
@@ -431,6 +463,40 @@ class BunBridge
                 }
 
                 if ($callbackSocket !== null && in_array($callbackSocket, $read, true)) {
+                    // Before processing the callback (which may block), drain
+                    // any pending main socket frames so HTML chunks are flushed
+                    // to the browser immediately.
+                    $mainCheck = [$mainSocket];
+                    $w = [];
+                    $e = [];
+
+                    while (socket_select($mainCheck, $w, $e, 0) > 0) {
+                        $frame = $this->readFrame($mainSocket);
+                        $this->throwIfAuthError($frame);
+
+                        if (isset($frame['error'])) {
+                            throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
+                        }
+
+                        $type = $frame['type'] ?? '';
+
+                        if ($type === 'html-chunk') {
+                            yield $frame['data'] ?? '';
+                        }
+
+                        if ($type === 'html-end') {
+                            yield ['rscPayload' => $frame['rscPayload'] ?? ''];
+                            $this->release($index, $mainSocket);
+                            $mainSocket = null;
+
+                            break 2;
+                        }
+
+                        $mainCheck = [$mainSocket];
+                        $w = [];
+                        $e = [];
+                    }
+
                     $this->handleCallbackData($callbackSocket, $callbackBuffer, $registry);
                 }
             }

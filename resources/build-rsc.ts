@@ -111,6 +111,28 @@ if (!existsSync(tsconfigPath)) {
   }, null, 2) + "\n");
   console.log(`Generated: ${tsconfigPath}`);
 }
+
+// Auto-append RSC generated paths to .gitignore if not already present
+const gitignorePath = join(process.cwd(), ".gitignore");
+const rscIgnoreEntries = [
+  "/bootstrap/rsc",
+  "/public/build/rsc",
+  "resources/js/rsc/routes.generated.ts",
+  "resources/js/rsc/server-actions.generated.ts",
+  "storage/framework/rsc-dev",
+];
+
+if (existsSync(gitignorePath)) {
+  const gitignore = readFileSync(gitignorePath, "utf-8");
+  const missing = rscIgnoreEntries.filter((e) => !gitignore.includes(e));
+
+  if (missing.length > 0) {
+    const block = "\n# LaraBun RSC (generated)\n" + missing.join("\n") + "\n";
+    writeFileSync(gitignorePath, gitignore.trimEnd() + "\n" + block);
+    console.log(`Updated .gitignore with ${missing.length} RSC entries`);
+  }
+}
+
 const clientOutDir = join(outDir, "client");
 const browserOutDir = join(process.cwd(), "public/build/rsc");
 

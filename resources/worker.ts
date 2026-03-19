@@ -308,21 +308,35 @@ async function handleRscStreamMessage(
       message.slotOverrides ?? undefined
     );
 
-    writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata }));
-    await Bun.sleep(0);
-
     const reader = stream.getReader();
     const decoder = new TextDecoder();
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    // Write stream-start and immediately read the first chunk WITHOUT
+    // yielding the event loop (no Bun.sleep). This ensures the Flight
+    // root model (row 0) reaches PHP on the main socket BEFORE any
+    // php() callback request can be processed — making SPA navigation
+    // resolve instantly even when slow callbacks are pending.
+    writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata }));
 
-      const text = typeof value === "string"
-        ? value
-        : decoder.decode(value, { stream: true });
+    const first = await reader.read();
+    if (!first.done) {
+      const text = typeof first.value === "string"
+        ? first.value
+        : decoder.decode(first.value, { stream: true });
       writeFrame(mainSocket, JSON.stringify({ type: "stream-chunk", data: text }));
-      await Bun.sleep(0);
+    }
+
+    if (!first.done) {
+      while (true) {
+        await Bun.sleep(0);
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = typeof value === "string"
+          ? value
+          : decoder.decode(value, { stream: true });
+        writeFrame(mainSocket, JSON.stringify({ type: "stream-chunk", data: text }));
+      }
     }
 
     writeFrame(mainSocket, '{"type":"stream-end"}');
@@ -411,27 +425,41 @@ async function handleRscHtmlStreamMessage(
         message.slotOverrides ?? undefined
       );
 
-    writeFrame(mainSocket, JSON.stringify({ type: "html-start", clientChunks, metadata }));
-    await Bun.sleep(0);
-
     const reader = htmlStream.getReader();
     const decoder = new TextDecoder();
     let callbacksFlushed = false;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    // Write html-start and the first chunk without yielding the event loop
+    writeFrame(mainSocket, JSON.stringify({ type: "html-start", clientChunks, metadata }));
 
-      const text = typeof value === "string"
-        ? value
-        : decoder.decode(value, { stream: true });
+    const first = await reader.read();
+    if (!first.done) {
+      const text = typeof first.value === "string"
+        ? first.value
+        : decoder.decode(first.value, { stream: true });
       writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
-      await Bun.sleep(0);
 
-      // After the first HTML chunk (shell), flush deferred php() calls.
       if (!callbacksFlushed && flushDeferred) {
         callbacksFlushed = true;
         flushDeferred();
+      }
+    }
+
+    if (!first.done) {
+      while (true) {
+        await Bun.sleep(0);
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = typeof value === "string"
+          ? value
+          : decoder.decode(value, { stream: true });
+        writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
+
+        if (!callbacksFlushed && flushDeferred) {
+          callbacksFlushed = true;
+          flushDeferred();
+        }
       }
     }
 

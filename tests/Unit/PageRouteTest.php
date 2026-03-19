@@ -94,18 +94,6 @@ test('defaults are empty', function () {
         ->and($route->getWhereConstraints())->toBe([]);
 });
 
-test('forceDynamic sets isDynamic', function () {
-    $route = PageRoute::make()->forceDynamic();
-
-    expect($route->isDynamic())->toBeTrue();
-});
-
-test('forceStatic sets isForceStatic', function () {
-    $route = PageRoute::make()->forceStatic();
-
-    expect($route->isForceStatic())->toBeTrue();
-});
-
 test('domain sets the domain value', function () {
     $route = PageRoute::make()->domain('admin.example.com');
 
@@ -118,14 +106,3 @@ test('domain defaults to null', function () {
     expect($route->getDomain())->toBeNull();
 });
 
-test('isDynamic defaults to false', function () {
-    $route = PageRoute::make();
-
-    expect($route->isDynamic())->toBeFalse();
-});
-
-test('isForceStatic defaults to false', function () {
-    $route = PageRoute::make();
-
-    expect($route->isForceStatic())->toBeFalse();
-});

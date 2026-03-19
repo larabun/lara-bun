@@ -262,6 +262,21 @@ class BunBridge
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
 
+            // Read stream-start eagerly from the main socket BEFORE entering
+            // the select loop. This ensures HTTP headers are sent immediately
+            // even if a php() callback arrives first on the callback socket.
+            $startFrame = $this->readFrame($mainSocket);
+            $this->throwIfAuthError($startFrame);
+
+            if (isset($startFrame['error'])) {
+                throw new RuntimeException("Bun RSC stream error: {$startFrame['error']}");
+            }
+
+            yield [
+                'clientChunks' => $startFrame['clientChunks'] ?? [],
+                'metadata' => $startFrame['metadata'] ?? null,
+            ];
+
             $callbackBuffer = '';
 
             while (true) {
@@ -279,6 +294,8 @@ class BunBridge
                     throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
                 }
 
+                // Always drain the main socket first — stream chunks should be
+                // yielded before blocking on callback processing.
                 if (in_array($mainSocket, $read, true)) {
                     $frame = $this->readFrame($mainSocket);
 
@@ -289,15 +306,6 @@ class BunBridge
                     }
 
                     $type = $frame['type'] ?? '';
-
-                    if ($type === 'stream-start') {
-                        yield [
-                            'clientChunks' => $frame['clientChunks'] ?? [],
-                            'metadata' => $frame['metadata'] ?? null,
-                        ];
-
-                        continue;
-                    }
 
                     if ($type === 'stream-chunk') {
                         yield $frame['data'] ?? '';
@@ -369,6 +377,16 @@ class BunBridge
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
 
+            // Read html-start eagerly before entering the select loop
+            $startFrame = $this->readFrame($mainSocket);
+            $this->throwIfAuthError($startFrame);
+
+            if (isset($startFrame['error'])) {
+                throw new RuntimeException("Bun RSC HTML stream error: {$startFrame['error']}");
+            }
+
+            yield ['clientChunks' => $startFrame['clientChunks'] ?? [], 'metadata' => $startFrame['metadata'] ?? null];
+
             $callbackBuffer = '';
 
             while (true) {
@@ -396,12 +414,6 @@ class BunBridge
                     }
 
                     $type = $frame['type'] ?? '';
-
-                    if ($type === 'html-start') {
-                        yield ['clientChunks' => $frame['clientChunks'] ?? [], 'metadata' => $frame['metadata'] ?? null];
-
-                        continue;
-                    }
 
                     if ($type === 'html-chunk') {
                         yield $frame['data'] ?? '';

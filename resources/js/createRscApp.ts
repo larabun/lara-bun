@@ -154,6 +154,9 @@ export function createRscApp(
 
     // Handle browser back/forward
     window.addEventListener("popstate", (event) => {
+      // Ignore hash-only changes — browser handles scroll natively
+      if (!event.state && window.location.hash) return;
+
       const url = event.state?.rscUrl ?? window.location.pathname + window.location.search;
       navigate(url, { replace: true });
     });

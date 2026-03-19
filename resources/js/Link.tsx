@@ -87,6 +87,9 @@ export default function Link({
       if (target && target !== "_self") return;
       if (!shouldInterceptClick(e) || isExternalUrl(href)) return;
 
+      // Hash-only links (#section) — let the browser scroll natively
+      if (href.startsWith("#")) return;
+
       e.preventDefault();
       setPending(true);
 

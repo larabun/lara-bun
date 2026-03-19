@@ -215,6 +215,12 @@ export async function navigate(
     return;
   }
 
+  // Hash-only URLs — let the browser handle scrolling natively
+  if (url.startsWith("#")) {
+    window.location.hash = url;
+    return;
+  }
+
   // Abort any in-flight navigation
   activeController?.abort();
 

@@ -497,10 +497,35 @@ const useClientPlugin: BunPlugin = {
         if (!comp) return undefined;
 
         const moduleId = comp.relativePath;
+
+        // Detect named exports to generate proper proxy exports
+        const source = readFileSync(args.path, "utf-8");
+        const namedExports: string[] = [];
+
+        const exportMatches = source.matchAll(/export\s+(?:function|const|let|var|class)\s+(\w+)/g);
+        for (const m of exportMatches) {
+          namedExports.push(m[1]);
+        }
+
+        const braceMatches = source.matchAll(/export\s*\{([^}]+)\}/g);
+        for (const m of braceMatches) {
+          const names = m[1].split(",").map((s) => {
+            const parts = s.trim().split(/\s+as\s+/);
+            return parts[parts.length - 1].trim();
+          });
+          namedExports.push(...names.filter((n) => n && n !== "default"));
+        }
+
+        const proxyExports = namedExports
+          .map((name) => `export const ${name} = proxy["${name}"];`)
+          .join("\n");
+
         return {
           contents: `
 import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";
-export default createClientModuleProxy("${moduleId}");
+const proxy = createClientModuleProxy("${moduleId}");
+export default proxy;
+${proxyExports}
 `,
           loader: "js",
         };
@@ -539,20 +564,15 @@ const packageAliasPlugin: BunPlugin = {
   },
 };
 
-// Catch-all plugin for "use client" files from node_modules (e.g., next-themes).
-// The useClientPlugin only intercepts pre-discovered components. This handles
-// third-party libraries that the user imports directly in server components.
+// Catch-all plugin for "use client" files not pre-discovered during scanning.
+// Handles node_modules (e.g., next-themes) AND user files outside the component
+// map (e.g., @/components/mode-toggle.tsx imported from a page).
 const externalClientModules = new Set<string>();
 
 const useClientCatchAllPlugin: BunPlugin = {
   name: "use-client-catch-all",
   setup(build) {
     build.onLoad({ filter: /\.(tsx|ts|jsx|js|mjs|cjs)$/ }, (args) => {
-      // Only intercept node_modules — user/package components are handled by useClientPlugin
-      if (!args.path.includes("node_modules")) {
-        return undefined;
-      }
-
       // Already handled by useClientPlugin
       if (clientAbsolutePaths.has(args.path)) {
         return undefined;
@@ -562,11 +582,18 @@ const useClientCatchAllPlugin: BunPlugin = {
         return undefined;
       }
 
-      // Use the bare module path as the moduleId (e.g., "next-themes")
+      // Determine moduleId based on file location
       const nodeModulesIndex = args.path.lastIndexOf("node_modules/");
-      const moduleId = nodeModulesIndex !== -1
-        ? args.path.slice(nodeModulesIndex + "node_modules/".length)
-        : args.path;
+      let moduleId: string;
+
+      if (nodeModulesIndex !== -1) {
+        moduleId = args.path.slice(nodeModulesIndex + "node_modules/".length);
+      } else if (args.path.startsWith(sourceDir)) {
+        // User file inside rsc/ — use relative path (e.g., "./components/mode-toggle.tsx")
+        moduleId = "./" + args.path.slice(sourceDir.length + 1);
+      } else {
+        moduleId = args.path;
+      }
 
       externalClientModules.add(args.path);
 

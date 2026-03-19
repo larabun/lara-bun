@@ -100,7 +100,7 @@ if (!existsSync(tsconfigPath)) {
       forceConsistentCasingInFileNames: true,
       noEmit: true,
       verbatimModuleSyntax: true,
-      paths: { "@/*": ["./resources/js/*"] },
+      paths: { "@/*": ["./resources/js/rsc/*"] },
     },
     include: [
       "resources/**/*.ts",
@@ -194,6 +194,15 @@ function detectMetadataExports(filePath: string): { hasStatic: boolean; hasDynam
 const serverComponents: ComponentInfo[] = [];
 const clientComponents: ComponentInfo[] = [];
 let aliasIndex = 0;
+
+function hasDefaultExport(filePath: string): boolean {
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    return /export\s+default\b/.test(content);
+  } catch {
+    return false;
+  }
+}
 
 function isClientFile(filePath: string): boolean {
   try {
@@ -300,6 +309,19 @@ for await (const path of glob.scan(sourceDir)) {
   }
 
   const absolutePath = resolve(sourceDir, path);
+  const base = basename(path).replace(/\.(tsx|ts|jsx|js)$/, "");
+
+  // Only register entry-point files as components:
+  // - page.*, layout.*, loading.*, default.* (RSC entry points)
+  // - "use client" files (client component boundaries)
+  // - "use server" files (server actions)
+  // Everything else (lib/utils.ts, components/ui/button.tsx, etc.)
+  // is bundled transitively when imported by entry points.
+  const isEntryPoint = ["page", "layout", "loading", "default"].includes(base);
+
+  if (!isEntryPoint && !isClientFile(absolutePath) && !isServerActionFile(absolutePath)) {
+    continue;
+  }
 
   // Server action files are NOT components — handle them separately
   if (isServerActionFile(absolutePath)) {
@@ -475,10 +497,35 @@ const useClientPlugin: BunPlugin = {
         if (!comp) return undefined;
 
         const moduleId = comp.relativePath;
+
+        // Detect named exports to generate proper proxy exports
+        const source = readFileSync(args.path, "utf-8");
+        const namedExports: string[] = [];
+
+        const exportMatches = source.matchAll(/export\s+(?:function|const|let|var|class)\s+(\w+)/g);
+        for (const m of exportMatches) {
+          namedExports.push(m[1]);
+        }
+
+        const braceMatches = source.matchAll(/export\s*\{([^}]+)\}/g);
+        for (const m of braceMatches) {
+          const names = m[1].split(",").map((s) => {
+            const parts = s.trim().split(/\s+as\s+/);
+            return parts[parts.length - 1].trim();
+          });
+          namedExports.push(...names.filter((n) => n && n !== "default"));
+        }
+
+        const proxyExports = namedExports
+          .map((name) => `export const ${name} = proxy["${name}"];`)
+          .join("\n");
+
         return {
           contents: `
 import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";
-export default createClientModuleProxy("${moduleId}");
+const proxy = createClientModuleProxy("${moduleId}");
+export default proxy;
+${proxyExports}
 `,
           loader: "js",
         };
@@ -489,59 +536,6 @@ export default createClientModuleProxy("${moduleId}");
 
 // User path alias plugin — resolves @/* and ~/* imports from tsconfig.json paths.
 // Reads the tsconfig to support whatever alias the user has configured.
-const userAliasPlugin: BunPlugin = {
-  name: "user-alias",
-  setup(build) {
-    // Read tsconfig paths
-    let aliases: Record<string, string> = {};
-
-    if (existsSync(tsconfigPath)) {
-      try {
-        const tsconfig = JSON.parse(readFileSync(tsconfigPath, "utf-8"));
-        const paths = tsconfig?.compilerOptions?.paths ?? {};
-
-        for (const [pattern, targets] of Object.entries(paths)) {
-          if (!pattern.endsWith("/*") || !Array.isArray(targets) || targets.length === 0) continue;
-          const prefix = pattern.slice(0, -2); // "@" or "~"
-          const target = (targets[0] as string).replace(/\/\*$/, "");
-          aliases[prefix] = resolve(process.cwd(), target);
-        }
-      } catch {}
-    }
-
-    // Also support ~/ as a common convention even if not in tsconfig
-    if (!aliases["~"]) {
-      aliases["~"] = resolve(process.cwd(), "resources/js");
-    }
-
-    for (const [prefix, targetDir] of Object.entries(aliases)) {
-      const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const filter = new RegExp(`^${escaped}/`);
-
-      build.onResolve({ filter }, (args) => {
-        const subPath = args.path.replace(filter, "");
-        const candidates = [
-          join(targetDir, subPath),
-          join(targetDir, `${subPath}.tsx`),
-          join(targetDir, `${subPath}.ts`),
-          join(targetDir, `${subPath}.jsx`),
-          join(targetDir, `${subPath}.js`),
-          join(targetDir, subPath, "index.tsx"),
-          join(targetDir, subPath, "index.ts"),
-        ];
-
-        for (const candidate of candidates) {
-          if (existsSync(candidate)) {
-            return { path: candidate };
-          }
-        }
-
-        return undefined;
-      });
-    }
-  },
-};
-
 // Package alias plugin — resolves "lara-bun/*" imports to the package directory
 // so server components can `import Link from 'lara-bun/Link'`
 const packageAliasPlugin: BunPlugin = {
@@ -570,20 +564,15 @@ const packageAliasPlugin: BunPlugin = {
   },
 };
 
-// Catch-all plugin for "use client" files from node_modules (e.g., next-themes).
-// The useClientPlugin only intercepts pre-discovered components. This handles
-// third-party libraries that the user imports directly in server components.
+// Catch-all plugin for "use client" files not pre-discovered during scanning.
+// Handles node_modules (e.g., next-themes) AND user files outside the component
+// map (e.g., @/components/mode-toggle.tsx imported from a page).
 const externalClientModules = new Set<string>();
 
 const useClientCatchAllPlugin: BunPlugin = {
   name: "use-client-catch-all",
   setup(build) {
     build.onLoad({ filter: /\.(tsx|ts|jsx|js|mjs|cjs)$/ }, (args) => {
-      // Only intercept node_modules — user/package components are handled by useClientPlugin
-      if (!args.path.includes("node_modules")) {
-        return undefined;
-      }
-
       // Already handled by useClientPlugin
       if (clientAbsolutePaths.has(args.path)) {
         return undefined;
@@ -593,11 +582,18 @@ const useClientCatchAllPlugin: BunPlugin = {
         return undefined;
       }
 
-      // Use the bare module path as the moduleId (e.g., "next-themes")
+      // Determine moduleId based on file location
       const nodeModulesIndex = args.path.lastIndexOf("node_modules/");
-      const moduleId = nodeModulesIndex !== -1
-        ? args.path.slice(nodeModulesIndex + "node_modules/".length)
-        : args.path;
+      let moduleId: string;
+
+      if (nodeModulesIndex !== -1) {
+        moduleId = args.path.slice(nodeModulesIndex + "node_modules/".length);
+      } else if (args.path.startsWith(sourceDir)) {
+        // User file inside rsc/ — use relative path (e.g., "./components/mode-toggle.tsx")
+        moduleId = "./" + args.path.slice(sourceDir.length + 1);
+      } else {
+        moduleId = args.path;
+      }
 
       externalClientModules.add(args.path);
 
@@ -672,7 +668,7 @@ const cssCollectorPlugin: BunPlugin = {
   },
 };
 
-const serverPlugins: BunPlugin[] = [userAliasPlugin, packageAliasPlugin, cssCollectorPlugin];
+const serverPlugins: BunPlugin[] = [packageAliasPlugin, cssCollectorPlugin];
 if (clientComponents.length > 0) {
   serverPlugins.push(useClientPlugin);
 }
@@ -1152,7 +1148,7 @@ mkdirSync(clientOutDir, { recursive: true });
 // Note: React Compiler is NOT applied to SSR builds.
 // The compiler's runtime (`react/compiler-runtime`) uses createContext,
 // which is unavailable under react-server conditions in the Bun worker.
-const ssrPlugins: BunPlugin[] = [userAliasPlugin, packageAliasPlugin];
+const ssrPlugins: BunPlugin[] = [packageAliasPlugin];
 
 const ssrResult = await Bun.build({
   entrypoints: clientComponents.map((c) => c.absolutePath),
@@ -1276,7 +1272,7 @@ ${exports}
   },
 };
 
-const browserPlugins: BunPlugin[] = [userAliasPlugin, packageAliasPlugin];
+const browserPlugins: BunPlugin[] = [packageAliasPlugin];
 if (actionFiles.length > 0) {
   browserPlugins.push(useServerPlugin);
 }
@@ -1402,35 +1398,51 @@ console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);
 
 if (collectedCssFiles.size > 0) {
   const cssOutDir = join(process.cwd(), "public/build/css");
+  // Clean previous CSS builds (old hashes)
+  rmSync(cssOutDir, { recursive: true, force: true });
   mkdirSync(cssOutDir, { recursive: true });
 
   const cssChunks: string[] = [];
 
   for (const cssFile of collectedCssFiles) {
     const name = basename(cssFile, ".css");
-    const outFile = join(cssOutDir, `${name}.css`);
+
+    // Compile to a temp file first, then hash the content for cache busting
+    const tmpFile = join(cssOutDir, `${name}.tmp.css`);
 
     // Try Tailwind CLI first (handles @tailwindcss, @source, etc.)
     const twProc = Bun.spawn(
-      ["npx", "--yes", "@tailwindcss/cli@latest", "-i", cssFile, "-o", outFile, "--minify"],
+      ["npx", "--yes", "@tailwindcss/cli@latest", "-i", cssFile, "-o", tmpFile, "--minify"],
       { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" }
     );
 
     const twExit = await twProc.exited;
 
+    let cssContent: string;
+
     if (twExit === 0) {
-      const relativePath = `/build/css/${name}.css`;
-      cssChunks.push(relativePath);
-      console.log(`Built CSS: ${outFile}`);
+      cssContent = readFileSync(tmpFile, "utf-8");
     } else {
       const stderr = await new Response(twProc.stderr).text();
       console.warn(`Warning: Tailwind CSS compilation failed for ${cssFile}. Falling back to raw copy.`);
       if (stderr.trim()) console.warn(stderr.trim());
-
-      // Fallback: copy raw CSS (won't have Tailwind utilities compiled)
-      writeFileSync(outFile, readFileSync(cssFile, "utf-8"));
-      cssChunks.push(`/build/css/${name}.css`);
+      cssContent = readFileSync(cssFile, "utf-8");
     }
+
+    // Generate content hash for cache busting (same pattern as JS bundles)
+    const hasher = new Bun.CryptoHasher("md5");
+    hasher.update(cssContent);
+    const hash = hasher.digest("hex").slice(0, 8);
+
+    const hashedName = `${name}-${hash}.css`;
+    const outFile = join(cssOutDir, hashedName);
+    writeFileSync(outFile, cssContent);
+
+    // Clean up temp file
+    try { rmSync(tmpFile); } catch {}
+
+    cssChunks.push(`/build/css/${hashedName}`);
+    console.log(`Built CSS: ${outFile}`);
   }
 
   writeFileSync(

@@ -10,7 +10,7 @@
  *   out-dir:    bootstrap/rsc
  */
 
-import { join, basename, resolve } from "node:path";
+import { join, basename, dirname, resolve } from "node:path";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import type { BunPlugin } from "bun";
 
@@ -1447,6 +1447,20 @@ if (collectedCssFiles.size > 0) {
 
     // Clean up temp file
     try { rmSync(tmpFile); } catch {}
+
+    // Copy font/asset files referenced in the compiled CSS (e.g. url(./files/font.woff2))
+    const urlRefs = cssContent.matchAll(/url\(\.\/([^)]+)\)/g);
+    for (const match of urlRefs) {
+      const assetRelPath = match[1];
+      // Resolve relative to the original CSS file's directory (where Tailwind resolves from)
+      const assetSrc = join(dirname(cssFile), assetRelPath);
+      const assetDest = join(cssOutDir, assetRelPath);
+
+      if (existsSync(assetSrc) && !existsSync(assetDest)) {
+        mkdirSync(dirname(assetDest), { recursive: true });
+        writeFileSync(assetDest, readFileSync(assetSrc));
+      }
+    }
 
     cssChunks.push(`/build/css/${hashedName}`);
     console.log(`Built CSS: ${outFile}`);

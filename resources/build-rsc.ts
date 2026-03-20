@@ -128,6 +128,7 @@ const rscIgnoreEntries = [
   "resources/js/rsc/routes.generated.ts",
   "resources/js/rsc/server-actions.generated.ts",
   "storage/framework/rsc-dev",
+  "storage/framework/rsc-static",
 ];
 
 if (existsSync(gitignorePath)) {

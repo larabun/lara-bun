@@ -974,31 +974,67 @@ if (pageRoutes.length > 0) {
     console.warn("Warning: Could not run rsc:route-manifest. Falling back to string params.");
   }
 
-  // Build a lookup from URL pattern → manifest entry
-  const manifestByPattern = new Map<string, RouteManifestEntry>();
-  for (const entry of routeManifest) {
-    // Normalize: PHP uses {slug}, TS uses [slug]
-    const tsPattern = entry.urlPattern
-      .replace(/\{(\w+)\}/g, "[$1]");
-    manifestByPattern.set(tsPattern, entry);
+  // Build typed routes from the PHP route manifest which has both URL patterns
+  // and domain info. This avoids duplicate keys when multiple route groups
+  // map to the same URL on different domains.
+  interface TypedRoute {
+    key: string;          // Unique key for RouteParams (may include domain prefix)
+    urlPattern: string;   // The actual URL pattern (e.g. "/")
+    params: string[];
+    baseUrl?: string;
+    staticPaths?: Record<string, string[]>;
+    where?: Record<string, string[]>;
   }
 
-  // Sort routes for stable output
-  const sorted = [...pageRoutes].sort((a, b) => a.urlPattern.localeCompare(b.urlPattern));
+  const typedRoutes: TypedRoute[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const entry of routeManifest) {
+    const tsPattern = entry.urlPattern.replace(/\{(\w+)\}/g, "[$1]");
+
+    // Extract params from pattern
+    const params: string[] = [];
+    const paramMatches = tsPattern.matchAll(/\[(?:\.\.\.)?(\w+)\]/g);
+    for (const m of paramMatches) {
+      params.push(m[1]);
+    }
+
+    // For domain routes with duplicate URL patterns, prefix with the domain
+    let key = tsPattern;
+    if (seenKeys.has(key) && entry.baseUrl) {
+      // Extract hostname from baseUrl for the key
+      try {
+        const host = new URL(entry.baseUrl).hostname.split(".")[0];
+        key = `${host}:${tsPattern}`;
+      } catch {
+        key = `${entry.baseUrl}${tsPattern}`;
+      }
+    }
+    seenKeys.add(key);
+
+    typedRoutes.push({
+      key,
+      urlPattern: tsPattern,
+      params,
+      baseUrl: entry.baseUrl,
+      staticPaths: entry.staticPaths,
+      where: entry.where,
+    });
+  }
+
+  const sorted = typedRoutes.sort((a, b) => a.key.localeCompare(b.key));
 
   const routeParamEntries = sorted
     .map((r) => {
       if (r.params.length === 0) {
-        return `  '${r.urlPattern}': Record<string, never>;`;
+        return `  '${r.key}': Record<string, never>;`;
       }
 
-      const manifest = manifestByPattern.get(r.urlPattern);
       const paramTypes = r.params
         .map((p) => {
-          // Check for known values from staticPaths or where constraints
-          const values = manifest?.staticPaths?.[p]
-            ?? manifest?.staticPaths?.["_default"]
-            ?? manifest?.where?.[p];
+          const values = r.staticPaths?.[p]
+            ?? r.staticPaths?.["_default"]
+            ?? r.where?.[p];
 
           if (values && values.length > 0) {
             return `${p}: ${values.map((v) => `'${v}'`).join(" | ")}`;
@@ -1006,16 +1042,15 @@ if (pageRoutes.length > 0) {
           return `${p}: string`;
         })
         .join("; ");
-      return `  '${r.urlPattern}': { ${paramTypes} };`;
+      return `  '${r.key}': { ${paramTypes} };`;
     })
     .join("\n");
 
   // Collect domain mappings for routes that have domains
   const domainEntries: string[] = [];
   for (const r of sorted) {
-    const manifest = manifestByPattern.get(r.urlPattern);
-    if (manifest?.baseUrl) {
-      domainEntries.push(`  '${r.urlPattern}': '${manifest.baseUrl}',`);
+    if (r.baseUrl) {
+      domainEntries.push(`  '${r.key}': '${r.baseUrl}',`);
     }
   }
 
@@ -1043,6 +1078,7 @@ ${domainMapBlock}
  * @example
  * route('/')                                    // "/"
  * route('/docs/[slug]', { slug: 'metadata' })   // "/docs/metadata"
+ * route('docs:/')                               // "http://docs.app.test/"
  * route('/onboarding')                          // "http://merchant.app.test/onboarding"
  */
 export function route<T extends RoutePath>(
@@ -1051,7 +1087,8 @@ export function route<T extends RoutePath>(
 ): string {
   const params = args[0] as Record<string, string> | undefined;
 
-  let url: string = path;
+  // Domain-prefixed keys (e.g. "docs:/") — extract the actual URL path
+  let url: string = (path as string).includes(':') ? (path as string).split(':').slice(1).join(':') : path;
 
   if (params) {
     for (const [key, value] of Object.entries(params)) {

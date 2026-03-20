@@ -22,9 +22,12 @@ class ServeStaticRsc
             if (file_exists($flightFile) && file_exists($metaFile)) {
                 $meta = json_decode(file_get_contents($metaFile), true);
 
+                $clientChunks = $meta['clientChunks'] ?? [];
+                $sharedChunks = isset($clientChunks['shared']) ? $clientChunks['shared'] : $clientChunks;
+
                 $headers = [
                     'Content-Type' => 'text/x-component',
-                    Header::X_RSC_CHUNKS => json_encode($meta['clientChunks'] ?? [], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+                    Header::X_RSC_CHUNKS => json_encode($sharedChunks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
                     Header::X_RSC_VERSION => $meta['version'] ?? '',
                     'X-Accel-Buffering' => 'no',
                 ];

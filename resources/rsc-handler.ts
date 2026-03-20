@@ -29,7 +29,15 @@ const bundleDir = dirname(bundlePath);
 
 const clientManifestPath = join(bundleDir, "client-manifest.json");
 const ssrManifestPath = join(bundleDir, "ssr-manifest.json");
+const browserManifestPath = join(bundleDir, "browser-manifest.json");
+// Legacy fallback
 const browserChunksPath = join(bundleDir, "browser-chunks.json");
+
+interface BrowserManifest {
+  entry: string;
+  shared: string[];
+  modules: Record<string, string[]>;
+}
 
 let clientManifest: Record<string, unknown> | null = null;
 let ssrManifest: {
@@ -37,7 +45,7 @@ let ssrManifest: {
   moduleLoading: null;
   serverModuleMap: Record<string, unknown>;
 } | null = null;
-let browserChunks: string[] = [];
+let browserManifest: BrowserManifest = { entry: "", shared: [], modules: {} };
 
 if (existsSync(clientManifestPath)) {
   clientManifest = JSON.parse(readFileSync(clientManifestPath, "utf-8"));
@@ -49,9 +57,14 @@ if (existsSync(ssrManifestPath)) {
   console.error("[rsc-handler] Loaded SSR manifest");
 }
 
-if (existsSync(browserChunksPath)) {
-  browserChunks = JSON.parse(readFileSync(browserChunksPath, "utf-8"));
-  console.error(`[rsc-handler] Browser chunks: ${browserChunks.join(", ")}`);
+if (existsSync(browserManifestPath)) {
+  browserManifest = JSON.parse(readFileSync(browserManifestPath, "utf-8"));
+  console.error(`[rsc-handler] Browser manifest: entry=${browserManifest.entry}, ${browserManifest.shared.length} shared chunk(s), ${Object.keys(browserManifest.modules).length} module(s)`);
+} else if (existsSync(browserChunksPath)) {
+  // Legacy flat array fallback
+  const browserChunks: string[] = JSON.parse(readFileSync(browserChunksPath, "utf-8"));
+  browserManifest = { entry: browserChunks[0] ?? "", shared: browserChunks.slice(1), modules: {} };
+  console.error(`[rsc-handler] Browser chunks (legacy): ${browserChunks.join(", ")}`);
 }
 
 
@@ -225,7 +238,7 @@ export async function handleRscStream(
   props: Record<string, unknown>,
   layouts: LayoutEntry[] = [], loadings: string[] = [], parallelSlots: Record<string, string> = {},
   slotOverrides?: Record<string, { component: string; props: Record<string, unknown> }>
-): Promise<{ stream: ReadableStream; clientChunks: string[] }> {
+): Promise<{ stream: ReadableStream; clientChunks: BrowserManifest }> {
   // php() is installed by the worker via installPhpFn before calling this
   // Merge slot overrides into parallelSlots for buildElement
   const mergedSlots = mergeSlotOverrides(parallelSlots, slotOverrides);
@@ -234,7 +247,7 @@ export async function handleRscStream(
     ? rscModule.renderRscStream(component, props, clientManifest, layouts, loadings, mergedSlots)
     : rscModule.renderRscStream(component, props, layouts, loadings, mergedSlots);
 
-  return { stream: flightStream, clientChunks: browserChunks };
+  return { stream: flightStream, clientChunks: browserManifest };
 }
 
 // ─── HTML Stream Handler (initial page load with Suspense streaming) ────────
@@ -256,7 +269,7 @@ export async function handleRscHtmlStream(
 ): Promise<{
   htmlStream: ReadableStream;
   rscPayloadPromise: Promise<string>;
-  clientChunks: string[];
+  clientChunks: BrowserManifest;
 }> {
   // php() is installed by the worker via installPhpFn (with deferred pattern)
   const mergedSlots = mergeSlotOverrides(parallelSlots, slotOverrides);
@@ -283,7 +296,7 @@ export async function handleRscHtmlStream(
   // <template> + <script> completion tags as async content resolves.
   const htmlStream = await renderToReadableStream(reactTree);
 
-  return { htmlStream, rscPayloadPromise, clientChunks: browserChunks };
+  return { htmlStream, rscPayloadPromise, clientChunks: browserManifest };
 }
 
 // ─── Action Handler (server actions) ──────────────────────────────────────────
@@ -350,7 +363,7 @@ export async function handleRscPprShell(
   component: string,
   props: Record<string, unknown>,
   layouts: LayoutEntry[] = [], loadings: string[] = [], parallelSlots: Record<string, string> = {}
-): Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean; usedDynamicApis: boolean }> {
+): Promise<{ shellHtml: string; clientChunks: BrowserManifest; timedOut: boolean; usedDynamicApis: boolean }> {
   let usedDynamicApis = false;
   let timedOut = false;
   const mockPhpFn = (): Promise<never> => {
@@ -453,10 +466,10 @@ export async function handleRscPprShell(
       // Still classifiable as PPR (renders dynamically at runtime).
       timedOut = true;
       usedDynamicApis = true;
-      return { shellHtml: "", clientChunks: browserChunks, timedOut, usedDynamicApis };
+      return { shellHtml: "", clientChunks: browserManifest, timedOut, usedDynamicApis };
     }
 
-    return { shellHtml: renderResult, clientChunks: browserChunks, timedOut, usedDynamicApis };
+    return { shellHtml: renderResult, clientChunks: browserManifest, timedOut, usedDynamicApis };
   } finally {
     if ((globalThis as any).php === mockPhpFn) {
       if (previousPhp) {
@@ -475,7 +488,7 @@ export async function handleRsc(
   props: Record<string, unknown>,
   callbackSocket?: string | null,
   layouts: LayoutEntry[] = [], loadings: string[] = [], parallelSlots: Record<string, string> = {}
-): Promise<{ body: string; rscPayload: string; clientChunks: string[]; usedDynamicApis: boolean }> {
+): Promise<{ body: string; rscPayload: string; clientChunks: BrowserManifest; usedDynamicApis: boolean }> {
   // Create per-render callback client if a callback socket is provided
   let cleanup: (() => void) | null = null;
   let usedDynamicApis = false;
@@ -590,7 +603,7 @@ export async function handleRsc(
 
     const body = await new Response(htmlStream).text();
 
-    return { body, rscPayload, clientChunks: browserChunks, usedDynamicApis };
+    return { body, rscPayload, clientChunks: browserManifest, usedDynamicApis };
   } finally {
     globalThis.fetch = originalFetch;
     Math.random = originalMathRandom;

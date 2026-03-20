@@ -11,6 +11,9 @@
     @if ($hydrateEntry)
         <link rel="modulepreload" href="/build/rsc/{{ basename($hydrateEntry) }}">
     @endif
+    @foreach (glob(public_path('build/rsc/chunk-*.js')) as $sharedChunk)
+        <link rel="modulepreload" href="/build/rsc/{{ basename($sharedChunk) }}">
+    @endforeach
 </head>
 
 <body>

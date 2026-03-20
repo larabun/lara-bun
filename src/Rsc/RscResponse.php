@@ -184,9 +184,13 @@ class RscResponse implements Responsable
         // Apply page metadata as viewData defaults (route.php viewData takes precedence)
         $this->applyMetadataDefaults($meta['metadata'] ?? null);
 
+        // Send only shared chunks in the header — component chunks are loaded
+        // on demand by Flight via __webpack_chunk_load__.
+        $sharedChunks = isset($clientChunks['shared']) ? $clientChunks['shared'] : $clientChunks;
+
         $headers = [
             'Content-Type' => 'text/x-component',
-            Header::X_RSC_CHUNKS => json_encode($clientChunks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+            Header::X_RSC_CHUNKS => json_encode($sharedChunks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
             Header::X_RSC_VERSION => $version,
             'X-Accel-Buffering' => 'no',
         ];

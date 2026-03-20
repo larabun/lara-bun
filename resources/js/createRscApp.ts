@@ -31,7 +31,7 @@ declare global {
     __RSC_INITIAL__: { url: string; component: string; version: string };
     __RSC_MODULES__: Record<string, unknown>;
     __webpack_require__: (id: string) => unknown;
-    __webpack_chunk_load__: () => Promise<void>;
+    __webpack_chunk_load__: (chunkUrl: string) => Promise<void>;
     __rsc_navigate: typeof navigate;
     __rsc_prefetch: typeof prefetch;
   }

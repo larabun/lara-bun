@@ -1265,19 +1265,9 @@ console.log(`Generated: ${join(outDir, "ssr-module-map.json")}`);
 // b) Browser client build — builds client components + hydration entry for browser
 mkdirSync(browserOutDir, { recursive: true });
 
-// Generate a hydration entry that imports createRscApp and all client components
+// Generate a lightweight hydration entry — client components self-register
+// via separate wrapper entries, so we don't need to import them here.
 const createRscAppPath = join(packageJsDir, "createRscApp.ts");
-
-const hydrateImports = clientComponents
-  .map(
-    (c, i) =>
-      `import * as _M${i} from "${c.absolutePath}";`
-  )
-  .join("\n");
-
-const hydrateModuleMap = clientComponents
-  .map((c, i) => `  "${c.relativePath}": _M${i},`)
-  .join("\n");
 
 // Read the intercept manifest (generated during route manifest phase)
 const interceptManifestPath = join(outDir, "intercept-manifest.json");
@@ -1292,22 +1282,36 @@ const hydrateEntrySource = `// Auto-generated hydration entry — do not edit
 // inline <script> block rendered by @rscScripts so they exist before this
 // ES module initializes (ES module imports are hoisted above module body code).
 import { createRscApp } from "${createRscAppPath}";
-${hydrateImports}
-
-const modules: Record<string, unknown> = {
-${hydrateModuleMap}
-};
 
 const interceptManifest: { urlPattern: string; slot: string }[] = ${interceptManifestJson};
 
 const container = document.getElementById("rsc-root");
 if (container) {
-  createRscApp(container, modules, interceptManifest);
+  createRscApp(container, {}, interceptManifest);
 }
 `;
 
 const hydrateEntryPath = join(outDir, "entry.hydrate.tsx");
 writeFileSync(hydrateEntryPath, hydrateEntrySource);
+
+// Generate self-registering wrapper entries for each client component.
+// Each wrapper imports the component and registers it into window.__RSC_MODULES__.
+// With splitting: true, Bun extracts shared dependencies (React, ReactDOM)
+// into common chunks, so each page only loads the components it actually uses.
+const wrapperEntryPaths: string[] = [];
+const wrapperIndexToModuleId = new Map<number, string>();
+
+for (let i = 0; i < clientComponents.length; i++) {
+  const c = clientComponents[i];
+  const wrapperSource = `// Auto-generated wrapper — do not edit
+import * as mod from "${c.absolutePath}";
+(window as any).__RSC_MODULES__["${c.relativePath}"] = mod;
+`;
+  const wrapperPath = join(outDir, `_register_${i}.tsx`);
+  writeFileSync(wrapperPath, wrapperSource);
+  wrapperEntryPaths.push(wrapperPath);
+  wrapperIndexToModuleId.set(i, c.relativePath);
+}
 
 // Plugin that intercepts imports of "use server" files in the browser build
 // and replaces them with createServerReference stubs that call through the
@@ -1349,7 +1353,7 @@ if (reactCompilerPlugin) {
 }
 
 const browserResult = await Bun.build({
-  entrypoints: [hydrateEntryPath],
+  entrypoints: [hydrateEntryPath, ...wrapperEntryPaths],
   outdir: browserOutDir,
   target: "browser",
   format: "esm",
@@ -1368,25 +1372,71 @@ if (!browserResult.success) {
   process.exit(1);
 }
 
-// Collect browser output file paths (relative to public/)
-const browserChunks: string[] = [];
+// ─── Match browser outputs to inputs and build structured manifest ───────────
+//
+// Classify each output as: hydrate entry, wrapper entry (component), or shared chunk.
+// Shared chunks are extracted by Bun's code splitting (React, ReactDOM, etc.).
+
+const publicPrefix = join(process.cwd(), "public");
+
+interface BrowserManifest {
+  entry: string;
+  shared: string[];
+  modules: Record<string, string[]>;
+}
+
+const browserManifest: BrowserManifest = {
+  entry: "",
+  shared: [],
+  modules: {},
+};
+
+// Build a map from wrapper basename (without extension) to module ID
+const wrapperBasenameToModuleId = new Map<string, string>();
+for (let i = 0; i < clientComponents.length; i++) {
+  wrapperBasenameToModuleId.set(`_register_${i}`, clientComponents[i].relativePath);
+}
+
 for (const output of browserResult.outputs) {
-  const relativePath = output.path.replace(
-    join(process.cwd(), "public"),
-    ""
-  );
-  browserChunks.push(relativePath);
+  const relativePath = output.path.replace(publicPrefix, "");
+
+  if (output.kind === "chunk") {
+    // Shared dependency chunk (React, ReactDOM, etc.)
+    browserManifest.shared.push(relativePath);
+    continue;
+  }
+
+  // Entry-point outputs — match by name prefix
+  const outputBasename = basename(output.path);
+  // Strip -[hash].js suffix to get the original entry name
+  const nameWithoutHash = outputBasename.replace(/-[a-f0-9]+\.js$/, "");
+
+  if (nameWithoutHash === "entry.hydrate") {
+    browserManifest.entry = relativePath;
+  } else {
+    // Wrapper entry — look up module ID
+    const moduleId = wrapperBasenameToModuleId.get(nameWithoutHash);
+    if (moduleId) {
+      browserManifest.modules[moduleId] = [relativePath];
+    }
+  }
 }
 
 console.log(`Built browser bundles: ${browserOutDir}/`);
-browserChunks.forEach((c) => console.log(`  ${c}`));
+console.log(`  entry: ${browserManifest.entry}`);
+console.log(`  shared: ${browserManifest.shared.length} chunk(s)`);
+browserManifest.shared.forEach((c) => console.log(`    ${c}`));
+console.log(`  modules: ${Object.keys(browserManifest.modules).length} component(s)`);
+Object.entries(browserManifest.modules).forEach(([id, chunks]) =>
+  console.log(`    ${id} → ${chunks.join(", ")}`)
+);
 
 // c) Generate manifests
 
-// Client manifest — used by server during Flight serialization
+// Client manifest — used by server during Flight serialization.
 // Maps moduleId -> { id, chunks, name }
-// The moduleId matches what createClientModuleProxy was called with
-// The id is what __webpack_require__ will be called with on the SSR/browser side
+// The `chunks` array tells Flight which URLs to load via __webpack_chunk_load__
+// before calling __webpack_require__ for this module.
 const clientManifest: Record<
   string,
   { id: string; chunks: string[]; name: string }
@@ -1395,7 +1445,7 @@ const clientManifest: Record<
 for (const c of clientComponents) {
   clientManifest[c.relativePath] = {
     id: c.relativePath,
-    chunks: [],
+    chunks: browserManifest.modules[c.relativePath] ?? [],
     name: "default",
   };
 }
@@ -1452,12 +1502,13 @@ writeFileSync(
 );
 console.log(`Generated: ${join(outDir, "ssr-manifest.json")}`);
 
-// Browser chunks manifest — used by PHP to inject script tags
+// Browser manifest — structured manifest used by PHP for script rendering.
+// Contains entry, shared chunks, and per-module chunk URLs.
 writeFileSync(
-  join(outDir, "browser-chunks.json"),
-  JSON.stringify(browserChunks, null, 2)
+  join(outDir, "browser-manifest.json"),
+  JSON.stringify(browserManifest, null, 2)
 );
-console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);
+console.log(`Generated: ${join(outDir, "browser-manifest.json")}`);
 
 // ─── CSS Compilation ─────────────────────────────────────────────────────────
 // Compile collected CSS files (from server component imports) with Tailwind CSS.

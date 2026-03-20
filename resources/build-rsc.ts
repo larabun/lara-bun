@@ -330,6 +330,41 @@ if (!existsSync(sourceDir)) {
   console.log(`Created source directory: ${sourceDir}`);
 }
 
+// Scaffold starter app/layout.tsx and app/page.tsx if the app/ directory doesn't exist
+const appDir = join(sourceDir, "app");
+
+if (!existsSync(appDir)) {
+  mkdirSync(appDir, { recursive: true });
+
+  writeFileSync(join(appDir, "layout.tsx"), `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div>
+      <header style={{ padding: '16px 24px', borderBottom: '1px solid #e5e7eb' }}>
+        <h1 style={{ fontSize: 20, fontWeight: 600 }}>My App</h1>
+      </header>
+      <main style={{ padding: 24 }}>
+        {children}
+      </main>
+    </div>
+  );
+}
+`);
+
+  writeFileSync(join(appDir, "page.tsx"), `export default function HomePage() {
+  return (
+    <div>
+      <h2 style={{ fontSize: 28, fontWeight: 700, marginBottom: 12 }}>Welcome to LaraBun</h2>
+      <p style={{ color: '#6b7280', lineHeight: 1.6 }}>
+        Edit <code style={{ background: '#f3f4f6', padding: '2px 6px', borderRadius: 4 }}>resources/js/rsc/app/page.tsx</code> to get started.
+      </p>
+    </div>
+  );
+}
+`);
+
+  console.log("Scaffolded: app/layout.tsx, app/page.tsx");
+}
+
 for await (const path of glob.scan(sourceDir)) {
   if (
     path.startsWith("entry.") ||

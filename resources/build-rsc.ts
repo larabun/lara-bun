@@ -1399,26 +1399,20 @@ for (let i = 0; i < clientComponents.length; i++) {
 
 for (const output of browserResult.outputs) {
   const relativePath = output.path.replace(publicPrefix, "");
-
-  if (output.kind === "chunk") {
-    // Shared dependency chunk (React, ReactDOM, etc.)
-    browserManifest.shared.push(relativePath);
-    continue;
-  }
-
-  // Entry-point outputs — match by name prefix
   const outputBasename = basename(output.path);
-  // Strip -[hash].js suffix to get the original entry name
-  const nameWithoutHash = outputBasename.replace(/-[a-f0-9]+\.js$/, "");
+
+  // Strip -[hash].js suffix to get the original entry name.
+  // Bun uses base36 hashes (alphanumeric), not hex.
+  const nameWithoutHash = outputBasename.replace(/-[a-z0-9]+\.js$/, "");
 
   if (nameWithoutHash === "entry.hydrate") {
     browserManifest.entry = relativePath;
-  } else {
+  } else if (wrapperBasenameToModuleId.has(nameWithoutHash)) {
     // Wrapper entry — look up module ID
-    const moduleId = wrapperBasenameToModuleId.get(nameWithoutHash);
-    if (moduleId) {
-      browserManifest.modules[moduleId] = [relativePath];
-    }
+    browserManifest.modules[wrapperBasenameToModuleId.get(nameWithoutHash)!] = [relativePath];
+  } else {
+    // Shared dependency chunk (React, ReactDOM, etc.)
+    browserManifest.shared.push(relativePath);
   }
 }
 

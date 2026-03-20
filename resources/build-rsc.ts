@@ -100,7 +100,14 @@ if (!existsSync(tsconfigPath)) {
       forceConsistentCasingInFileNames: true,
       noEmit: true,
       verbatimModuleSyntax: true,
-      paths: { "@/*": ["./resources/js/rsc/*"] },
+      paths: {
+        "@/*": ["./resources/js/rsc/*"],
+        "lara-bun/*": [
+          existsSync(join(process.cwd(), "vendor/larabun/lara-bun/resources/js"))
+            ? "./vendor/larabun/lara-bun/resources/js/*"
+            : resolve(join(import.meta.dir, "..")) + "/resources/js/*",
+        ],
+      },
     },
     include: [
       "resources/**/*.ts",

@@ -92,6 +92,40 @@ class BunServiceProvider extends ServiceProvider
         Blade::directive('rscScripts', function (string $expression) {
             return "<?php echo \LaraBun\BunServiceProvider::renderRscScripts({$expression}); ?>";
         });
+
+        Blade::directive('rscHead', function () {
+            return "<?php echo \LaraBun\BunServiceProvider::renderRscHead(); ?>";
+        });
+    }
+
+    /**
+     * Render <link rel="modulepreload"> hints for the hydrate entry, shared chunks,
+     * and component chunks. Place @rscHead in your <head> to eliminate critical
+     * request chains — the browser fetches all JS in parallel on first paint.
+     */
+    public static function renderRscHead(): HtmlString
+    {
+        $buildDir = public_path('build/rsc');
+
+        if (! is_dir($buildDir)) {
+            return new HtmlString('');
+        }
+
+        $tags = '';
+
+        foreach (glob("{$buildDir}/entry.hydrate-*.js") as $entry) {
+            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($entry).'">';
+        }
+
+        foreach (glob("{$buildDir}/chunk-*.js") as $chunk) {
+            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($chunk).'">';
+        }
+
+        foreach (glob("{$buildDir}/_register_*.js") as $module) {
+            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($module).'">';
+        }
+
+        return new HtmlString($tags);
     }
 
     /**

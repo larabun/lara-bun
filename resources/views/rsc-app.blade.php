@@ -7,13 +7,7 @@
     @foreach (($cssLinks ?? []) as $cssLink)
         <link rel="stylesheet" href="{{ $cssLink }}" data-rsc-css>
     @endforeach
-    @php($hydrateEntry = collect(glob(public_path('build/rsc/entry.hydrate-*.js')))->first())
-    @if ($hydrateEntry)
-        <link rel="modulepreload" href="/build/rsc/{{ basename($hydrateEntry) }}">
-    @endif
-    @foreach (glob(public_path('build/rsc/chunk-*.js')) as $sharedChunk)
-        <link rel="modulepreload" href="/build/rsc/{{ basename($sharedChunk) }}">
-    @endforeach
+    @rscHead
 </head>
 
 <body>

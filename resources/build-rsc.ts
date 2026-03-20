@@ -1480,6 +1480,9 @@ if (collectedCssFiles.size > 0) {
     minify: true,
     naming: "[name]-[hash].[ext]",
     plugins: [tailwindPlugin],
+    experimentalCss: true,
+    // Keep font/asset files as separate files instead of inlining as base64
+    publicPath: "/build/css/",
   });
 
   if (!cssResult.success) {

@@ -1469,74 +1469,41 @@ if (collectedCssFiles.size > 0) {
   rmSync(cssOutDir, { recursive: true, force: true });
   mkdirSync(cssOutDir, { recursive: true });
 
-  // Map source CSS path → hashed public URL
   const cssFileToUrl = new Map<string, string>();
 
-  for (const cssFile of collectedCssFiles) {
-    const name = basename(cssFile, ".css");
-    const tmpFile = join(cssOutDir, `${name}.tmp.css`);
+  const tw = await import("bun-plugin-tailwind");
+  const tailwindPlugin: BunPlugin = tw.default ?? tw;
 
-    const twProc = Bun.spawn(
-      ["npx", "--yes", "@tailwindcss/cli@latest", "-i", cssFile, "-o", tmpFile, "--minify"],
-      { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" }
-    );
+  const cssResult = await Bun.build({
+    entrypoints: [...collectedCssFiles],
+    outdir: cssOutDir,
+    minify: true,
+    naming: "[name]-[hash].[ext]",
+    plugins: [tailwindPlugin],
+  });
 
-    const twExit = await twProc.exited;
-    let cssContent: string;
+  if (!cssResult.success) {
+    console.error("CSS build failed:");
+    cssResult.logs.forEach((log) => console.error(log));
+    process.exit(1);
+  }
 
-    if (twExit === 0) {
-      cssContent = readFileSync(tmpFile, "utf-8");
-    } else {
-      const stderr = await new Response(twProc.stderr).text();
-      console.warn(`Warning: Tailwind CSS compilation failed for ${cssFile}. Falling back to raw copy.`);
-      if (stderr.trim()) console.warn(stderr.trim());
-      cssContent = readFileSync(cssFile, "utf-8");
-    }
+  for (const output of cssResult.outputs) {
+    if (!output.path.endsWith(".css")) continue;
 
-    const hasher = new Bun.CryptoHasher("md5");
-    hasher.update(cssContent);
-    const hash = hasher.digest("hex").slice(0, 8);
+    const outputName = basename(output.path);
+    const publicUrl = `/build/css/${outputName}`;
 
-    const hashedName = `${name}-${hash}.css`;
-    const outFile = join(cssOutDir, hashedName);
-    writeFileSync(outFile, cssContent);
-    try { rmSync(tmpFile); } catch {}
-
-    // Copy font/asset files referenced in the compiled CSS
-    const urlRefs = cssContent.matchAll(/url\(\.\/([^)]+)\)/g);
-    for (const match of urlRefs) {
-      const assetRelPath = match[1];
-      const assetDest = join(cssOutDir, assetRelPath);
-      if (existsSync(assetDest)) continue;
-
-      const searchDirs = [dirname(cssFile), join(process.cwd(), "node_modules")];
-      let found = false;
-
-      for (const dir of searchDirs) {
-        const assetSrc = join(dir, assetRelPath);
-        if (existsSync(assetSrc)) {
-          mkdirSync(dirname(assetDest), { recursive: true });
-          writeFileSync(assetDest, readFileSync(assetSrc));
-          found = true;
-          break;
-        }
-      }
-
-      if (!found) {
-        const fileName = basename(assetRelPath);
-        const nodeModules = join(process.cwd(), "node_modules");
-        const searchGlob = new Bun.Glob(`**/${fileName}`);
-        for (const m of searchGlob.scanSync(nodeModules)) {
-          mkdirSync(dirname(assetDest), { recursive: true });
-          writeFileSync(assetDest, readFileSync(join(nodeModules, m)));
-          break;
-        }
+    // Match output back to source by name prefix
+    for (const src of collectedCssFiles) {
+      const srcName = basename(src, ".css");
+      if (outputName.startsWith(srcName + "-") || outputName.startsWith(srcName + ".")) {
+        cssFileToUrl.set(src, publicUrl);
+        break;
       }
     }
 
-    const publicUrl = `/build/css/${hashedName}`;
-    cssFileToUrl.set(cssFile, publicUrl);
-    console.log(`Built CSS: ${outFile}`);
+    console.log(`Built CSS: ${output.path}`);
   }
 
   // Build CSS manifest: maps component names to their CSS URLs.

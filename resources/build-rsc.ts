@@ -1452,13 +1452,45 @@ if (collectedCssFiles.size > 0) {
     const urlRefs = cssContent.matchAll(/url\(\.\/([^)]+)\)/g);
     for (const match of urlRefs) {
       const assetRelPath = match[1];
-      // Resolve relative to the original CSS file's directory (where Tailwind resolves from)
-      const assetSrc = join(dirname(cssFile), assetRelPath);
       const assetDest = join(cssOutDir, assetRelPath);
 
-      if (existsSync(assetSrc) && !existsSync(assetDest)) {
-        mkdirSync(dirname(assetDest), { recursive: true });
-        writeFileSync(assetDest, readFileSync(assetSrc));
+      if (existsSync(assetDest)) continue;
+
+      // Search for the asset in likely locations:
+      // 1. Relative to source CSS file
+      // 2. In node_modules (font packages like @fontsource-variable/*)
+      const searchDirs = [
+        dirname(cssFile),
+        join(process.cwd(), "node_modules"),
+      ];
+
+      let found = false;
+      for (const dir of searchDirs) {
+        // Walk node_modules looking for the file by name
+        const fileName = basename(assetRelPath);
+        const assetSrc = join(dir, assetRelPath);
+
+        if (existsSync(assetSrc)) {
+          mkdirSync(dirname(assetDest), { recursive: true });
+          writeFileSync(assetDest, readFileSync(assetSrc));
+          found = true;
+          break;
+        }
+      }
+
+      // Deep search in node_modules if not found at expected paths
+      if (!found) {
+        const fileName = basename(assetRelPath);
+        const nodeModules = join(process.cwd(), "node_modules");
+        const searchGlob = new Bun.Glob(`**/${fileName}`);
+
+        for (const match of searchGlob.scanSync(nodeModules)) {
+          const fullPath = join(nodeModules, match);
+          mkdirSync(dirname(assetDest), { recursive: true });
+          writeFileSync(assetDest, readFileSync(fullPath));
+          found = true;
+          break;
+        }
       }
     }
 

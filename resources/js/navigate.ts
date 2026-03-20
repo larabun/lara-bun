@@ -190,6 +190,45 @@ function deserializeResponse(response: Response): Promise<ReactNode> {
     }
   }
 
+  // Load page-specific CSS — add new links, remove old page CSS
+  const cssHeader = response.headers.get("X-RSC-CSS");
+
+  if (cssHeader) {
+    try {
+      const cssUrls: string[] = JSON.parse(cssHeader);
+      const existingLinks = new Set(
+        Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][data-rsc-css]'))
+          .map((l) => l.href)
+      );
+
+      // Remove old page CSS that's not in the new set
+      const newAbsoluteUrls = new Set(
+        cssUrls.map((u) => new URL(u, window.location.origin).href)
+      );
+
+      document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][data-rsc-css]')
+        .forEach((link) => {
+          if (!newAbsoluteUrls.has(link.href)) {
+            link.remove();
+          }
+        });
+
+      // Add new CSS links
+      for (const cssUrl of cssUrls) {
+        const absoluteUrl = new URL(cssUrl, window.location.origin).href;
+        if (!existingLinks.has(absoluteUrl)) {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = cssUrl;
+          link.setAttribute("data-rsc-css", "");
+          document.head.appendChild(link);
+        }
+      }
+    } catch {
+      // Ignore malformed CSS header
+    }
+  }
+
   return flightDeserializer!(response.body!, {
     callServer: callServerFn ?? (async () => {
       throw new Error("Server actions not initialized");

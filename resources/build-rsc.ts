@@ -657,19 +657,45 @@ ${proxyExports}
 };
 
 // ─── CSS Collection Plugin ───────────────────────────────────────────────────
-// Collects CSS file imports from server components (e.g. `import "./app.css"`)
-// and strips them from the server bundle. The collected files are compiled
-// with Tailwind CSS and output to public/build/css/.
+// Collects CSS file imports from server components and tracks which component
+// imported each CSS file. This allows per-page CSS — layout CSS loads globally,
+// page CSS loads only when that page renders.
 const collectedCssFiles = new Set<string>();
+// Map: component name (e.g. "app/layout", "app/(main)/(home)/page") → set of CSS paths
+const cssByComponent = new Map<string, Set<string>>();
 
 const cssCollectorPlugin: BunPlugin = {
   name: "css-collector",
   setup(build) {
-    // Intercept CSS file loads — collect paths and return empty JS module.
-    // This prevents Bun from trying to parse Tailwind directives in the
-    // server bundle while recording the files for later Tailwind compilation.
-    build.onLoad({ filter: /\.css$/ }, (args) => {
-      collectedCssFiles.add(args.path);
+    build.onResolve({ filter: /\.css$/ }, (args) => {
+      const resolved = args.importer
+        ? resolve(dirname(args.importer), args.path)
+        : resolve(args.path);
+
+      if (existsSync(resolved)) {
+        collectedCssFiles.add(resolved);
+
+        // Track which component imported this CSS
+        if (args.importer) {
+          const importerRel = args.importer.startsWith(sourceDir + "/")
+            ? "app/" + args.importer.slice(sourceDir.length + 1 + 4) // strip sourceDir + "/app/"
+            : args.importer;
+          // Normalize to component name (remove extension)
+          const componentName = args.importer.startsWith(sourceDir)
+            ? "app/" + args.importer.slice(sourceDir.length + 1).replace(/\.(tsx|ts|jsx|js)$/, "")
+            : args.importer.replace(/\.(tsx|ts|jsx|js)$/, "");
+
+          if (!cssByComponent.has(componentName)) {
+            cssByComponent.set(componentName, new Set());
+          }
+          cssByComponent.get(componentName)!.add(resolved);
+        }
+      }
+
+      return { path: resolved, namespace: "css-stub" };
+    });
+
+    build.onLoad({ filter: /.*/, namespace: "css-stub" }, () => {
       return { contents: "", loader: "js" };
     });
   },
@@ -1442,26 +1468,22 @@ console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);
 
 if (collectedCssFiles.size > 0) {
   const cssOutDir = join(process.cwd(), "public/build/css");
-  // Clean previous CSS builds (old hashes)
   rmSync(cssOutDir, { recursive: true, force: true });
   mkdirSync(cssOutDir, { recursive: true });
 
-  const cssChunks: string[] = [];
+  // Map source CSS path → hashed public URL
+  const cssFileToUrl = new Map<string, string>();
 
   for (const cssFile of collectedCssFiles) {
     const name = basename(cssFile, ".css");
-
-    // Compile to a temp file first, then hash the content for cache busting
     const tmpFile = join(cssOutDir, `${name}.tmp.css`);
 
-    // Try Tailwind CLI first (handles @tailwindcss, @source, etc.)
     const twProc = Bun.spawn(
       ["npx", "--yes", "@tailwindcss/cli@latest", "-i", cssFile, "-o", tmpFile, "--minify"],
       { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" }
     );
 
     const twExit = await twProc.exited;
-
     let cssContent: string;
 
     if (twExit === 0) {
@@ -1473,7 +1495,6 @@ if (collectedCssFiles.size > 0) {
       cssContent = readFileSync(cssFile, "utf-8");
     }
 
-    // Generate content hash for cache busting (same pattern as JS bundles)
     const hasher = new Bun.CryptoHasher("md5");
     hasher.update(cssContent);
     const hash = hasher.digest("hex").slice(0, 8);
@@ -1481,32 +1502,20 @@ if (collectedCssFiles.size > 0) {
     const hashedName = `${name}-${hash}.css`;
     const outFile = join(cssOutDir, hashedName);
     writeFileSync(outFile, cssContent);
-
-    // Clean up temp file
     try { rmSync(tmpFile); } catch {}
 
-    // Copy font/asset files referenced in the compiled CSS (e.g. url(./files/font.woff2))
+    // Copy font/asset files referenced in the compiled CSS
     const urlRefs = cssContent.matchAll(/url\(\.\/([^)]+)\)/g);
     for (const match of urlRefs) {
       const assetRelPath = match[1];
       const assetDest = join(cssOutDir, assetRelPath);
-
       if (existsSync(assetDest)) continue;
 
-      // Search for the asset in likely locations:
-      // 1. Relative to source CSS file
-      // 2. In node_modules (font packages like @fontsource-variable/*)
-      const searchDirs = [
-        dirname(cssFile),
-        join(process.cwd(), "node_modules"),
-      ];
-
+      const searchDirs = [dirname(cssFile), join(process.cwd(), "node_modules")];
       let found = false;
-      for (const dir of searchDirs) {
-        // Walk node_modules looking for the file by name
-        const fileName = basename(assetRelPath);
-        const assetSrc = join(dir, assetRelPath);
 
+      for (const dir of searchDirs) {
+        const assetSrc = join(dir, assetRelPath);
         if (existsSync(assetSrc)) {
           mkdirSync(dirname(assetDest), { recursive: true });
           writeFileSync(assetDest, readFileSync(assetSrc));
@@ -1515,29 +1524,48 @@ if (collectedCssFiles.size > 0) {
         }
       }
 
-      // Deep search in node_modules if not found at expected paths
       if (!found) {
         const fileName = basename(assetRelPath);
         const nodeModules = join(process.cwd(), "node_modules");
         const searchGlob = new Bun.Glob(`**/${fileName}`);
-
-        for (const match of searchGlob.scanSync(nodeModules)) {
-          const fullPath = join(nodeModules, match);
+        for (const m of searchGlob.scanSync(nodeModules)) {
           mkdirSync(dirname(assetDest), { recursive: true });
-          writeFileSync(assetDest, readFileSync(fullPath));
-          found = true;
+          writeFileSync(assetDest, readFileSync(join(nodeModules, m)));
           break;
         }
       }
     }
 
-    cssChunks.push(`/build/css/${hashedName}`);
+    const publicUrl = `/build/css/${hashedName}`;
+    cssFileToUrl.set(cssFile, publicUrl);
     console.log(`Built CSS: ${outFile}`);
   }
 
+  // Build CSS manifest: maps component names to their CSS URLs.
+  // Layout CSS is marked as global (loaded on every page).
+  // Page CSS is per-page (loaded only when that page renders).
+  const cssManifest: Record<string, string[]> = {};
+
+  for (const [componentName, cssFiles] of cssByComponent) {
+    const urls = [...cssFiles]
+      .map((f) => cssFileToUrl.get(f))
+      .filter((u): u is string => u !== undefined);
+
+    if (urls.length > 0) {
+      cssManifest[componentName] = urls;
+    }
+  }
+
+  writeFileSync(
+    join(outDir, "css-manifest.json"),
+    JSON.stringify(cssManifest, null, 2)
+  );
+  console.log(`Generated: ${join(outDir, "css-manifest.json")} (${Object.keys(cssManifest).length} component(s))`);
+
+  // Also write css-chunks.json with ALL CSS for backwards compat / Blade
+  const allCssUrls = [...cssFileToUrl.values()];
   writeFileSync(
     join(outDir, "css-chunks.json"),
-    JSON.stringify(cssChunks, null, 2)
+    JSON.stringify(allCssUrls, null, 2)
   );
-  console.log(`Generated: ${join(outDir, "css-chunks.json")} (${cssChunks.length} file(s))`);
 }

@@ -4,9 +4,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    @php($cssChunks = file_exists(base_path('bootstrap/rsc/css-chunks.json')) ? json_decode(file_get_contents(base_path('bootstrap/rsc/css-chunks.json')), true) : [])
-    @foreach ($cssChunks as $cssChunk)
-        <link rel="stylesheet" href="{{ $cssChunk }}">
+    @foreach (($cssLinks ?? []) as $cssLink)
+        <link rel="stylesheet" href="{{ $cssLink }}" data-rsc-css>
     @endforeach
     @php($hydrateEntry = collect(glob(public_path('build/rsc/entry.hydrate-*.js')))->first())
     @if ($hydrateEntry)

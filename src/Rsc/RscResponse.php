@@ -201,6 +201,12 @@ class RscResponse implements Responsable
             $headers[Header::X_RSC_META] = json_encode($metaData, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
         }
 
+        $cssLinks = $this->resolveCssLinks();
+
+        if ($cssLinks !== []) {
+            $headers[Header::X_RSC_CSS] = json_encode($cssLinks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        }
+
         return new StreamedResponse(function () use ($generator): void {
             while (ob_get_level() > 0) {
                 ob_end_flush();
@@ -251,6 +257,7 @@ class RscResponse implements Responsable
             'body' => $bodyMarker,
             'initialJson' => $initialMarker,
             'scripts' => $scriptsMarker,
+            'cssLinks' => $this->resolveCssLinks(),
         ])->render();
 
         [$shellHead, $shellTail] = explode($bodyMarker, $shell, 2);
@@ -442,6 +449,45 @@ class RscResponse implements Responsable
         }
 
         return $metadata;
+    }
+
+    /**
+     * Resolve CSS links for this page from the CSS manifest.
+     * Collects CSS from the page component + all layouts in its chain.
+     *
+     * @return list<string>
+     */
+    protected function resolveCssLinks(): array
+    {
+        $manifestPath = base_path('bootstrap/rsc/css-manifest.json');
+
+        if (! file_exists($manifestPath)) {
+            return [];
+        }
+
+        /** @var array<string, list<string>> $manifest */
+        $manifest = json_decode(file_get_contents($manifestPath), true) ?? [];
+        $links = [];
+
+        // Collect CSS from layouts (outermost first)
+        foreach ($this->layouts as $layout) {
+            $component = $layout['component'];
+
+            if (isset($manifest[$component])) {
+                foreach ($manifest[$component] as $url) {
+                    $links[] = $url;
+                }
+            }
+        }
+
+        // Collect CSS from the page component
+        if (isset($manifest[$this->component])) {
+            foreach ($manifest[$this->component] as $url) {
+                $links[] = $url;
+            }
+        }
+
+        return array_values(array_unique($links));
     }
 
     protected function resolveVersion(): string

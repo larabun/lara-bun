@@ -184,9 +184,13 @@ class RscResponse implements Responsable
         // Apply page metadata as viewData defaults (route.php viewData takes precedence)
         $this->applyMetadataDefaults($meta['metadata'] ?? null);
 
+        // Send only shared chunks in the header — component chunks are loaded
+        // on demand by Flight via __webpack_chunk_load__.
+        $sharedChunks = isset($clientChunks['shared']) ? $clientChunks['shared'] : $clientChunks;
+
         $headers = [
             'Content-Type' => 'text/x-component',
-            Header::X_RSC_CHUNKS => json_encode($clientChunks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+            Header::X_RSC_CHUNKS => json_encode($sharedChunks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
             Header::X_RSC_VERSION => $version,
             'X-Accel-Buffering' => 'no',
         ];
@@ -199,6 +203,12 @@ class RscResponse implements Responsable
 
         if ($metaData !== []) {
             $headers[Header::X_RSC_META] = json_encode($metaData, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        }
+
+        $cssLinks = $this->resolveCssLinks();
+
+        if ($cssLinks !== []) {
+            $headers[Header::X_RSC_CSS] = json_encode($cssLinks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
         }
 
         return new StreamedResponse(function () use ($generator): void {
@@ -251,6 +261,7 @@ class RscResponse implements Responsable
             'body' => $bodyMarker,
             'initialJson' => $initialMarker,
             'scripts' => $scriptsMarker,
+            'cssLinks' => $this->resolveCssLinks(),
         ])->render();
 
         [$shellHead, $shellTail] = explode($bodyMarker, $shell, 2);
@@ -442,6 +453,45 @@ class RscResponse implements Responsable
         }
 
         return $metadata;
+    }
+
+    /**
+     * Resolve CSS links for this page from the CSS manifest.
+     * Collects CSS from the page component + all layouts in its chain.
+     *
+     * @return list<string>
+     */
+    protected function resolveCssLinks(): array
+    {
+        $manifestPath = base_path('bootstrap/rsc/css-manifest.json');
+
+        if (! file_exists($manifestPath)) {
+            return [];
+        }
+
+        /** @var array<string, list<string>> $manifest */
+        $manifest = json_decode(file_get_contents($manifestPath), true) ?? [];
+        $links = [];
+
+        // Collect CSS from layouts (outermost first)
+        foreach ($this->layouts as $layout) {
+            $component = $layout['component'];
+
+            if (isset($manifest[$component])) {
+                foreach ($manifest[$component] as $url) {
+                    $links[] = $url;
+                }
+            }
+        }
+
+        // Collect CSS from the page component
+        if (isset($manifest[$this->component])) {
+            foreach ($manifest[$this->component] as $url) {
+                $links[] = $url;
+            }
+        }
+
+        return array_values(array_unique($links));
     }
 
     protected function resolveVersion(): string

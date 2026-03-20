@@ -27,7 +27,15 @@ class PageRouteRegistrar
     {
         $url = $page->urlPattern === '' ? '/' : $page->urlPattern;
 
-        $route = $this->router->get($url, [PageController::class, 'handle']);
+        // Resolve domain early — needed before route registration so Laravel
+        // can distinguish routes with the same URL on different domains.
+        $earlyDomain = $this->resolveDomain($page);
+
+        if ($earlyDomain !== null) {
+            $route = $this->router->domain($earlyDomain)->get($url, [PageController::class, 'handle']);
+        } else {
+            $route = $this->router->get($url, [PageController::class, 'handle']);
+        }
 
         $route->defaults('_rsc_component', $page->componentName);
         $route->defaults('_rsc_layouts', $page->layouts);
@@ -129,27 +137,37 @@ class PageRouteRegistrar
 
         $route->middleware(array_unique($middleware));
 
-        // Domain routing — page-level route.php wins, then fall back to directory-level
-        $domain = $pageConfig instanceof PageRoute ? $pageConfig->getDomain() : null;
-
-        if ($domain === null) {
-            foreach ($page->directoryConfigPaths as $configPath) {
-                $dirConfig = $this->loadConfig($configPath);
-
-                if ($dirConfig instanceof PageRoute && $dirConfig->getDomain() !== null) {
-                    $domain = $dirConfig->getDomain();
-                }
-            }
-        }
-
-        if ($domain !== null) {
-            $route->domain($domain);
-        }
-
         // Auto-name: app/docs/[slug]/page → rsc.docs.slug
         if (! $route->getName()) {
             $route->name($this->generateRouteName($page));
         }
+    }
+
+    /**
+     * Resolve the domain for a page from its route.php configs.
+     * Page-level config wins, then directory-level.
+     */
+    protected function resolveDomain(PageDefinition $page): ?string
+    {
+        // Page-level route.php
+        if ($page->routeConfigPath !== null) {
+            $config = $this->loadConfig($page->routeConfigPath);
+
+            if ($config instanceof PageRoute && $config->getDomain() !== null) {
+                return $config->getDomain();
+            }
+        }
+
+        // Directory-level route.php (innermost wins)
+        foreach (array_reverse($page->directoryConfigPaths) as $configPath) {
+            $config = $this->loadConfig($configPath);
+
+            if ($config instanceof PageRoute && $config->getDomain() !== null) {
+                return $config->getDomain();
+            }
+        }
+
+        return null;
     }
 
     protected function loadConfig(string $path): mixed

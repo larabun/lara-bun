@@ -10,7 +10,7 @@
  *   out-dir:    bootstrap/rsc
  */
 
-import { join, basename, resolve } from "node:path";
+import { join, basename, dirname, resolve } from "node:path";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import type { BunPlugin } from "bun";
 
@@ -100,7 +100,14 @@ if (!existsSync(tsconfigPath)) {
       forceConsistentCasingInFileNames: true,
       noEmit: true,
       verbatimModuleSyntax: true,
-      paths: { "@/*": ["./resources/js/rsc/*"] },
+      paths: {
+        "@/*": ["./resources/js/rsc/*"],
+        "lara-bun/*": [
+          existsSync(join(process.cwd(), "vendor/larabun/lara-bun/resources/js"))
+            ? "./vendor/larabun/lara-bun/resources/js/*"
+            : resolve(join(import.meta.dir, "..")) + "/resources/js/*",
+        ],
+      },
     },
     include: [
       "resources/**/*.ts",
@@ -121,6 +128,7 @@ const rscIgnoreEntries = [
   "resources/js/rsc/routes.generated.ts",
   "resources/js/rsc/server-actions.generated.ts",
   "storage/framework/rsc-dev",
+  "storage/framework/rsc-static",
 ];
 
 if (existsSync(gitignorePath)) {
@@ -650,19 +658,43 @@ ${proxyExports}
 };
 
 // ─── CSS Collection Plugin ───────────────────────────────────────────────────
-// Collects CSS file imports from server components (e.g. `import "./app.css"`)
-// and strips them from the server bundle. The collected files are compiled
-// with Tailwind CSS and output to public/build/css/.
+// Collects CSS file imports from server components and tracks which component
+// imported each CSS file. This allows per-page CSS — layout CSS loads globally,
+// page CSS loads only when that page renders.
 const collectedCssFiles = new Set<string>();
+// Map: component name (e.g. "app/layout", "app/(main)/(home)/page") → set of CSS paths
+const cssByComponent = new Map<string, Set<string>>();
 
 const cssCollectorPlugin: BunPlugin = {
   name: "css-collector",
   setup(build) {
-    // Intercept CSS file loads — collect paths and return empty JS module.
-    // This prevents Bun from trying to parse Tailwind directives in the
-    // server bundle while recording the files for later Tailwind compilation.
-    build.onLoad({ filter: /\.css$/ }, (args) => {
-      collectedCssFiles.add(args.path);
+    build.onResolve({ filter: /\.css$/ }, (args) => {
+      const resolved = args.importer
+        ? resolve(dirname(args.importer), args.path)
+        : resolve(args.path);
+
+      if (existsSync(resolved)) {
+        collectedCssFiles.add(resolved);
+
+        // Track which component imported this CSS
+        if (args.importer) {
+          // Normalize to component name matching the entry bundle's naming
+          // e.g. /path/to/resources/js/rsc/app/layout.tsx → "app/layout"
+          const componentName = args.importer.startsWith(sourceDir + "/")
+            ? args.importer.slice(sourceDir.length + 1).replace(/\.(tsx|ts|jsx|js)$/, "")
+            : args.importer.replace(/\.(tsx|ts|jsx|js)$/, "");
+
+          if (!cssByComponent.has(componentName)) {
+            cssByComponent.set(componentName, new Set());
+          }
+          cssByComponent.get(componentName)!.add(resolved);
+        }
+      }
+
+      return { path: resolved, namespace: "css-stub" };
+    });
+
+    build.onLoad({ filter: /.*/, namespace: "css-stub" }, () => {
       return { contents: "", loader: "js" };
     });
   },
@@ -967,31 +999,67 @@ if (pageRoutes.length > 0) {
     console.warn("Warning: Could not run rsc:route-manifest. Falling back to string params.");
   }
 
-  // Build a lookup from URL pattern → manifest entry
-  const manifestByPattern = new Map<string, RouteManifestEntry>();
-  for (const entry of routeManifest) {
-    // Normalize: PHP uses {slug}, TS uses [slug]
-    const tsPattern = entry.urlPattern
-      .replace(/\{(\w+)\}/g, "[$1]");
-    manifestByPattern.set(tsPattern, entry);
+  // Build typed routes from the PHP route manifest which has both URL patterns
+  // and domain info. This avoids duplicate keys when multiple route groups
+  // map to the same URL on different domains.
+  interface TypedRoute {
+    key: string;          // Unique key for RouteParams (may include domain prefix)
+    urlPattern: string;   // The actual URL pattern (e.g. "/")
+    params: string[];
+    baseUrl?: string;
+    staticPaths?: Record<string, string[]>;
+    where?: Record<string, string[]>;
   }
 
-  // Sort routes for stable output
-  const sorted = [...pageRoutes].sort((a, b) => a.urlPattern.localeCompare(b.urlPattern));
+  const typedRoutes: TypedRoute[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const entry of routeManifest) {
+    const tsPattern = entry.urlPattern.replace(/\{(\w+)\}/g, "[$1]");
+
+    // Extract params from pattern
+    const params: string[] = [];
+    const paramMatches = tsPattern.matchAll(/\[(?:\.\.\.)?(\w+)\]/g);
+    for (const m of paramMatches) {
+      params.push(m[1]);
+    }
+
+    // For domain routes with duplicate URL patterns, prefix with the domain
+    let key = tsPattern;
+    if (seenKeys.has(key) && entry.baseUrl) {
+      // Extract hostname from baseUrl for the key
+      try {
+        const host = new URL(entry.baseUrl).hostname.split(".")[0];
+        key = `${host}:${tsPattern}`;
+      } catch {
+        key = `${entry.baseUrl}${tsPattern}`;
+      }
+    }
+    seenKeys.add(key);
+
+    typedRoutes.push({
+      key,
+      urlPattern: tsPattern,
+      params,
+      baseUrl: entry.baseUrl,
+      staticPaths: entry.staticPaths,
+      where: entry.where,
+    });
+  }
+
+  const sorted = typedRoutes.sort((a, b) => a.key.localeCompare(b.key));
 
   const routeParamEntries = sorted
     .map((r) => {
       if (r.params.length === 0) {
-        return `  '${r.urlPattern}': Record<string, never>;`;
+        return `  '${r.key}': Record<string, never>;`;
       }
 
-      const manifest = manifestByPattern.get(r.urlPattern);
       const paramTypes = r.params
         .map((p) => {
-          // Check for known values from staticPaths or where constraints
-          const values = manifest?.staticPaths?.[p]
-            ?? manifest?.staticPaths?.["_default"]
-            ?? manifest?.where?.[p];
+          const values = r.staticPaths?.[p]
+            ?? r.staticPaths?.["_default"]
+            ?? r.where?.[p];
 
           if (values && values.length > 0) {
             return `${p}: ${values.map((v) => `'${v}'`).join(" | ")}`;
@@ -999,16 +1067,15 @@ if (pageRoutes.length > 0) {
           return `${p}: string`;
         })
         .join("; ");
-      return `  '${r.urlPattern}': { ${paramTypes} };`;
+      return `  '${r.key}': { ${paramTypes} };`;
     })
     .join("\n");
 
   // Collect domain mappings for routes that have domains
   const domainEntries: string[] = [];
   for (const r of sorted) {
-    const manifest = manifestByPattern.get(r.urlPattern);
-    if (manifest?.baseUrl) {
-      domainEntries.push(`  '${r.urlPattern}': '${manifest.baseUrl}',`);
+    if (r.baseUrl) {
+      domainEntries.push(`  '${r.key}': '${r.baseUrl}',`);
     }
   }
 
@@ -1036,6 +1103,7 @@ ${domainMapBlock}
  * @example
  * route('/')                                    // "/"
  * route('/docs/[slug]', { slug: 'metadata' })   // "/docs/metadata"
+ * route('docs:/')                               // "http://docs.app.test/"
  * route('/onboarding')                          // "http://merchant.app.test/onboarding"
  */
 export function route<T extends RoutePath>(
@@ -1044,7 +1112,8 @@ export function route<T extends RoutePath>(
 ): string {
   const params = args[0] as Record<string, string> | undefined;
 
-  let url: string = path;
+  // Domain-prefixed keys (e.g. "docs:/") — extract the actual URL path
+  let url: string = (path as string).includes(':') ? (path as string).split(':').slice(1).join(':') : path;
 
   if (params) {
     for (const [key, value] of Object.entries(params)) {
@@ -1197,19 +1266,9 @@ console.log(`Generated: ${join(outDir, "ssr-module-map.json")}`);
 // b) Browser client build — builds client components + hydration entry for browser
 mkdirSync(browserOutDir, { recursive: true });
 
-// Generate a hydration entry that imports createRscApp and all client components
+// Generate a lightweight hydration entry — client components self-register
+// via separate wrapper entries, so we don't need to import them here.
 const createRscAppPath = join(packageJsDir, "createRscApp.ts");
-
-const hydrateImports = clientComponents
-  .map(
-    (c, i) =>
-      `import * as _M${i} from "${c.absolutePath}";`
-  )
-  .join("\n");
-
-const hydrateModuleMap = clientComponents
-  .map((c, i) => `  "${c.relativePath}": _M${i},`)
-  .join("\n");
 
 // Read the intercept manifest (generated during route manifest phase)
 const interceptManifestPath = join(outDir, "intercept-manifest.json");
@@ -1224,22 +1283,36 @@ const hydrateEntrySource = `// Auto-generated hydration entry — do not edit
 // inline <script> block rendered by @rscScripts so they exist before this
 // ES module initializes (ES module imports are hoisted above module body code).
 import { createRscApp } from "${createRscAppPath}";
-${hydrateImports}
-
-const modules: Record<string, unknown> = {
-${hydrateModuleMap}
-};
 
 const interceptManifest: { urlPattern: string; slot: string }[] = ${interceptManifestJson};
 
 const container = document.getElementById("rsc-root");
 if (container) {
-  createRscApp(container, modules, interceptManifest);
+  createRscApp(container, {}, interceptManifest);
 }
 `;
 
 const hydrateEntryPath = join(outDir, "entry.hydrate.tsx");
 writeFileSync(hydrateEntryPath, hydrateEntrySource);
+
+// Generate self-registering wrapper entries for each client component.
+// Each wrapper imports the component and registers it into window.__RSC_MODULES__.
+// With splitting: true, Bun extracts shared dependencies (React, ReactDOM)
+// into common chunks, so each page only loads the components it actually uses.
+const wrapperEntryPaths: string[] = [];
+const wrapperIndexToModuleId = new Map<number, string>();
+
+for (let i = 0; i < clientComponents.length; i++) {
+  const c = clientComponents[i];
+  const wrapperSource = `// Auto-generated wrapper — do not edit
+import * as mod from "${c.absolutePath}";
+(window as any).__RSC_MODULES__["${c.relativePath}"] = mod;
+`;
+  const wrapperPath = join(outDir, `_register_${i}.tsx`);
+  writeFileSync(wrapperPath, wrapperSource);
+  wrapperEntryPaths.push(wrapperPath);
+  wrapperIndexToModuleId.set(i, c.relativePath);
+}
 
 // Plugin that intercepts imports of "use server" files in the browser build
 // and replaces them with createServerReference stubs that call through the
@@ -1281,7 +1354,7 @@ if (reactCompilerPlugin) {
 }
 
 const browserResult = await Bun.build({
-  entrypoints: [hydrateEntryPath],
+  entrypoints: [hydrateEntryPath, ...wrapperEntryPaths],
   outdir: browserOutDir,
   target: "browser",
   format: "esm",
@@ -1300,25 +1373,65 @@ if (!browserResult.success) {
   process.exit(1);
 }
 
-// Collect browser output file paths (relative to public/)
-const browserChunks: string[] = [];
+// ─── Match browser outputs to inputs and build structured manifest ───────────
+//
+// Classify each output as: hydrate entry, wrapper entry (component), or shared chunk.
+// Shared chunks are extracted by Bun's code splitting (React, ReactDOM, etc.).
+
+const publicPrefix = join(process.cwd(), "public");
+
+interface BrowserManifest {
+  entry: string;
+  shared: string[];
+  modules: Record<string, string[]>;
+}
+
+const browserManifest: BrowserManifest = {
+  entry: "",
+  shared: [],
+  modules: {},
+};
+
+// Build a map from wrapper basename (without extension) to module ID
+const wrapperBasenameToModuleId = new Map<string, string>();
+for (let i = 0; i < clientComponents.length; i++) {
+  wrapperBasenameToModuleId.set(`_register_${i}`, clientComponents[i].relativePath);
+}
+
 for (const output of browserResult.outputs) {
-  const relativePath = output.path.replace(
-    join(process.cwd(), "public"),
-    ""
-  );
-  browserChunks.push(relativePath);
+  const relativePath = output.path.replace(publicPrefix, "");
+  const outputBasename = basename(output.path);
+
+  // Strip -[hash].js suffix to get the original entry name.
+  // Bun uses base36 hashes (alphanumeric), not hex.
+  const nameWithoutHash = outputBasename.replace(/-[a-z0-9]+\.js$/, "");
+
+  if (nameWithoutHash === "entry.hydrate") {
+    browserManifest.entry = relativePath;
+  } else if (wrapperBasenameToModuleId.has(nameWithoutHash)) {
+    // Wrapper entry — look up module ID
+    browserManifest.modules[wrapperBasenameToModuleId.get(nameWithoutHash)!] = [relativePath];
+  } else {
+    // Shared dependency chunk (React, ReactDOM, etc.)
+    browserManifest.shared.push(relativePath);
+  }
 }
 
 console.log(`Built browser bundles: ${browserOutDir}/`);
-browserChunks.forEach((c) => console.log(`  ${c}`));
+console.log(`  entry: ${browserManifest.entry}`);
+console.log(`  shared: ${browserManifest.shared.length} chunk(s)`);
+browserManifest.shared.forEach((c) => console.log(`    ${c}`));
+console.log(`  modules: ${Object.keys(browserManifest.modules).length} component(s)`);
+Object.entries(browserManifest.modules).forEach(([id, chunks]) =>
+  console.log(`    ${id} → ${chunks.join(", ")}`)
+);
 
 // c) Generate manifests
 
-// Client manifest — used by server during Flight serialization
+// Client manifest — used by server during Flight serialization.
 // Maps moduleId -> { id, chunks, name }
-// The moduleId matches what createClientModuleProxy was called with
-// The id is what __webpack_require__ will be called with on the SSR/browser side
+// The `chunks` array tells Flight which URLs to load via __webpack_chunk_load__
+// before calling __webpack_require__ for this module.
 const clientManifest: Record<
   string,
   { id: string; chunks: string[]; name: string }
@@ -1327,7 +1440,7 @@ const clientManifest: Record<
 for (const c of clientComponents) {
   clientManifest[c.relativePath] = {
     id: c.relativePath,
-    chunks: [],
+    chunks: browserManifest.modules[c.relativePath] ?? [],
     name: "default",
   };
 }
@@ -1384,12 +1497,13 @@ writeFileSync(
 );
 console.log(`Generated: ${join(outDir, "ssr-manifest.json")}`);
 
-// Browser chunks manifest — used by PHP to inject script tags
+// Browser manifest — structured manifest used by PHP for script rendering.
+// Contains entry, shared chunks, and per-module chunk URLs.
 writeFileSync(
-  join(outDir, "browser-chunks.json"),
-  JSON.stringify(browserChunks, null, 2)
+  join(outDir, "browser-manifest.json"),
+  JSON.stringify(browserManifest, null, 2)
 );
-console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);
+console.log(`Generated: ${join(outDir, "browser-manifest.json")}`);
 
 // ─── CSS Compilation ─────────────────────────────────────────────────────────
 // Compile collected CSS files (from server component imports) with Tailwind CSS.
@@ -1398,26 +1512,21 @@ console.log(`Generated: ${join(outDir, "browser-chunks.json")}`);
 
 if (collectedCssFiles.size > 0) {
   const cssOutDir = join(process.cwd(), "public/build/css");
-  // Clean previous CSS builds (old hashes)
   rmSync(cssOutDir, { recursive: true, force: true });
   mkdirSync(cssOutDir, { recursive: true });
 
-  const cssChunks: string[] = [];
+  const cssFileToUrl = new Map<string, string>();
 
   for (const cssFile of collectedCssFiles) {
     const name = basename(cssFile, ".css");
-
-    // Compile to a temp file first, then hash the content for cache busting
     const tmpFile = join(cssOutDir, `${name}.tmp.css`);
 
-    // Try Tailwind CLI first (handles @tailwindcss, @source, etc.)
     const twProc = Bun.spawn(
       ["npx", "--yes", "@tailwindcss/cli@latest", "-i", cssFile, "-o", tmpFile, "--minify"],
       { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" }
     );
 
     const twExit = await twProc.exited;
-
     let cssContent: string;
 
     if (twExit === 0) {
@@ -1429,7 +1538,6 @@ if (collectedCssFiles.size > 0) {
       cssContent = readFileSync(cssFile, "utf-8");
     }
 
-    // Generate content hash for cache busting (same pattern as JS bundles)
     const hasher = new Bun.CryptoHasher("md5");
     hasher.update(cssContent);
     const hash = hasher.digest("hex").slice(0, 8);
@@ -1437,17 +1545,69 @@ if (collectedCssFiles.size > 0) {
     const hashedName = `${name}-${hash}.css`;
     const outFile = join(cssOutDir, hashedName);
     writeFileSync(outFile, cssContent);
-
-    // Clean up temp file
     try { rmSync(tmpFile); } catch {}
 
-    cssChunks.push(`/build/css/${hashedName}`);
+    // Copy font/asset files referenced in the compiled CSS
+    const urlRefs = cssContent.matchAll(/url\(\.\/([^)]+)\)/g);
+    for (const match of urlRefs) {
+      const assetRelPath = match[1];
+      const assetDest = join(cssOutDir, assetRelPath);
+      if (existsSync(assetDest)) continue;
+
+      const searchDirs = [dirname(cssFile), join(process.cwd(), "node_modules")];
+      let found = false;
+
+      for (const dir of searchDirs) {
+        const assetSrc = join(dir, assetRelPath);
+        if (existsSync(assetSrc)) {
+          mkdirSync(dirname(assetDest), { recursive: true });
+          writeFileSync(assetDest, readFileSync(assetSrc));
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        const fileName = basename(assetRelPath);
+        const nodeModules = join(process.cwd(), "node_modules");
+        const searchGlob = new Bun.Glob(`**/${fileName}`);
+        for (const m of searchGlob.scanSync(nodeModules)) {
+          mkdirSync(dirname(assetDest), { recursive: true });
+          writeFileSync(assetDest, readFileSync(join(nodeModules, m)));
+          break;
+        }
+      }
+    }
+
+    cssFileToUrl.set(cssFile, `/build/css/${hashedName}`);
     console.log(`Built CSS: ${outFile}`);
   }
 
+  // Build CSS manifest: maps component names to their CSS URLs.
+  // Layout CSS is marked as global (loaded on every page).
+  // Page CSS is per-page (loaded only when that page renders).
+  const cssManifest: Record<string, string[]> = {};
+
+  for (const [componentName, cssFiles] of cssByComponent) {
+    const urls = [...cssFiles]
+      .map((f) => cssFileToUrl.get(f))
+      .filter((u): u is string => u !== undefined);
+
+    if (urls.length > 0) {
+      cssManifest[componentName] = urls;
+    }
+  }
+
+  writeFileSync(
+    join(outDir, "css-manifest.json"),
+    JSON.stringify(cssManifest, null, 2)
+  );
+  console.log(`Generated: ${join(outDir, "css-manifest.json")} (${Object.keys(cssManifest).length} component(s))`);
+
+  // Also write css-chunks.json with ALL CSS for backwards compat / Blade
+  const allCssUrls = [...cssFileToUrl.values()];
   writeFileSync(
     join(outDir, "css-chunks.json"),
-    JSON.stringify(cssChunks, null, 2)
+    JSON.stringify(allCssUrls, null, 2)
   );
-  console.log(`Generated: ${join(outDir, "css-chunks.json")} (${cssChunks.length} file(s))`);
 }

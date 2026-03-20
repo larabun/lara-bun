@@ -215,6 +215,12 @@ if (functionsDir) {
 await loadEntryPoints();
 
 // Load RSC handler if a bundle is configured
+interface BrowserManifest {
+  entry: string;
+  shared: string[];
+  modules: Record<string, string[]>;
+}
+
 type RscHandlerModule = {
   installPhpFn: (phpFn: (fn: string, ...args: unknown[]) => Promise<unknown>) => () => void;
   handleRsc: (
@@ -222,17 +228,17 @@ type RscHandlerModule = {
     props: Record<string, unknown>,
     callbackSocket?: string | null,
     layouts?: LayoutEntry[]
-  ) => Promise<{ body: string; rscPayload: string; clientChunks: string[]; usedDynamicApis: boolean }>;
+  ) => Promise<{ body: string; rscPayload: string; clientChunks: BrowserManifest; usedDynamicApis: boolean }>;
   handleRscStream: (
     component: string,
     props: Record<string, unknown>,
     layouts?: LayoutEntry[]
-  ) => Promise<{ stream: ReadableStream; clientChunks: string[] }>;
+  ) => Promise<{ stream: ReadableStream; clientChunks: BrowserManifest }>;
   handleRscHtmlStream: (
     component: string,
     props: Record<string, unknown>,
     layouts?: LayoutEntry[]
-  ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: string[] }>;
+  ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: BrowserManifest }>;
   handleAction: (
     actionId: string,
     body: string,
@@ -242,7 +248,7 @@ type RscHandlerModule = {
     component: string,
     props: Record<string, unknown>,
     layouts?: LayoutEntry[]
-  ) => Promise<{ shellHtml: string; clientChunks: string[]; timedOut: boolean; usedDynamicApis: boolean }>;
+  ) => Promise<{ shellHtml: string; clientChunks: BrowserManifest; timedOut: boolean; usedDynamicApis: boolean }>;
   resolveMetadata: (
     component: string,
     props: Record<string, unknown>,

@@ -31,7 +31,7 @@ declare global {
     __RSC_INITIAL__: { url: string; component: string; version: string };
     __RSC_MODULES__: Record<string, unknown>;
     __webpack_require__: (id: string) => unknown;
-    __webpack_chunk_load__: () => Promise<void>;
+    __webpack_chunk_load__: (chunkUrl: string) => Promise<void>;
     __rsc_navigate: typeof navigate;
     __rsc_prefetch: typeof prefetch;
   }
@@ -154,6 +154,9 @@ export function createRscApp(
 
     // Handle browser back/forward
     window.addEventListener("popstate", (event) => {
+      // Ignore hash-only changes — browser handles scroll natively
+      if (!event.state && window.location.hash) return;
+
       const url = event.state?.rscUrl ?? window.location.pathname + window.location.search;
       navigate(url, { replace: true });
     });

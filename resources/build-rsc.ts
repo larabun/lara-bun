@@ -677,12 +677,10 @@ const cssCollectorPlugin: BunPlugin = {
 
         // Track which component imported this CSS
         if (args.importer) {
-          const importerRel = args.importer.startsWith(sourceDir + "/")
-            ? "app/" + args.importer.slice(sourceDir.length + 1 + 4) // strip sourceDir + "/app/"
-            : args.importer;
-          // Normalize to component name (remove extension)
-          const componentName = args.importer.startsWith(sourceDir)
-            ? "app/" + args.importer.slice(sourceDir.length + 1).replace(/\.(tsx|ts|jsx|js)$/, "")
+          // Normalize to component name matching the entry bundle's naming
+          // e.g. /path/to/resources/js/rsc/app/layout.tsx → "app/layout"
+          const componentName = args.importer.startsWith(sourceDir + "/")
+            ? args.importer.slice(sourceDir.length + 1).replace(/\.(tsx|ts|jsx|js)$/, "")
             : args.importer.replace(/\.(tsx|ts|jsx|js)$/, "");
 
           if (!cssByComponent.has(componentName)) {

@@ -108,6 +108,7 @@ function onFileChange(filename: string | null): void {
   if (
     filename &&
     (filename.includes(".generated.") ||
+      filename === "env.d.ts" ||
       filename.startsWith(".") ||
       filename.includes("node_modules"))
   ) {

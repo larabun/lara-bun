@@ -206,7 +206,9 @@ class BunServiceProvider extends ServiceProvider
                 ws = new WebSocket('ws://localhost:{$hmrPort}');
                 ws.onmessage = function(e) {
                     if (e.data === 'reload' && window.__rsc_navigate) {
+                        var scrollX = window.scrollX, scrollY = window.scrollY;
                         window.__rsc_navigate(location.pathname + location.search, { replace: true });
+                        requestAnimationFrame(function() { window.scrollTo(scrollX, scrollY); });
                     } else {
                         location.reload();
                     }

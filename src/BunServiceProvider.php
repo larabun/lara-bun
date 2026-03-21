@@ -26,15 +26,17 @@ class BunServiceProvider extends ServiceProvider
      */
     public static function cspNonce(): ?string
     {
-        if (function_exists('csp_nonce')) {
-            return csp_nonce();
+        // spatie/laravel-csp binds the nonce in the container
+        try {
+            $nonce = app('csp-nonce');
+            if ($nonce) {
+                return $nonce;
+            }
+        } catch (\Throwable) {
+            // not bound
         }
 
-        if (class_exists(\Illuminate\Support\Facades\Vite::class)) {
-            return \Illuminate\Support\Facades\Vite::cspNonce();
-        }
-
-        return null;
+        return \Illuminate\Support\Facades\Vite::cspNonce();
     }
 
     public function register(): void

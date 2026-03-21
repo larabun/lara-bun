@@ -63,9 +63,59 @@ export default function Counter() {
 ### Server Actions
 ```tsx
 "use server";
-export async function addTodo(title: string) {
+export async function addTodo(formData: FormData) {
+  const title = formData.get("title") as string;
   return await (globalThis as any).php("Todos.add", title);
 }
+```
+
+### Form Component
+```tsx
+"use client";
+import { Form } from "lara-bun/router";
+import { addTodo } from "./actions";
+
+type FormValues = { title: string };
+
+export default function TodoForm() {
+  return (
+    <Form<FormValues> action={addTodo}>
+      {({ pending, error }) => (
+        <>
+          <input name="title" />
+          {error('title') && <span>{error('title')}</span>}
+          <button disabled={pending}>{pending ? 'Adding...' : 'Add'}</button>
+        </>
+      )}
+    </Form>
+  );
+}
+```
+
+### useForm Hook
+```tsx
+"use client";
+import { useForm } from "lara-bun/router";
+import { updateProfile } from "./actions";
+
+const { data, setData, errors, error, pending, recentlySuccessful, submit } =
+  useForm<{ name: string; email: string }>({ name: '', email: '' });
+
+// Submit with optimistic update
+submit(updateProfile, () => addOptimistic(data));
+```
+
+### Optimistic Updates
+```tsx
+const [optimisticTodos, addOptimistic] = useOptimistic(todos,
+  (state, newTodo: Todo) => [...state, newTodo]
+);
+
+// Form component — optimistic prop receives form data
+<Form action={addTodo} optimistic={(data) => addOptimistic({ id: Date.now(), title: data.title })}>
+
+// useForm hook — second arg to submit() runs inside the transition
+submit(addTodo, () => addOptimistic({ id: Date.now(), title: data.title }));
 ```
 
 ### PHP Callables

@@ -47,8 +47,10 @@ class BunDevCommand extends Command
         $initialBuild->setTimeout(120);
         $initialBuild->run(fn ($type, $buffer) => $this->output->write($buffer));
 
-        if (! $initialBuild->isSuccessful()) {
-            $this->warn('Initial build failed — starting watcher anyway so you can fix errors.');
+        $buildSucceeded = $initialBuild->isSuccessful();
+
+        if (! $buildSucceeded) {
+            $this->warn('Initial build failed — starting watcher so you can fix errors.');
             $this->newLine();
         }
 
@@ -63,28 +65,47 @@ class BunDevCommand extends Command
 
         $this->info('Build watcher started.');
 
-        // Step 3: Start bun:serve --watch via Artisan
+        // Step 3: Start bun:serve --watch (skip if no bundle yet — watcher will trigger it)
         $socketOption = $this->option('socket') ? ['--socket='.$this->option('socket')] : [];
+        $bundlePath = config('bun.rsc.bundle', base_path('bootstrap/rsc/entry.rsc.js'));
+        $canServe = $buildSucceeded && file_exists($bundlePath);
 
-        $this->serveProcess = new \Symfony\Component\Process\Process(
-            ['php', 'artisan', 'bun:serve', '--watch', ...$socketOption],
-            base_path(),
-        );
-        $this->serveProcess->setTimeout(null);
-        $this->serveProcess->start(fn ($type, $buffer) => $this->output->write($buffer));
+        if ($canServe) {
+            $this->serveProcess = new \Symfony\Component\Process\Process(
+                ['php', 'artisan', 'bun:serve', '--watch', ...$socketOption],
+                base_path(),
+            );
+            $this->serveProcess->setTimeout(null);
+            $this->serveProcess->start(fn ($type, $buffer) => $this->output->write($buffer));
+        } else {
+            $this->warn('Waiting for a successful build before starting the worker...');
+        }
 
         $this->newLine();
         $this->info('Development server started. Press Ctrl+C to stop.');
         $this->newLine();
 
-        // Step 4: Monitor both processes
-        while ($this->buildProcess->isRunning() || $this->serveProcess->isRunning()) {
+        $this->trapSignals();
+
+        // Step 4: Monitor processes — start worker when build succeeds
+        while ($this->buildProcess->isRunning() || $this->serveProcess?->isRunning()) {
             if (function_exists('pcntl_signal_dispatch')) {
                 pcntl_signal_dispatch();
             }
 
+            // If worker isn't running yet but the bundle now exists, start it
+            if ($this->serveProcess === null && file_exists($bundlePath)) {
+                $this->info('Build succeeded — starting worker...');
+                $this->serveProcess = new \Symfony\Component\Process\Process(
+                    ['php', 'artisan', 'bun:serve', '--watch', ...$socketOption],
+                    base_path(),
+                );
+                $this->serveProcess->setTimeout(null);
+                $this->serveProcess->start(fn ($type, $buffer) => $this->output->write($buffer));
+            }
+
             // If build watcher dies, stop everything
-            if (! $this->buildProcess->isRunning() && $this->serveProcess->isRunning()) {
+            if (! $this->buildProcess->isRunning() && $this->serveProcess?->isRunning()) {
                 $this->error('Build watcher stopped unexpectedly.');
                 $this->shutdown();
 
@@ -92,7 +113,7 @@ class BunDevCommand extends Command
             }
 
             // If serve process dies, stop everything
-            if (! $this->serveProcess->isRunning() && $this->buildProcess->isRunning()) {
+            if ($this->serveProcess !== null && ! $this->serveProcess->isRunning() && $this->buildProcess->isRunning()) {
                 $this->error('Bun worker stopped unexpectedly.');
                 $this->shutdown();
 

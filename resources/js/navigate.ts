@@ -154,11 +154,20 @@ function fetchRscPayload(url: string, signal?: AbortSignal, interceptSlot?: stri
     headers["X-RSC-Referer"] = refererUrl;
   }
 
-  return fetch(url, { headers, signal }).then((response) => {
+  return fetch(url, { headers, signal }).then(async (response) => {
     if (response.status === 409) {
       const location = response.headers.get("X-RSC-Location");
       window.location.href = location ?? url;
       throw new Error("Version mismatch — full reload triggered");
+    }
+
+    // dd()/dump() output — display in overlay instead of corrupting the app
+    const contentType = response.headers.get("Content-Type") ?? "";
+    if (contentType.includes("text/html")) {
+      const html = await response.text();
+      const showDump = (window as any).__rsc_show_dump;
+      if (showDump) showDump(html);
+      throw new Error("Server returned HTML (dd/dump output)");
     }
 
     return response;

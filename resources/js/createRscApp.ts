@@ -25,6 +25,31 @@ import {
 } from "./navigate";
 import { ServerValidationError, ServerSessionExpiredError } from "./errors";
 
+function showDumpOverlay(html: string): void {
+  let overlay = document.getElementById("__rsc-dump-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "__rsc-dump-overlay";
+    overlay.style.cssText =
+      "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.8);overflow:auto;padding:20px;cursor:pointer";
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) overlay!.remove();
+    });
+    document.body.appendChild(overlay);
+  }
+  const iframe = document.createElement("iframe");
+  iframe.style.cssText =
+    "width:100%;height:100%;border:none;border-radius:8px;background:#1a1a2e";
+  overlay.innerHTML = "";
+  overlay.appendChild(iframe);
+  const doc = iframe.contentDocument;
+  if (doc) {
+    doc.open();
+    doc.write(html);
+    doc.close();
+  }
+}
+
 declare global {
   interface Window {
     __RSC_PAYLOAD__: string;
@@ -89,8 +114,16 @@ export function createRscApp(
       return;
     }
 
+    const contentType = response.headers.get("Content-Type") ?? "";
+
+    // dd()/dump() output — display HTML in an overlay (like Inertia)
+    if (contentType.includes("text/html")) {
+      const html = await response.text();
+      showDumpOverlay(html);
+      return;
+    }
+
     if (!response.ok) {
-      const contentType = response.headers.get("Content-Type") ?? "";
       if (contentType.includes("text/x-component")) {
         const tree = await createFromReadableStream(response.body!, { callServer });
         renderTree(tree);
@@ -122,6 +155,7 @@ export function createRscApp(
   // Expose navigation globals for Link.tsx (cross-build-graph communication)
   window.__rsc_navigate = navigate;
   window.__rsc_prefetch = prefetch;
+  (window as any).__rsc_show_dump = showDumpOverlay;
 
   // Read initial state
   const initial = window.__RSC_INITIAL__;

@@ -20,14 +20,14 @@
     ],
     "license": "MIT",
     "require": {
-        "php": "^8.2",
-        "illuminate/support": "^11.0|^12.0|^13.0",
-        "illuminate/console": "^11.0|^12.0|^13.0"
+        "php": "^8.3",
+        "illuminate/support": "^13.0",
+        "illuminate/console": "^13.0"
     },
     "require-dev": {
-        "orchestra/testbench": "^10.0",
-        "pestphp/pest": "^3.0",
-        "pestphp/pest-plugin-laravel": "^3.0",
+        "orchestra/testbench": "^11.0",
+        "pestphp/pest": "^4.0",
+        "pestphp/pest-plugin-laravel": "^4.0",
         "mockery/mockery": "^1.6",
         "inertiajs/inertia-laravel": "^2.0"
     },

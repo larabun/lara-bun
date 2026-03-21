@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use LaraBun\Rsc\Attributes\Authenticated;
 use LaraBun\Rsc\Attributes\Can;
-use LaraBun\Rsc\Attributes\Middleware;
 use ReflectionClass;
 use ReflectionMethod;
 use RuntimeException;
@@ -168,6 +167,7 @@ class CallableRegistry
     private function resolveAttributes(string $class, string $method): array
     {
         $refClass = new ReflectionClass($class);
+        $middlewareAttribute = \Illuminate\Routing\Attributes\Controllers\Middleware::class;
 
         $authenticated = array_map(
             fn (\ReflectionAttribute $a): Authenticated => $a->newInstance(),
@@ -179,12 +179,9 @@ class CallableRegistry
             $refClass->getAttributes(Can::class),
         );
 
-        $middleware = array_merge(
-            ...array_map(
-                fn (\ReflectionAttribute $a): array => $a->newInstance()->middleware,
-                $refClass->getAttributes(Middleware::class),
-            ),
-            ...[[]], // Ensure at least one array for spread
+        $middleware = array_map(
+            fn (\ReflectionAttribute $a): string => $a->newInstance()->middleware,
+            $refClass->getAttributes($middlewareAttribute),
         );
 
         if ($method !== '__invoke' || $refClass->hasMethod($method)) {
@@ -200,11 +197,10 @@ class CallableRegistry
                 $refMethod->getAttributes(Can::class),
             ));
 
-            $middleware = array_merge($middleware, ...array_map(
-                fn (\ReflectionAttribute $a): array => $a->newInstance()->middleware,
-                $refMethod->getAttributes(Middleware::class),
-            ), ...[[]], // Ensure at least one array for spread
-            );
+            $middleware = array_merge($middleware, array_map(
+                fn (\ReflectionAttribute $a): string => $a->newInstance()->middleware,
+                $refMethod->getAttributes($middlewareAttribute),
+            ));
         }
 
         return [

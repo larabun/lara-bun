@@ -217,10 +217,15 @@ class CallableRegistry
     {
         $request = $this->container->make('request');
 
+        // Resolve middleware alias (e.g. 'auth' → Authenticate::class)
+        // through the router so Pipeline gets the actual class, not the helper function.
+        $router = $this->container->make(\Illuminate\Routing\Router::class);
+        $resolved = $router->resolveMiddleware([$middleware]);
+
         (new Pipeline($this->container))
             ->send($request)
-            ->through([$middleware])
-            ->then(fn () => new \Illuminate\Http\Response);
+            ->through($resolved)
+            ->thenReturn();
     }
 
     public function hasCallables(): bool

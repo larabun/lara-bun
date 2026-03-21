@@ -11,14 +11,14 @@ type SetDataFn<T> = {
 export interface UseFormReturn<T extends Record<string, unknown>> {
   data: T;
   setData: SetDataFn<T>;
-  errors: Record<string, string[]>;
-  error: (field: string) => string | undefined;
+  errors: Partial<Record<keyof T & string, string[]>>;
+  error: (field: keyof T & string) => string | undefined;
   hasErrors: boolean;
   pending: boolean;
   processing: boolean;
   wasSuccessful: boolean;
   recentlySuccessful: boolean;
-  clearErrors: (...fields: string[]) => void;
+  clearErrors: (...fields: (keyof T & string)[]) => void;
   reset: (...fields: (keyof T)[]) => void;
   setDefaults: (values?: Partial<T>) => void;
   transform: (fn: (data: T) => Record<string, unknown>) => void;
@@ -69,12 +69,12 @@ export function useForm<T extends Record<string, unknown>>(initialValues: T): Us
   );
 
   const error = useCallback(
-    (field: string): string | undefined => errors[field]?.[0],
+    (field: keyof T & string): string | undefined => errors[field]?.[0],
     [errors]
   );
 
   const clearErrors = useCallback(
-    (...fields: string[]) => {
+    (...fields: (keyof T & string)[]) => {
       if (fields.length === 0) {
         setErrors({});
       } else {

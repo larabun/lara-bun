@@ -16,15 +16,17 @@ import { ServerValidationError } from "./errors";
 
 type PrefetchStrategy = "hover" | "mount" | "none";
 
-interface FormRenderProps {
+interface FormRenderProps<T extends Record<string, string> = Record<string, string>> {
   pending: boolean;
+  data: T;
   errors: Record<string, string[]>;
-  error: (field: string) => string | undefined;
-  clearErrors: (...fields: string[]) => void;
+  error: (field: keyof T & string) => string | undefined;
+  clearErrors: (...fields: (keyof T & string)[]) => void;
   reset: () => void;
 }
 
-interface FormProps extends Omit<FormHTMLAttributes<HTMLFormElement>, "action" | "method" | "children"> {
+interface FormProps<T extends Record<string, string> = Record<string, string>>
+  extends Omit<FormHTMLAttributes<HTMLFormElement>, "action" | "method" | "children"> {
   action: string | ((formData: FormData) => Promise<unknown>);
   method?: "get" | "post";
   prefetch?: PrefetchStrategy;
@@ -32,37 +34,38 @@ interface FormProps extends Omit<FormHTMLAttributes<HTMLFormElement>, "action" |
   replace?: boolean;
   preserveScroll?: boolean;
   resetOnSuccess?: boolean;
-  /** Called inside the transition with form data. Use it to call your useOptimistic setter. */
-  optimistic?: (data: Record<string, string>) => void;
+  /** Called inside the transition with typed form data. Use it to call your useOptimistic setter. */
+  optimistic?: (data: T) => void;
   onSuccess?: (result: unknown) => void;
   onError?: (errors: Record<string, string[]>) => void;
   onSubmit?: (formData: FormData) => void | false;
-  children: ReactNode | ((form: FormRenderProps) => ReactNode);
+  children: ReactNode | ((form: FormRenderProps<T>) => ReactNode);
 }
 
 const FormStatusContext = createContext<FormRenderProps>({
   pending: false,
+  data: {},
   errors: {},
   error: () => undefined,
   clearErrors: () => {},
   reset: () => {},
 });
 
-export function useFormStatus(): FormRenderProps {
-  return useContext(FormStatusContext);
+export function useFormStatus<T extends Record<string, string> = Record<string, string>>(): FormRenderProps<T> {
+  return useContext(FormStatusContext) as FormRenderProps<T>;
 }
 
-function formDataToObject(formData: FormData): Record<string, string> {
+function formDataToObject<T extends Record<string, string>>(formData: FormData): T {
   const obj: Record<string, string> = {};
   for (const [key, value] of formData.entries()) {
     if (typeof value === "string") {
       obj[key] = value;
     }
   }
-  return obj;
+  return obj as T;
 }
 
-export default function Form({
+export default function Form<T extends Record<string, string> = Record<string, string>>({
   action,
   method: methodProp,
   prefetch = "none",
@@ -76,20 +79,21 @@ export default function Form({
   onSubmit,
   children,
   ...rest
-}: FormProps) {
+}: FormProps<T>) {
   const isGetForm = typeof action === "string";
   const method = methodProp ?? (isGetForm ? "get" : "post");
   const [errors, setErrors] = useState<Record<string, string[]>>({});
+  const [currentData, setCurrentData] = useState<T>({} as T);
   const [isPending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
 
   const error = useCallback(
-    (field: string): string | undefined => errors[field]?.[0],
+    (field: keyof T & string): string | undefined => errors[field]?.[0],
     [errors]
   );
 
   const clearErrors = useCallback(
-    (...fields: string[]) => {
+    (...fields: (keyof T & string)[]) => {
       if (fields.length === 0) {
         setErrors({});
       } else {
@@ -108,6 +112,7 @@ export default function Form({
   const resetForm = useCallback(() => {
     formRef.current?.reset();
     setErrors({});
+    setCurrentData({} as T);
   }, []);
 
   useEffect(() => {
@@ -127,6 +132,8 @@ export default function Form({
     (e: FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       const formData = new FormData(e.currentTarget);
+      const data = formDataToObject<T>(formData);
+      setCurrentData(data);
 
       if (onSubmit?.(formData) === false) {
         return;
@@ -153,12 +160,13 @@ export default function Form({
         try {
           // Call optimistic updater inside the transition so React's
           // useOptimistic picks it up and auto-reverts on settle.
-          optimistic?.(formDataToObject(formData));
+          optimistic?.(data);
 
           const result = await serverAction(formData);
 
           if (resetOnSuccess) {
             formRef.current?.reset();
+            setCurrentData({} as T);
           }
 
           setErrors({});
@@ -176,8 +184,9 @@ export default function Form({
     [action, isGetForm, method, replace, preserveScroll, resetOnSuccess, optimistic, onSubmit, onSuccess, onError]
   );
 
-  const formStatus: FormRenderProps = {
+  const formStatus: FormRenderProps<T> = {
     pending: isPending,
+    data: currentData,
     errors,
     error,
     clearErrors,
@@ -185,7 +194,7 @@ export default function Form({
   };
 
   return (
-    <FormStatusContext.Provider value={formStatus}>
+    <FormStatusContext.Provider value={formStatus as FormRenderProps}>
       <form
         ref={formRef}
         onSubmit={handleSubmit}

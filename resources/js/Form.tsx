@@ -16,7 +16,7 @@ import { ServerValidationError } from "./errors";
 
 type PrefetchStrategy = "hover" | "mount" | "none";
 
-interface FormRenderProps<T extends Record<string, string> = Record<string, string>> {
+interface FormRenderProps<T extends Record<string, unknown> = Record<string, unknown>> {
   pending: boolean;
   data: T;
   errors: Record<string, string[]>;
@@ -25,7 +25,7 @@ interface FormRenderProps<T extends Record<string, string> = Record<string, stri
   reset: () => void;
 }
 
-interface FormProps<T extends Record<string, string> = Record<string, string>>
+interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
   extends Omit<FormHTMLAttributes<HTMLFormElement>, "action" | "method" | "children"> {
   action: string | ((formData: FormData) => Promise<unknown>);
   method?: "get" | "post";
@@ -51,12 +51,12 @@ const FormStatusContext = createContext<FormRenderProps>({
   reset: () => {},
 });
 
-export function useFormStatus<T extends Record<string, string> = Record<string, string>>(): FormRenderProps<T> {
+export function useFormStatus<T extends Record<string, unknown> = Record<string, unknown>>(): FormRenderProps<T> {
   return useContext(FormStatusContext) as FormRenderProps<T>;
 }
 
-function formDataToObject<T extends Record<string, string>>(formData: FormData): T {
-  const obj: Record<string, string> = {};
+function formDataToObject<T extends Record<string, unknown>>(formData: FormData): T {
+  const obj: Record<string, unknown> = {};
   for (const [key, value] of formData.entries()) {
     if (typeof value === "string") {
       obj[key] = value;
@@ -65,7 +65,7 @@ function formDataToObject<T extends Record<string, string>>(formData: FormData):
   return obj as T;
 }
 
-export default function Form<T extends Record<string, string> = Record<string, string>>({
+export default function Form<T extends Record<string, unknown> = Record<string, unknown>>({
   action,
   method: methodProp,
   prefetch = "none",

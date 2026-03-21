@@ -13,7 +13,7 @@
 <body>
     <div id="rsc-root">{!! $body !!}</div>
 
-    <script>
+    <script @rscNonce>
         window.__RSC_INITIAL__ = {!! $initialJson !!};
     </script>
 

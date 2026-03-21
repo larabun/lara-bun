@@ -19,6 +19,24 @@ use LaraBun\Rsc\RscActionController;
 
 class BunServiceProvider extends ServiceProvider
 {
+    /**
+     * Get the CSP nonce for inline script tags.
+     * Prioritises spatie/laravel-csp's nonce (works with any generator),
+     * then falls back to Vite's nonce (set via Vite::useCspNonce()).
+     */
+    public static function cspNonce(): ?string
+    {
+        if (function_exists('csp_nonce')) {
+            return csp_nonce();
+        }
+
+        if (class_exists(\Illuminate\Support\Facades\Vite::class)) {
+            return \Illuminate\Support\Facades\Vite::cspNonce();
+        }
+
+        return null;
+    }
+
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/bun.php', 'bun');
@@ -96,6 +114,10 @@ class BunServiceProvider extends ServiceProvider
         Blade::directive('rscHead', function () {
             return "<?php echo \LaraBun\BunServiceProvider::renderRscHead(); ?>";
         });
+
+        Blade::directive('rscNonce', function () {
+            return '<?php echo \LaraBun\BunServiceProvider::cspNonce() ? \'nonce="\' . e(\LaraBun\BunServiceProvider::cspNonce()) . \'"\' : \'\'; ?>';
+        });
     }
 
     /**
@@ -154,17 +176,19 @@ class BunServiceProvider extends ServiceProvider
         }
 
         $encodedPayload = json_encode($rscPayload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
+        $nonce = static::cspNonce();
+        $nonceAttr = $nonce ? ' nonce="'.e($nonce).'"' : '';
 
         // Only emit script tags for shared chunks + hydrate entry.
         // Component chunks are loaded on demand by Flight via __webpack_chunk_load__.
         $chunkTags = '';
         foreach ($shared as $chunk) {
             $escaped = e($chunk);
-            $chunkTags .= "\n    <script type=\"module\" src=\"{$escaped}\"></script>";
+            $chunkTags .= "\n    <script type=\"module\" src=\"{$escaped}\"{$nonceAttr}></script>";
         }
 
         $escapedEntry = e($entry);
-        $chunkTags .= "\n    <script type=\"module\" src=\"{$escapedEntry}\"></script>";
+        $chunkTags .= "\n    <script type=\"module\" src=\"{$escapedEntry}\"{$nonceAttr}></script>";
 
         $hmrScript = '';
         $devFlagPath = storage_path('framework/rsc-dev');
@@ -173,7 +197,7 @@ class BunServiceProvider extends ServiceProvider
             $hmrPort = (int) (file_get_contents($devFlagPath) ?: 3001);
             $hmrScript = <<<HMRJS
 
-    <script>
+    <script{$nonceAttr}>
         (function() {
             var ws, timer;
             function connect() {
@@ -194,7 +218,7 @@ HMRJS;
         }
 
         return new HtmlString(<<<HTML
-    <script>
+    <script{$nonceAttr}>
         window.__RSC_PAYLOAD__ = {$encodedPayload};
         window.__RSC_MODULES__ = {};
         window.__webpack_require__ = function(id) { return window.__RSC_MODULES__[id]; };

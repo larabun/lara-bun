@@ -534,6 +534,15 @@ class BunServeCommand extends Command
 
     private function getBuildTime(): int
     {
+        $manifestPath = base_path('bootstrap/rsc/browser-manifest.json');
+
+        clearstatcache(true, $manifestPath);
+
+        if (file_exists($manifestPath)) {
+            return (int) filemtime($manifestPath);
+        }
+
+        // Legacy fallback
         $chunksPath = base_path('bootstrap/rsc/browser-chunks.json');
 
         clearstatcache(true, $chunksPath);

@@ -220,7 +220,7 @@ class CallableRegistry
         (new Pipeline($this->container))
             ->send($request)
             ->through([$middleware])
-            ->then(fn ($req) => $req);
+            ->then(fn () => new \Illuminate\Http\Response);
     }
 
     public function hasCallables(): bool

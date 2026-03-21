@@ -190,6 +190,7 @@ ${envKeys.map((k) => `    ${k}: string;`).join("\n")}
   }
 }
 `;
+    mkdirSync(sourceDir, { recursive: true });
     const envDtsPath = join(sourceDir, "env.d.ts");
     writeFileSync(envDtsPath, envDtsSource);
     console.log(`Generated: ${envDtsPath} (${envKeys.length} env var(s))`);

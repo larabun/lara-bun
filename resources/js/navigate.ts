@@ -201,19 +201,14 @@ function deserializeResponse(response: Response): Promise<ReactNode> {
           .map((l) => l.href)
       );
 
-      // Remove old page CSS that's not in the new set
       const newAbsoluteUrls = new Set(
         cssUrls.map((u) => new URL(u, window.location.origin).href)
       );
 
-      document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][data-rsc-css]')
-        .forEach((link) => {
-          if (!newAbsoluteUrls.has(link.href)) {
-            link.remove();
-          }
-        });
+      // Add new CSS links first and wait for them to load before removing old ones.
+      // This prevents a flash of unstyled content when CSS hashes change (e.g. HMR rebuild).
+      const loadPromises: Promise<void>[] = [];
 
-      // Add new CSS links
       for (const cssUrl of cssUrls) {
         const absoluteUrl = new URL(cssUrl, window.location.origin).href;
         if (!existingLinks.has(absoluteUrl)) {
@@ -221,8 +216,32 @@ function deserializeResponse(response: Response): Promise<ReactNode> {
           link.rel = "stylesheet";
           link.href = cssUrl;
           link.setAttribute("data-rsc-css", "");
+          loadPromises.push(new Promise<void>((resolve) => {
+            link.onload = () => resolve();
+            link.onerror = () => resolve();
+          }));
           document.head.appendChild(link);
         }
+      }
+
+      // Once new CSS is loaded, remove old links that are no longer needed
+      if (loadPromises.length > 0) {
+        Promise.all(loadPromises).then(() => {
+          document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][data-rsc-css]')
+            .forEach((link) => {
+              if (!newAbsoluteUrls.has(link.href)) {
+                link.remove();
+              }
+            });
+        });
+      } else {
+        // No new links to load — remove stale ones immediately
+        document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][data-rsc-css]')
+          .forEach((link) => {
+            if (!newAbsoluteUrls.has(link.href)) {
+              link.remove();
+            }
+          });
       }
     } catch {
       // Ignore malformed CSS header

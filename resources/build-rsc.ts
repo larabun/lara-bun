@@ -119,31 +119,6 @@ if (!existsSync(tsconfigPath)) {
   console.log(`Generated: ${tsconfigPath}`);
 }
 
-// Auto-add build/dev scripts to package.json if missing
-const packageJsonPath = join(process.cwd(), "package.json");
-
-if (existsSync(packageJsonPath)) {
-  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
-  const scripts = pkg.scripts ?? {};
-  let updated = false;
-
-  if (!scripts.build) {
-    scripts.build = "php artisan rsc:build";
-    updated = true;
-  }
-
-  if (!scripts.dev) {
-    scripts.dev = "php artisan bun:dev";
-    updated = true;
-  }
-
-  if (updated) {
-    pkg.scripts = scripts;
-    writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2) + "\n");
-    console.log("Updated package.json with build/dev scripts");
-  }
-}
-
 // Auto-append RSC generated paths to .gitignore if not already present
 const gitignorePath = join(process.cwd(), ".gitignore");
 const rscIgnoreEntries = [

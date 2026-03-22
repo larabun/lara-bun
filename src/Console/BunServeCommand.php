@@ -477,7 +477,7 @@ class BunServeCommand extends Command
         $env = getenv();
 
         $env['BUN_BRIDGE_SOCKET'] = $socketPath;
-        $env['NODE_ENV'] = 'production';
+        $env['NODE_ENV'] = $this->option('watch') ? 'development' : 'production';
 
         if ($hasFunctionsDir) {
             $env['BUN_BRIDGE_FUNCTIONS_DIR'] = $functionsDir;

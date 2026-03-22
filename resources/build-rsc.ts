@@ -78,6 +78,8 @@ try {
 
 const sourceDir = process.argv[2] ?? join(process.cwd(), "resources/js/rsc");
 const outDir = process.argv[3] ?? join(process.cwd(), "bootstrap/rsc");
+const nodeEnv = process.env.NODE_ENV ?? "production";
+const isDev = nodeEnv === "development";
 
 // Auto-create tsconfig.json if it doesn't exist — needed for php.d.ts global types
 const tsconfigPath = join(process.cwd(), "tsconfig.json");
@@ -1230,7 +1232,7 @@ const serverResult = await Bun.build({
   conditions: ["react-server"],
   plugins: serverPlugins,
   define: {
-    "process.env.NODE_ENV": '"production"',
+    "process.env.NODE_ENV": JSON.stringify(nodeEnv),
   },
 });
 
@@ -1292,7 +1294,7 @@ const ssrResult = await Bun.build({
   plugins: ssrPlugins,
   external: ["react", "react-dom"],
   define: {
-    "process.env.NODE_ENV": '"production"',
+    "process.env.NODE_ENV": JSON.stringify(nodeEnv),
   },
 });
 
@@ -1424,11 +1426,11 @@ const browserResult = await Bun.build({
   target: "browser",
   format: "esm",
   splitting: true,
-  minify: true,
+  minify: !isDev,
   naming: "[name]-[hash].[ext]",
   plugins: browserPlugins,
   define: {
-    "process.env.NODE_ENV": '"production"',
+    "process.env.NODE_ENV": JSON.stringify(nodeEnv),
   },
 });
 

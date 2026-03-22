@@ -43,6 +43,7 @@ class BunDevCommand extends Command
         $initialBuild = new \Symfony\Component\Process\Process(
             [$bunPath, $buildScript],
             base_path(),
+            ['NODE_ENV' => 'development'] + getenv(),
         );
         $initialBuild->setTimeout(120);
         $initialBuild->run(fn ($type, $buffer) => $this->output->write($buffer));

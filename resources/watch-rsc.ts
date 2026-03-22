@@ -75,6 +75,7 @@ async function runBuild(): Promise<void> {
     cwd: process.cwd(),
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env, NODE_ENV: "development" },
   });
 
   const [stdout, stderr] = await Promise.all([

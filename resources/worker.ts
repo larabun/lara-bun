@@ -17,7 +17,7 @@ interface SlotOverride {
 }
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "ssr" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell";
+  type: "ping" | "call" | "list" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell";
   function?: string;
   args?: Record<string, unknown>;
   page?: Record<string, unknown>;
@@ -108,27 +108,6 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
       }
       try {
         const result = await fn(message.args ?? {});
-        return JSON.stringify({ result });
-      } catch (err) {
-        return JSON.stringify({
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    case "ssr": {
-      const page = message.page;
-      if (!page) {
-        return '{"error":"Missing page in SSR message"}';
-      }
-
-      const renderFn = functions["render"];
-      if (!renderFn) {
-        return '{"error":"SSR render function not found. Ensure the SSR bundle is loaded."}';
-      }
-
-      try {
-        const result = await renderFn(page);
         return JSON.stringify({ result });
       } catch (err) {
         return JSON.stringify({

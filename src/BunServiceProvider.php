@@ -66,10 +66,6 @@ class BunServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        if (config('bun.ssr.enabled') && interface_exists(\Inertia\Ssr\Gateway::class)) {
-            $this->app->singleton(\Inertia\Ssr\Gateway::class, Ssr\BunSsrGateway::class);
-        }
-
         if (config('bun.rsc.enabled')) {
             Route::post('/_rsc/action', RscActionController::class)
                 ->middleware('web');

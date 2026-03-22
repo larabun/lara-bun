@@ -76,28 +76,6 @@ class BunBridge
     }
 
     /**
-     * @param  array<string, mixed>  $page
-     * @return array{head: array<int, string>, body: string}
-     */
-    public function ssr(array $page): array
-    {
-        $response = $this->send(json_encode([
-            'type' => 'ssr',
-            'page' => $page,
-        ], JSON_THROW_ON_ERROR));
-
-        if (isset($response['error'])) {
-            throw new RuntimeException("Bun SSR error: {$response['error']}");
-        }
-
-        if (! isset($response['result']) || ! is_array($response['result'])) {
-            throw new RuntimeException('Invalid SSR response from Bun');
-        }
-
-        return $response['result'];
-    }
-
-    /**
      * Render a PPR shell — page with mock php() so async components suspend.
      *
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts

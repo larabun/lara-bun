@@ -34,6 +34,8 @@ interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
   replace?: boolean;
   preserveScroll?: boolean;
   resetOnSuccess?: boolean;
+  /** Transform form data before submitting to the server action. */
+  transform?: (data: T) => Record<string, unknown>;
   /** Called inside the transition with typed form data. Use it to call your useOptimistic setter. */
   optimistic?: (data: T) => void;
   onSuccess?: (result: unknown) => void;
@@ -73,6 +75,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   replace = false,
   preserveScroll = false,
   resetOnSuccess = true,
+  transform,
   optimistic,
   onSuccess,
   onError,
@@ -155,6 +158,26 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
 
       const serverAction = action as (formData: FormData) => Promise<unknown>;
 
+      // Apply transform — rebuild FormData from transformed values
+      if (transform) {
+        const transformed = transform(data);
+        for (const key of [...formData.keys()]) {
+          formData.delete(key);
+        }
+        for (const [key, val] of Object.entries(transformed)) {
+          if (val === null || val === undefined) continue;
+          if (val instanceof File) {
+            formData.append(key, val);
+          } else if (Array.isArray(val)) {
+            for (const item of val) {
+              formData.append(`${key}[]`, String(item));
+            }
+          } else {
+            formData.append(key, String(val));
+          }
+        }
+      }
+
       setErrors({});
       startTransition(async () => {
         try {
@@ -181,7 +204,7 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
         }
       });
     },
-    [action, isGetForm, method, replace, preserveScroll, resetOnSuccess, optimistic, onSubmit, onSuccess, onError]
+    [action, isGetForm, method, replace, preserveScroll, resetOnSuccess, transform, optimistic, onSubmit, onSuccess, onError]
   );
 
   const formStatus: FormRenderProps<T> = {

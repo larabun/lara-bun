@@ -11,6 +11,7 @@
  * This file is the single import site for react-server-dom-webpack/client.browser
  * to avoid duplicate bundling by the Bun bundler.
  */
+import { createElement, StrictMode } from "react";
 import { createFromReadableStream, encodeReply } from "react-server-dom-webpack/client.browser";
 import { hydrateRoot } from "react-dom/client";
 import {
@@ -178,12 +179,16 @@ export function createRscApp(
 
   const rootPromise = createFromReadableStream(stream, { callServer });
 
+  const wrapStrict = process.env.NODE_ENV === "development"
+    ? (tree: any) => createElement(StrictMode, null, tree)
+    : (tree: any) => tree;
+
   Promise.resolve(rootPromise).then((reactTree: any) => {
-    const root = hydrateRoot(container, reactTree);
+    const root = hydrateRoot(container, wrapStrict(reactTree));
 
     // Wire up SPA navigation: subsequent navigations re-render the root
     setNavigateHandler((newTree: any) => {
-      root.render(newTree);
+      root.render(wrapStrict(newTree));
     });
 
     // Handle browser back/forward

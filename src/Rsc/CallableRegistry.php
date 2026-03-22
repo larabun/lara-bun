@@ -225,7 +225,7 @@ class CallableRegistry
         (new Pipeline($this->container))
             ->send($request)
             ->through($resolved)
-            ->thenReturn();
+            ->then(fn () => new \Illuminate\Http\Response('', 200));
     }
 
     public function hasCallables(): bool

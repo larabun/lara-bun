@@ -506,8 +506,8 @@ async function handleRscActionMessage(
     return;
   }
 
+  let cleanupPhp: (() => void) | null = null;
   try {
-    let cleanupPhp: (() => void) | null = null;
     if (message.callbackId) {
       const cbConn = await getCallbackConnection(message.callbackId);
       cleanupPhp = rscHandler.installPhpFn(createPhpFn(cbConn));

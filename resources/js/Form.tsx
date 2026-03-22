@@ -168,6 +168,8 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
           if (val === null || val === undefined) continue;
           if (val instanceof File) {
             formData.append(key, val);
+          } else if (typeof val === "boolean") {
+            formData.append(key, val ? "1" : "0");
           } else if (Array.isArray(val)) {
             for (const item of val) {
               formData.append(`${key}[]`, String(item));

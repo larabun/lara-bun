@@ -70,7 +70,7 @@ function formDataToObject<T extends Record<string, unknown>>(formData: FormData)
 export default function Form<T extends Record<string, unknown> = Record<string, unknown>>({
   action,
   method: methodProp,
-  prefetch = "none",
+  prefetch = "hover",
   cacheFor,
   replace = false,
   preserveScroll = false,

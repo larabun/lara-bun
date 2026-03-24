@@ -1,6 +1,6 @@
 ---
-name: rsc-development
-description: "Develops React Server Components for LaraBun. Activates when working with RSC pages, layouts, file-based routing, parallel routes, route interception, loading.tsx, server components, client components, php() callables, server actions, streaming, or Suspense."
+name: larabun-development
+description: "Develops LaraBun applications — React Server Components, file-based routing, Forms, useForm, server actions, php() callables, optimistic updates, streaming, Suspense, and the build pipeline."
 license: MIT
 metadata:
   author: larabun

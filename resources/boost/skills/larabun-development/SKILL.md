@@ -128,6 +128,24 @@ class Posts {
 }
 ```
 
+### FormRequest in Callables
+```php
+// Type-hint FormRequest for automatic validation
+use App\Http\Requests\StorePostRequest;
+
+class CreatePost {
+    public function __invoke(StorePostRequest $request): array {
+        return Post::create($request->validated())->toArray();
+    }
+}
+```
+
+### Inline Environment Variables
+- `PUBLIC_*` env vars are inlined into browser bundles at build time
+- Non-prefixed vars stay server-side only
+- Use `process.env.PUBLIC_STRIPE_KEY` in client components
+- TypeScript autocomplete via auto-generated `env.d.ts`
+
 ## Route Interception
 
 Convention matches Next.js:

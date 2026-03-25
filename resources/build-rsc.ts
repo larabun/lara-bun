@@ -266,7 +266,18 @@ const optimizeImportsPlugin: BunPlugin = {
         return undefined;
       }
 
+      // Skip client components — they'll be proxied by useClientPlugin
+      if (clientAbsolutePaths.has(args.path)) {
+        return undefined;
+      }
+
       const source = readFileSync(args.path, "utf-8");
+
+      // Skip "use client" files — they'll be caught by useClientCatchAllPlugin
+      const trimmed = source.trimStart();
+      if (trimmed.startsWith('"use client"') || trimmed.startsWith("'use client'")) {
+        return undefined;
+      }
 
       // Quick check: does this file contain any optimizable package imports?
       let hasOptimizableImport = false;

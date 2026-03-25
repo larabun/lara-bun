@@ -935,7 +935,56 @@ const cssCollectorPlugin: BunPlugin = {
   },
 };
 
-const serverPlugins: BunPlugin[] = [optimizeImportsPlugin, packageAliasPlugin, cssCollectorPlugin];
+// Plugin that shims missing client-only React APIs (e.g., createContext) in the
+// react-server CJS build. Some third-party packages (lucide-react) use these APIs
+// at module init time even though they're never called during RSC rendering.
+// Without this, the server bundle crashes on import.
+const reactServerShimPlugin: BunPlugin = {
+  name: "react-server-shim",
+  setup(build) {
+    const reactServerPath = require.resolve("react/react.react-server.js", {
+      paths: [process.cwd()],
+    });
+
+    build.onLoad({ filter: new RegExp(`^${reactServerPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }, () => {
+      return {
+        contents: `
+const React = require("${reactServerPath}");
+
+// Shim createContext — returns a dummy context object.
+// Third-party packages (e.g., lucide-react) call createContext at module init,
+// but the context is never consumed during server rendering.
+if (typeof React.createContext !== "function") {
+  React.createContext = function(defaultValue) {
+    const ctx = {
+      $$typeof: Symbol.for("react.context"),
+      _currentValue: defaultValue,
+      _currentValue2: defaultValue,
+      Provider: ({ children }) => children,
+      Consumer: null,
+    };
+    ctx.Consumer = ctx;
+    return ctx;
+  };
+}
+
+// Shim forwardRef if missing
+if (typeof React.forwardRef !== "function") {
+  React.forwardRef = function(render) {
+    const elementType = { $$typeof: Symbol.for("react.forward_ref"), render };
+    return elementType;
+  };
+}
+
+module.exports = React;
+`,
+        loader: "js",
+      };
+    });
+  },
+};
+
+const serverPlugins: BunPlugin[] = [optimizeImportsPlugin, reactServerShimPlugin, packageAliasPlugin, cssCollectorPlugin];
 if (clientComponents.length > 0) {
   serverPlugins.push(useClientPlugin);
 }

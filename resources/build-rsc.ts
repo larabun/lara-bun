@@ -174,6 +174,155 @@ ${envKeys.map((k) => `    ${k}: string;`).join("\n")}
   }
 }
 
+// ─── Optimize Package Imports ────────────────────────────────────────────────
+// Transforms barrel imports into direct file imports to avoid pulling in
+// incompatible code (e.g., createContext) under react-server conditions.
+// Similar to Next.js's optimizePackageImports feature.
+
+const DEFAULT_OPTIMIZED_PACKAGES = [
+  "lucide-react",
+  "date-fns",
+  "lodash-es",
+  "rxjs",
+  "@heroicons/react/24/outline",
+  "@heroicons/react/24/solid",
+  "@heroicons/react/20/solid",
+  "react-icons",
+  "recharts",
+  "@headlessui/react",
+  "@visx/visx",
+  "ramda",
+];
+
+type ExportMap = Map<string, string>; // exportName -> absolute file path
+const packageExportMaps = new Map<string, ExportMap>();
+
+function buildExportMap(packageName: string): ExportMap | null {
+  const exportMap: ExportMap = new Map();
+
+  // Resolve the package's main ESM entry
+  let pkgJsonPath: string;
+  try {
+    pkgJsonPath = require.resolve(`${packageName}/package.json`, {
+      paths: [process.cwd()],
+    });
+  } catch {
+    return null;
+  }
+
+  const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf-8"));
+  const pkgDir = dirname(pkgJsonPath);
+
+  const esmEntry = pkgJson.module
+    ?? pkgJson.exports?.["."]?.import
+    ?? pkgJson.exports?.["."]?.default;
+
+  if (!esmEntry) return null;
+
+  const entryPath = resolve(pkgDir, esmEntry);
+  if (!existsSync(entryPath)) return null;
+
+  const entrySource = readFileSync(entryPath, "utf-8");
+
+  // Parse re-export patterns:
+  // export { default as Name1, default as Name2 } from './icons/file.js'
+  // export { Name } from './path.js'
+  const reExportRegex = /export\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g;
+
+  for (const match of entrySource.matchAll(reExportRegex)) {
+    const names = match[1].split(",").map((s) => s.trim()).filter(Boolean);
+    const relPath = match[2];
+    const absPath = resolve(dirname(entryPath), relPath);
+
+    for (const nameSpec of names) {
+      const asMatch = nameSpec.match(/^(.+?)\s+as\s+(\w+)$/);
+      const exportName = asMatch ? asMatch[2] : nameSpec.trim();
+      if (exportName) {
+        exportMap.set(exportName, absPath);
+      }
+    }
+  }
+
+  return exportMap.size > 0 ? exportMap : null;
+}
+
+for (const pkg of DEFAULT_OPTIMIZED_PACKAGES) {
+  const map = buildExportMap(pkg);
+  if (map) {
+    packageExportMaps.set(pkg, map);
+    console.log(`Optimized imports: ${pkg} (${map.size} export(s) mapped)`);
+  }
+}
+
+function escapeRegexStr(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
+}
+
+const optimizeImportsPlugin: BunPlugin = {
+  name: "optimize-package-imports",
+  setup(build) {
+    build.onLoad({ filter: /\.(tsx|ts|jsx|js)$/ }, (args) => {
+      if (args.path.includes("node_modules")) {
+        return undefined;
+      }
+
+      const source = readFileSync(args.path, "utf-8");
+      let modified = false;
+      let result = source;
+
+      for (const [pkgName, exportMap] of packageExportMaps) {
+        const importRegex = new RegExp(
+          `import\\s*\\{([^}]+)\\}\\s*from\\s*['"]${escapeRegexStr(pkgName)}['"]`,
+          "g"
+        );
+
+        result = result.replace(importRegex, (_fullMatch, namesStr: string) => {
+          const names = namesStr
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+
+          const directImports: string[] = [];
+          const unmapped: string[] = [];
+
+          for (const nameSpec of names) {
+            const asMatch = nameSpec.match(/^(\w+)\s+as\s+(\w+)$/);
+            const importName = asMatch ? asMatch[1] : nameSpec;
+            const localName = asMatch ? asMatch[2] : nameSpec;
+
+            const filePath = exportMap.get(importName);
+            if (filePath) {
+              directImports.push(
+                `import { default as ${localName} } from "${filePath}"`
+              );
+              modified = true;
+            } else {
+              unmapped.push(nameSpec);
+            }
+          }
+
+          if (unmapped.length > 0) {
+            directImports.push(
+              `import { ${unmapped.join(", ")} } from "${pkgName}"`
+            );
+          }
+
+          return directImports.join(";\n");
+        });
+      }
+
+      if (!modified) {
+        return undefined;
+      }
+
+      const ext = args.path.split(".").pop();
+      const loader = ext === "tsx" ? "tsx" : ext === "jsx" ? "jsx" : ext === "ts" ? "ts" : "js";
+
+      return { contents: result, loader };
+    });
+  },
+};
+
 const clientOutDir = join(outDir, "client");
 const browserOutDir = join(process.cwd(), "public/build/rsc");
 
@@ -767,7 +916,7 @@ const cssCollectorPlugin: BunPlugin = {
   },
 };
 
-const serverPlugins: BunPlugin[] = [packageAliasPlugin, cssCollectorPlugin];
+const serverPlugins: BunPlugin[] = [optimizeImportsPlugin, packageAliasPlugin, cssCollectorPlugin];
 if (clientComponents.length > 0) {
   serverPlugins.push(useClientPlugin);
 }

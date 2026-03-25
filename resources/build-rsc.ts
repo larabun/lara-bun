@@ -174,6 +174,40 @@ ${envKeys.map((k) => `    ${k}: string;`).join("\n")}
   }
 }
 
+// ─── Inline Public Environment Variables ─────────────────────────────────────
+// Replaces process.env.PUBLIC_* references in browser bundles with their actual
+// values at build time, similar to Bun's [serve.static] env = "PUBLIC_*".
+
+const publicEnvDefines: Record<string, string> = {};
+
+if (existsSync(dotEnvPath)) {
+  const envLines = readFileSync(dotEnvPath, "utf-8").split("\n");
+
+  for (const line of envLines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const eqIndex = trimmed.indexOf("=");
+    if (eqIndex === -1) continue;
+
+    const key = trimmed.slice(0, eqIndex).trim();
+    let value = trimmed.slice(eqIndex + 1).trim();
+
+    // Strip surrounding quotes
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+
+    if (key.startsWith("PUBLIC_")) {
+      publicEnvDefines[`process.env.${key}`] = JSON.stringify(value);
+    }
+  }
+
+  if (Object.keys(publicEnvDefines).length > 0) {
+    console.log(`Inlined ${Object.keys(publicEnvDefines).length} PUBLIC_* env var(s) for browser build`);
+  }
+}
+
 // ─── Optimize Package Imports ────────────────────────────────────────────────
 // Transforms barrel imports into direct file imports to avoid pulling in
 // incompatible code (e.g., createContext) under react-server conditions.
@@ -1661,6 +1695,7 @@ const browserResult = await Bun.build({
   plugins: browserPlugins,
   define: {
     "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+    ...publicEnvDefines,
   },
 });
 

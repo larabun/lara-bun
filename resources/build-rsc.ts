@@ -942,9 +942,7 @@ const cssCollectorPlugin: BunPlugin = {
 const reactServerShimPlugin: BunPlugin = {
   name: "react-server-shim",
   setup(build) {
-    const reactServerPath = require.resolve("react/react.react-server.js", {
-      paths: [process.cwd()],
-    });
+    const reactServerPath = join(process.cwd(), "node_modules/react/react.react-server.js");
 
     build.onLoad({ filter: new RegExp(`^${reactServerPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }, () => {
       return {

@@ -956,41 +956,12 @@ const reactServerShimPlugin: BunPlugin = {
     });
 
     build.onLoad({ filter: /.*/, namespace: "react-shim" }, () => {
-      const reactServerPath = join(process.cwd(), "node_modules/react/react.react-server.js");
+      // Use the full React module (not react-server) for third-party packages.
+      // The react-server CJS build strips most APIs (createElement, forwardRef, etc.)
+      // that third-party packages need at module init time.
+      const reactFullPath = join(process.cwd(), "node_modules/react/index.js");
       return {
-        contents: `
-export * from "${reactServerPath}";
-import React from "${reactServerPath}";
-export default React;
-
-// Shim createContext — returns a dummy context object.
-export function createContext(defaultValue) {
-  const ctx = {
-    $$typeof: Symbol.for("react.context"),
-    _currentValue: defaultValue,
-    _currentValue2: defaultValue,
-    Provider: ({ children }) => children,
-    Consumer: null,
-  };
-  ctx.Consumer = ctx;
-  return ctx;
-}
-
-// Shim forwardRef
-export function forwardRef(render) {
-  return { $$typeof: Symbol.for("react.forward_ref"), render };
-}
-
-// Shim useState — no-op for module-level initialization
-export function useState(initial) {
-  return [typeof initial === "function" ? initial() : initial, () => {}];
-}
-
-// Shim useContext — returns the default value
-export function useContext(ctx) {
-  return ctx._currentValue;
-}
-`,
+        contents: `export * from "${reactFullPath}";\nimport React from "${reactFullPath}";\nexport default React;`,
         loader: "js",
       };
     });

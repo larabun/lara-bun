@@ -416,9 +416,11 @@ class RscResponse implements Responsable
             }
 
             if (str_starts_with($key, 'og:')) {
-                $tags[] = '    <meta property="'.e($key).'" content="'.e($value).'">';
+                $resolved = $this->isUrlMetaKey($key) ? $this->resolveMetaUrl($value) : $value;
+                $tags[] = '    <meta property="'.e($key).'" content="'.e($resolved).'">';
             } elseif (str_starts_with($key, 'twitter:')) {
-                $tags[] = '    <meta name="'.e($key).'" content="'.e($value).'">';
+                $resolved = $this->isUrlMetaKey($key) ? $this->resolveMetaUrl($value) : $value;
+                $tags[] = '    <meta name="'.e($key).'" content="'.e($resolved).'">';
             }
         }
 
@@ -504,10 +506,10 @@ class RscResponse implements Responsable
     protected function buildSingleIconTag(string|array $icon, string $defaultRel): string
     {
         if (is_string($icon)) {
-            return '    <link rel="'.e($defaultRel).'" href="'.e($icon).'">';
+            return '    <link rel="'.e($defaultRel).'" href="'.e($this->resolveMetaUrl($icon)).'">';
         }
 
-        $href = (string) ($icon['url'] ?? '');
+        $href = $this->resolveMetaUrl((string) ($icon['url'] ?? ''));
         $rel = $icon['rel'] ?? $defaultRel;
         $attrs = 'rel="'.e($rel).'" href="'.e($href).'"';
 
@@ -532,6 +534,33 @@ class RscResponse implements Responsable
         }
 
         return '    <link '.$attrs.'>';
+    }
+
+    /**
+     * Resolve a relative URL to an absolute URL using the app's URL.
+     * Leaves absolute URLs (with a scheme) untouched.
+     */
+    protected function resolveMetaUrl(string $value): string
+    {
+        if ($value === '' || parse_url($value, PHP_URL_SCHEME) !== null) {
+            return $value;
+        }
+
+        return url($value);
+    }
+
+    /**
+     * Check if a meta key typically contains a URL that should be resolved.
+     */
+    protected function isUrlMetaKey(string $key): bool
+    {
+        return in_array($key, [
+            'og:image',
+            'og:url',
+            'og:audio',
+            'og:video',
+            'twitter:image',
+        ], true);
     }
 
     /**

@@ -956,12 +956,28 @@ const reactServerShimPlugin: BunPlugin = {
     });
 
     build.onLoad({ filter: /.*/, namespace: "react-shim" }, () => {
-      // Use the full React module (not react-server) for third-party packages.
-      // The react-server CJS build strips most APIs (createElement, forwardRef, etc.)
-      // that third-party packages need at module init time.
-      const reactFullPath = join(process.cwd(), "node_modules/react/index.js");
+      // The CJS react-server build has most APIs (createElement, forwardRef, etc.)
+      // but intentionally omits createContext. Third-party packages like lucide-react
+      // call createContext at module init. Provide a no-op shim for it.
+      const reactServerPath = join(process.cwd(), "node_modules/react/react.react-server.js");
       return {
-        contents: `export * from "${reactFullPath}";\nimport React from "${reactFullPath}";\nexport default React;`,
+        contents: `
+const React = require("${reactServerPath}");
+
+const _createContext = function(defaultValue) {
+  const ctx = {
+    $$typeof: Symbol.for("react.context"),
+    _currentValue: defaultValue,
+    _currentValue2: defaultValue,
+    Provider: ({ children }) => children,
+    Consumer: null,
+  };
+  ctx.Consumer = ctx;
+  return ctx;
+};
+
+module.exports = { ...React, createContext: _createContext };
+`,
         loader: "js",
       };
     });

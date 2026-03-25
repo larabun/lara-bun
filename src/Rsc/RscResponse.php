@@ -405,6 +405,11 @@ class RscResponse implements Responsable
             $tags[] = '    <meta name="keywords" content="'.e($keywords).'">';
         }
 
+        // Icons / favicon
+        if (isset($this->viewData['icons'])) {
+            $tags = [...$tags, ...$this->buildIconTags($this->viewData['icons'])];
+        }
+
         foreach ($this->viewData as $key => $value) {
             if (! is_string($value)) {
                 continue;
@@ -418,6 +423,115 @@ class RscResponse implements Responsable
         }
 
         return implode("\n", $tags);
+    }
+
+    /**
+     * Build <link> tags for icons/favicons from metadata.
+     *
+     * Supports:
+     *   - string: icons: "/favicon.ico"
+     *   - array: icons: [{ url: "/icon.png", sizes: "32x32" }]
+     *   - object: icons: { icon: "/favicon.ico", apple: "/apple-touch-icon.png" }
+     *
+     * @param  mixed  $icons
+     * @return string[]
+     */
+    protected function buildIconTags(mixed $icons): array
+    {
+        $tags = [];
+
+        if (is_string($icons)) {
+            $tags[] = '    <link rel="icon" href="'.e($icons).'">';
+
+            return $tags;
+        }
+
+        if (! is_array($icons)) {
+            return $tags;
+        }
+
+        // Indexed array — list of icon descriptors or URLs
+        if (array_is_list($icons)) {
+            foreach ($icons as $icon) {
+                $tags[] = $this->buildSingleIconTag($icon, 'icon');
+            }
+
+            return $tags;
+        }
+
+        // Associative array — keyed by category (icon, apple, shortcut, other)
+        $relMap = [
+            'icon' => 'icon',
+            'apple' => 'apple-touch-icon',
+            'shortcut' => 'shortcut icon',
+        ];
+
+        foreach ($relMap as $key => $rel) {
+            if (! isset($icons[$key])) {
+                continue;
+            }
+
+            $items = is_array($icons[$key]) && array_is_list($icons[$key])
+                ? $icons[$key]
+                : [$icons[$key]];
+
+            foreach ($items as $icon) {
+                $tags[] = $this->buildSingleIconTag($icon, $rel);
+            }
+        }
+
+        // "other" — uses rel from the descriptor
+        if (isset($icons['other'])) {
+            $others = is_array($icons['other']) && array_is_list($icons['other'])
+                ? $icons['other']
+                : [$icons['other']];
+
+            foreach ($others as $icon) {
+                if (is_array($icon)) {
+                    $tags[] = $this->buildSingleIconTag($icon, $icon['rel'] ?? 'icon');
+                }
+            }
+        }
+
+        return $tags;
+    }
+
+    /**
+     * Build a single <link> tag for an icon.
+     *
+     * @param  string|array<string, mixed>  $icon
+     */
+    protected function buildSingleIconTag(string|array $icon, string $defaultRel): string
+    {
+        if (is_string($icon)) {
+            return '    <link rel="'.e($defaultRel).'" href="'.e($icon).'">';
+        }
+
+        $href = (string) ($icon['url'] ?? '');
+        $rel = $icon['rel'] ?? $defaultRel;
+        $attrs = 'rel="'.e($rel).'" href="'.e($href).'"';
+
+        if (! empty($icon['type'])) {
+            $attrs .= ' type="'.e($icon['type']).'"';
+        }
+
+        if (! empty($icon['sizes'])) {
+            $attrs .= ' sizes="'.e($icon['sizes']).'"';
+        }
+
+        if (! empty($icon['color'])) {
+            $attrs .= ' color="'.e($icon['color']).'"';
+        }
+
+        if (! empty($icon['media'])) {
+            $attrs .= ' media="'.e($icon['media']).'"';
+        }
+
+        if (! empty($icon['fetchPriority'])) {
+            $attrs .= ' fetchpriority="'.e($icon['fetchPriority']).'"';
+        }
+
+        return '    <link '.$attrs.'>';
     }
 
     /**

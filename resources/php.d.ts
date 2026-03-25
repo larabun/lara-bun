@@ -18,12 +18,32 @@ declare function php<T = unknown>(functionName: string, args?: Record<string, un
  * };
  * ```
  */
+interface IconDescriptor {
+  url: string | URL;
+  type?: string;
+  sizes?: string;
+  color?: string;
+  rel?: string;
+  media?: string;
+  fetchPriority?: 'high' | 'low' | 'auto';
+}
+
+type IconURL = string | URL;
+
+interface Icons {
+  icon?: IconURL | IconDescriptor | (IconURL | IconDescriptor)[];
+  apple?: IconURL | IconDescriptor | (IconURL | IconDescriptor)[];
+  shortcut?: IconURL | IconDescriptor | (IconURL | IconDescriptor)[];
+  other?: IconDescriptor | IconDescriptor[];
+}
+
 interface Metadata {
   title?: string;
   description?: string;
   keywords?: string | string[];
   author?: string;
   robots?: string;
+  icons?: IconURL | (IconURL | IconDescriptor)[] | Icons | null;
   'og:title'?: string;
   'og:description'?: string;
   'og:image'?: string;
@@ -35,7 +55,7 @@ interface Metadata {
   'twitter:description'?: string;
   'twitter:image'?: string;
   'twitter:site'?: string;
-  [key: string]: string | string[] | undefined;
+  [key: string]: string | string[] | Icons | IconURL | (IconURL | IconDescriptor)[] | null | undefined;
 }
 
 type GenerateMetadata<P = Record<string, string>> = (params: P) => Metadata | Promise<Metadata>;

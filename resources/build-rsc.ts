@@ -976,7 +976,11 @@ const _createContext = function(defaultValue) {
   return ctx;
 };
 
-module.exports = { ...React, createContext: _createContext };
+const _useContext = function(ctx) {
+  return ctx._currentValue;
+};
+
+module.exports = { ...React, createContext: _createContext, useContext: _useContext };
 `,
         loader: "js",
       };

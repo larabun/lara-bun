@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Pipeline\Pipeline;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
@@ -13,6 +14,7 @@ use LaraBun\Rsc\Attributes\Authenticated;
 use LaraBun\Rsc\Attributes\Can;
 use ReflectionClass;
 use ReflectionMethod;
+use ReflectionNamedType;
 use RuntimeException;
 
 class CallableRegistry
@@ -112,6 +114,7 @@ class CallableRegistry
         if (is_string($callable)) {
             $this->authorize($callable, '__invoke');
             $instance = $this->resolveInstance($callable);
+            $args = $this->resolveFormRequest($callable, '__invoke', $args);
 
             return $instance(...$args);
         }
@@ -120,6 +123,7 @@ class CallableRegistry
             [$class, $method] = $callable;
             $this->authorize($class, $method);
             $instance = $this->resolveInstance($class);
+            $args = $this->resolveFormRequest($class, $method, $args);
 
             return $instance->{$method}(...$args);
         }
@@ -239,6 +243,49 @@ class CallableRegistry
     public function names(): array
     {
         return array_keys($this->callables);
+    }
+
+    /**
+     * If the method's first parameter type-hints a FormRequest, merge the
+     * incoming args into the current request and resolve the FormRequest
+     * through the container (which triggers validation automatically).
+     *
+     * @param  array<int|string, mixed>  $args
+     * @return array<int, mixed>
+     */
+    private function resolveFormRequest(string $class, string $method, array $args): array
+    {
+        $refMethod = new ReflectionMethod($class, $method);
+        $params = $refMethod->getParameters();
+
+        if ($params === []) {
+            return $args;
+        }
+
+        $firstParam = $params[0];
+        $type = $firstParam->getType();
+
+        if (! $type instanceof ReflectionNamedType || $type->isBuiltin()) {
+            return $args;
+        }
+
+        $typeName = $type->getName();
+
+        if (! is_subclass_of($typeName, FormRequest::class)) {
+            return $args;
+        }
+
+        // Merge the callable args into the current HTTP request so the
+        // FormRequest sees them as input data for validation.
+        $httpRequest = $this->container->make('request');
+        $data = isset($args[0]) && is_array($args[0]) ? $args[0] : $args;
+        $httpRequest->merge($data);
+
+        // Resolve the FormRequest through the container — this runs
+        // authorization (authorize()) and validation (rules()) automatically.
+        $formRequest = $this->container->make($typeName);
+
+        return [$formRequest];
     }
 
     private function resolveInstance(string $class): object

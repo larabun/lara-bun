@@ -220,6 +220,7 @@ HMRJS;
         window.__RSC_PAYLOAD__ = {$encodedPayload};
         window.__RSC_MODULES__ = {};
         window.__webpack_require__ = function(id) { return window.__RSC_MODULES__[id]; };
+        window.__webpack_get_script_filename__ = function(chunkId) { return chunkId; };
         window.__webpack_chunk_load__ = function(chunkUrl) {
             return new Promise(function(resolve, reject) {
                 var existing = document.querySelector('script[src="' + chunkUrl + '"]');

@@ -707,6 +707,11 @@ for (const c of clientComponents) {
 
 // ─── Server Build ───────────────────────────────────────────────────────────
 
+// Pre-resolve react-server-dom-webpack so proxy code works with symlinked packages
+const rsdwServerEdgePath = require.resolve("react-server-dom-webpack/server.edge", {
+  paths: [process.cwd()],
+});
+
 // Plugin that intercepts imports of "use client" files and replaces them
 // with client module proxies for Flight serialization
 const useClientPlugin: BunPlugin = {
@@ -746,7 +751,7 @@ const useClientPlugin: BunPlugin = {
 
         return {
           contents: `
-import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";
+import { createClientModuleProxy } from "${rsdwServerEdgePath}";
 const proxy = createClientModuleProxy("${moduleId}");
 export default proxy;
 ${proxyExports}
@@ -862,7 +867,7 @@ const useClientCatchAllPlugin: BunPlugin = {
 
       return {
         contents: `
-import { createClientModuleProxy } from "react-server-dom-webpack/server.edge";
+import { createClientModuleProxy } from "${rsdwServerEdgePath}";
 const proxy = createClientModuleProxy("${moduleId}");
 export default proxy;
 ${proxyExports}

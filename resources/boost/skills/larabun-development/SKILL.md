@@ -72,7 +72,7 @@ export async function addTodo(formData: FormData) {
 ### Form Component
 ```tsx
 "use client";
-import { Form } from "lara-bun/router";
+import { Form } from "lara-bun/form";
 import { addTodo } from "./actions";
 
 type FormValues = { title: string };
@@ -95,7 +95,7 @@ export default function TodoForm() {
 ### useForm Hook
 ```tsx
 "use client";
-import { useForm } from "lara-bun/router";
+import { useForm } from "lara-bun/form";
 import { updateProfile } from "./actions";
 
 const { data, setData, errors, error, pending, recentlySuccessful, submit } =

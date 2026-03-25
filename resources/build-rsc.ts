@@ -338,8 +338,6 @@ const optimizeImportsPlugin: BunPlugin = {
         return undefined;
       }
 
-      console.log(`  Optimized: ${args.path}`);
-
       const ext = args.path.split(".").pop();
       const loader = ext === "tsx" ? "tsx" : ext === "jsx" ? "jsx" : ext === "ts" ? "ts" : "js";
 

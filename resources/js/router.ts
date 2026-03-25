@@ -5,7 +5,6 @@
  * are built in a separate build graph and cannot directly import navigate.ts.
  */
 
-
 export function visit(
   url: string,
   opts?: { replace?: boolean }

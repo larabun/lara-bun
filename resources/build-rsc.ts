@@ -267,6 +267,18 @@ const optimizeImportsPlugin: BunPlugin = {
       }
 
       const source = readFileSync(args.path, "utf-8");
+
+      // Quick check: does this file contain any optimizable package imports?
+      let hasOptimizableImport = false;
+      for (const pkgName of packageExportMaps.keys()) {
+        if (source.includes(pkgName)) {
+          hasOptimizableImport = true;
+          break;
+        }
+      }
+      if (!hasOptimizableImport) {
+        return undefined;
+      }
       let modified = false;
       let result = source;
 
@@ -314,6 +326,8 @@ const optimizeImportsPlugin: BunPlugin = {
       if (!modified) {
         return undefined;
       }
+
+      console.log(`  Optimized: ${args.path}`);
 
       const ext = args.path.split(".").pop();
       const loader = ext === "tsx" ? "tsx" : ext === "jsx" ? "jsx" : ext === "ts" ? "ts" : "js";

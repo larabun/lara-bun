@@ -24,7 +24,7 @@ import {
   navigate,
   prefetch,
 } from "./navigate";
-import { ServerValidationError, ServerSessionExpiredError } from "./errors";
+import { ServerValidationError, ServerSessionExpiredError, ServerDumpError } from "./errors";
 
 function showDumpOverlay(html: string): void {
   let overlay = document.getElementById("__rsc-dump-overlay");
@@ -121,7 +121,7 @@ export function createRscApp(
     if (contentType.includes("text/html")) {
       const html = await response.text();
       showDumpOverlay(html);
-      return;
+      throw new ServerDumpError();
     }
 
     if (!response.ok) {

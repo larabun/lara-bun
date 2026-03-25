@@ -15,6 +15,13 @@ export class ServerAuthenticationError extends Error {
   }
 }
 
+export class ServerDumpError extends Error {
+  constructor() {
+    super("Server returned a dump response.");
+    this.name = "ServerDumpError";
+  }
+}
+
 export class ServerSessionExpiredError extends Error {
   constructor(message: string = "Your session has expired. Please refresh the page.") {
     super(message);

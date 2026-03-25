@@ -12,7 +12,7 @@ import {
   useState,
   useTransition,
 } from "react";
-import { ServerValidationError } from "./errors";
+import { ServerValidationError, ServerDumpError } from "./errors";
 
 type PrefetchStrategy = "hover" | "mount" | "none";
 
@@ -200,6 +200,8 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
           if (err instanceof ServerValidationError) {
             setErrors(err.errors);
             onError?.(err.errors);
+          } else if (err instanceof ServerDumpError) {
+            // Dump overlay is already shown — silently swallow
           } else {
             throw err;
           }

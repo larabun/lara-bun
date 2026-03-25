@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useTransition } from "react";
-import { ServerValidationError } from "./errors";
+import { ServerValidationError, ServerDumpError } from "./errors";
 
 type SetDataFn<T> = {
   <K extends keyof T>(field: K, value: T[K]): void;
@@ -155,6 +155,10 @@ export function useForm<T extends Record<string, unknown>>(initialValues: T): Us
           } catch (err) {
             if (err instanceof ServerValidationError) {
               setErrors(err.errors);
+            }
+            if (err instanceof ServerDumpError) {
+              resolve();
+              return;
             }
             reject(err);
           }

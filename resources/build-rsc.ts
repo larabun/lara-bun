@@ -545,7 +545,12 @@ const appDir = join(sourceDir, "app");
 if (!existsSync(appDir)) {
   mkdirSync(appDir, { recursive: true });
 
-  writeFileSync(join(appDir, "layout.tsx"), `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  writeFileSync(join(appDir, "app.css"), `@import "tailwindcss";
+`);
+
+  writeFileSync(join(appDir, "layout.tsx"), `import "./app.css";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <div>
       <header style={{ padding: '16px 24px', borderBottom: '1px solid #e5e7eb' }}>
@@ -571,7 +576,7 @@ if (!existsSync(appDir)) {
 }
 `);
 
-  console.log("Scaffolded: app/layout.tsx, app/page.tsx");
+  console.log("Scaffolded: app/layout.tsx, app/page.tsx, app/app.css");
 }
 
 for await (const path of glob.scan(sourceDir)) {

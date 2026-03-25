@@ -939,42 +939,57 @@ const cssCollectorPlugin: BunPlugin = {
 // react-server CJS build. Some third-party packages (lucide-react) use these APIs
 // at module init time even though they're never called during RSC rendering.
 // Without this, the server bundle crashes on import.
+// Plugin that shims missing client-only React APIs (e.g., createContext, forwardRef)
+// in the react-server CJS build. Some third-party packages (lucide-react) call these
+// at module init time even though they're never used during RSC rendering.
 const reactServerShimPlugin: BunPlugin = {
   name: "react-server-shim",
   setup(build) {
-    const reactServerPath = join(process.cwd(), "node_modules/react/react.react-server.js");
+    // Intercept bare "react" imports from node_modules (third-party packages)
+    // and redirect to a virtual shim module
+    build.onResolve({ filter: /^react$/ }, (args) => {
+      // Only shim for node_modules imports (third-party packages)
+      if (!args.importer || !args.importer.includes("node_modules")) {
+        return undefined;
+      }
+      return { path: "react-server-shimmed", namespace: "react-shim" };
+    });
 
-    build.onLoad({ filter: new RegExp(`^${reactServerPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }, () => {
+    build.onLoad({ filter: /.*/, namespace: "react-shim" }, () => {
+      const reactServerPath = join(process.cwd(), "node_modules/react/react.react-server.js");
       return {
         contents: `
-const React = require("${reactServerPath}");
+export * from "${reactServerPath}";
+import React from "${reactServerPath}";
+export default React;
 
 // Shim createContext — returns a dummy context object.
-// Third-party packages (e.g., lucide-react) call createContext at module init,
-// but the context is never consumed during server rendering.
-if (typeof React.createContext !== "function") {
-  React.createContext = function(defaultValue) {
-    const ctx = {
-      $$typeof: Symbol.for("react.context"),
-      _currentValue: defaultValue,
-      _currentValue2: defaultValue,
-      Provider: ({ children }) => children,
-      Consumer: null,
-    };
-    ctx.Consumer = ctx;
-    return ctx;
+export function createContext(defaultValue) {
+  const ctx = {
+    $$typeof: Symbol.for("react.context"),
+    _currentValue: defaultValue,
+    _currentValue2: defaultValue,
+    Provider: ({ children }) => children,
+    Consumer: null,
   };
+  ctx.Consumer = ctx;
+  return ctx;
 }
 
-// Shim forwardRef if missing
-if (typeof React.forwardRef !== "function") {
-  React.forwardRef = function(render) {
-    const elementType = { $$typeof: Symbol.for("react.forward_ref"), render };
-    return elementType;
-  };
+// Shim forwardRef
+export function forwardRef(render) {
+  return { $$typeof: Symbol.for("react.forward_ref"), render };
 }
 
-module.exports = React;
+// Shim useState — no-op for module-level initialization
+export function useState(initial) {
+  return [typeof initial === "function" ? initial() : initial, () => {}];
+}
+
+// Shim useContext — returns the default value
+export function useContext(ctx) {
+  return ctx._currentValue;
+}
 `,
         loader: "js",
       };

@@ -9,7 +9,7 @@
  *   bun <this-script> [source-dir]
  */
 
-import { watch } from "node:fs";
+import { watch, existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { writeFileSync, unlinkSync } from "node:fs";
@@ -130,10 +130,39 @@ const watcher = watch(sourceDir, { recursive: true }, (_event, filename) => {
   onFileChange(filename as string | null);
 });
 
+// Watch .env for changes — env vars are inlined at build time
+const extraWatchers: ReturnType<typeof watch>[] = [];
+const envPath = join(process.cwd(), ".env");
+
+if (existsSync(envPath)) {
+  try {
+    extraWatchers.push(watch(envPath, () => {
+      console.log(".env changed — rebuilding...");
+      onFileChange(".env");
+    }));
+  } catch {}
+}
+
+// Watch server actions directory for new/changed PHP action files
+const actionsDir = process.env.BUN_RSC_ACTIONS_DIR
+  ?? join(process.cwd(), "app/Rsc/Actions");
+
+if (existsSync(actionsDir)) {
+  try {
+    extraWatchers.push(watch(actionsDir, { recursive: true }, (_event, filename) => {
+      if (filename?.endsWith(".php")) {
+        console.log(`Action changed: ${filename} — rebuilding...`);
+        onFileChange(filename);
+      }
+    }));
+  } catch {}
+}
+
 console.log(`Watching ${sourceDir} for changes...`);
 
 function shutdown(): void {
   watcher.close();
+  for (const w of extraWatchers) w.close();
   wsServer.stop();
   try { unlinkSync(devFlagPath); } catch {}
   process.exit(0);

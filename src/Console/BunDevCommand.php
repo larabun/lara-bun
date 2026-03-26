@@ -60,6 +60,9 @@ class BunDevCommand extends Command
         $this->buildProcess = new \Symfony\Component\Process\Process(
             [$bunPath, $watchScript],
             base_path(),
+            array_merge($_ENV, [
+                'BUN_RSC_ACTIONS_DIR' => config('bun.rsc.actions_dir', app_path('Rsc/Actions')),
+            ]),
         );
         $this->buildProcess->setTimeout(null);
         $this->buildProcess->start(fn ($type, $buffer) => $this->output->write($buffer));

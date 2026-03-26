@@ -16,6 +16,7 @@ use LaraBun\Rsc\CallableRegistry;
 use LaraBun\Rsc\PageRouteRegistrar;
 use LaraBun\Rsc\PageScanner;
 use LaraBun\Rsc\RscActionController;
+use LaraBun\Rsc\RscMiddleware;
 
 class BunServiceProvider extends ServiceProvider
 {
@@ -67,6 +68,10 @@ class BunServiceProvider extends ServiceProvider
     public function boot(): void
     {
         if (config('bun.rsc.enabled')) {
+            // Auto-register RscMiddleware in the web middleware group
+            // so it runs on all RSC page routes (sets Vary, Cache-Control).
+            $this->app['router']->pushMiddlewareToGroup('web', RscMiddleware::class);
+
             Route::post('/_rsc/action', RscActionController::class)
                 ->middleware('web');
 

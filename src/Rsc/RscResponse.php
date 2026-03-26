@@ -241,7 +241,8 @@ class RscResponse implements Responsable
     protected function toStreamedHtmlResponse(string $version, \Illuminate\Http\Request $request): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides);
+        $nonce = \LaraBun\BunServiceProvider::cspNonce();
+        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $nonce);
 
         // First yield: {clientChunks: [...], metadata: {...}}
         $meta = $generator->current();

@@ -363,7 +363,7 @@ class BunBridge
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      */
-    public function rscHtmlStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = []): \Generator
+    public function rscHtmlStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = [], ?string $nonce = null): \Generator
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -385,6 +385,7 @@ class BunBridge
                 'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
                 'slotOverrides' => $slotOverrides !== [] ? $slotOverrides : null,
                 'callbackId' => $callbackId,
+                'nonce' => $nonce,
             ], JSON_THROW_ON_ERROR));
 
             // Read html-start eagerly before entering the select loop

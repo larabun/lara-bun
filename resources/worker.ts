@@ -29,6 +29,7 @@ interface IncomingMessage {
   slotOverrides?: Record<string, SlotOverride> | null;
   callbackSocket?: string; // deprecated — use callbackId
   callbackId?: string;
+  nonce?: string;
   actionId?: string;
   body?: string;
   contentType?: string;
@@ -216,7 +217,11 @@ type RscHandlerModule = {
   handleRscHtmlStream: (
     component: string,
     props: Record<string, unknown>,
-    layouts?: LayoutEntry[]
+    layouts?: LayoutEntry[],
+    loadings?: string[],
+    parallelSlots?: Record<string, string>,
+    slotOverrides?: Record<string, { component: string; props: Record<string, unknown> }>,
+    nonce?: string
   ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: BrowserManifest }>;
   handleAction: (
     actionId: string,
@@ -410,7 +415,8 @@ async function handleRscHtmlStreamMessage(
         message.component,
         message.props ?? {},
         message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
-        message.slotOverrides ?? undefined
+        message.slotOverrides ?? undefined,
+        message.nonce ?? undefined
       );
 
     const reader = htmlStream.getReader();

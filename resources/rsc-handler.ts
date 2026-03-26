@@ -265,7 +265,8 @@ export async function handleRscHtmlStream(
   component: string,
   props: Record<string, unknown>,
   layouts: LayoutEntry[] = [], loadings: string[] = [], parallelSlots: Record<string, string> = {},
-  slotOverrides?: Record<string, { component: string; props: Record<string, unknown> }>
+  slotOverrides?: Record<string, { component: string; props: Record<string, unknown> }>,
+  nonce?: string
 ): Promise<{
   htmlStream: ReadableStream;
   rscPayloadPromise: Promise<string>;
@@ -294,7 +295,8 @@ export async function handleRscHtmlStream(
   // Render React tree to HTML stream — DO NOT await allReady.
   // React sends the shell (with Suspense fallbacks) immediately, then injects
   // <template> + <script> completion tags as async content resolves.
-  const htmlStream = await renderToReadableStream(reactTree);
+  // Pass the CSP nonce so React tags its inline Suspense scripts with it.
+  const htmlStream = await renderToReadableStream(reactTree, { nonce });
 
   return { htmlStream, rscPayloadPromise, clientChunks: browserManifest };
 }

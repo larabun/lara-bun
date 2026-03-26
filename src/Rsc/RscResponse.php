@@ -365,7 +365,7 @@ class RscResponse implements Responsable
      *
      * @param  array<string, mixed>|null  $metadata
      */
-    protected function applyMetadataDefaults(?array $metadata): void
+    public function applyMetadataDefaults(?array $metadata): void
     {
         if ($metadata === null) {
             return;
@@ -384,7 +384,7 @@ class RscResponse implements Responsable
      * Recognises 'title' (→ <title>), 'description' (→ <meta name="description">),
      * and any 'og:*' / 'twitter:*' keys (→ <meta property="..."> / <meta name="...">).
      */
-    protected function buildMetaTags(): string
+    public function buildMetaTags(): string
     {
         $tags = [];
 

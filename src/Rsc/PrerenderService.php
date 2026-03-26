@@ -102,6 +102,13 @@ class PrerenderService
         );
 
         $version = $rscResponse->getVersion();
+
+        // Apply page metadata (title, og:image, icons, etc.) from the RSC bundle
+        // so buildMetaTags() can inject them into the pre-rendered HTML.
+        if (isset($result['metadata']) && is_array($result['metadata'])) {
+            $rscResponse->applyMetadataDefaults($result['metadata']);
+        }
+
         $html = $this->buildHtmlPage($url, $rscResponse->getComponent(), $version, $result, $rscResponse);
 
         $path = trim($url, '/') ?: 'index';
@@ -322,13 +329,22 @@ class PrerenderService
         $scripts = BunServiceProvider::renderRscScripts($result['rscPayload'], $result['clientChunks']);
         $rootView = config('bun.rsc.root_view', 'lara-bun::rsc-app');
 
-        return view($rootView, [
+        $html = view($rootView, [
             ...$rscResponse->getViewData(),
             'body' => $result['body'],
             'initialJson' => $initialJson,
             'scripts' => $scripts,
             'cssLinks' => $rscResponse->resolveCssLinks(),
         ])->render();
+
+        // Inject metadata tags (title, og:*, icons) into <head>
+        $metaTags = $rscResponse->buildMetaTags();
+
+        if ($metaTags !== '' && stripos($html, '</head>') !== false) {
+            $html = str_ireplace('</head>', $metaTags."\n</head>", $html);
+        }
+
+        return $html;
     }
 
     /**

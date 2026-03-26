@@ -1859,7 +1859,7 @@ if (collectedCssFiles.size > 0) {
     const tmpFile = join(cssOutDir, `${name}.tmp.css`);
 
     const twProc = Bun.spawn(
-      ["npx", "--yes", "@tailwindcss/cli@latest", "-i", cssFile, "-o", tmpFile, "--minify"],
+      ["bunx", "--bun", "@tailwindcss/cli@latest", "-i", cssFile, "-o", tmpFile, "--minify"],
       { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" }
     );
 

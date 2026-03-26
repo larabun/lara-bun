@@ -14,6 +14,7 @@ test('non-RSC route does not return text/x-component content type on SPA navigat
 
     $response = $this->get('/blade-page', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
         Header::X_RSC_VERSION => '',
     ]);
 
@@ -38,6 +39,7 @@ test('RSC route returns text/x-component on SPA navigation', function () {
 
     $response = $this->get('/rsc-page', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
         Header::X_RSC_VERSION => '',
     ]);
 
@@ -50,6 +52,7 @@ test('non-RSC JSON route does not return text/x-component on SPA navigation', fu
 
     $response = $this->get('/api-route', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
         Header::X_RSC_VERSION => '',
     ]);
 

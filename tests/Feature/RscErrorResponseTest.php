@@ -40,6 +40,6 @@ test('error response renders with correct HTTP status code on SPA navigation', f
     Route::get('/test-error-spa', fn () => rsc('Error', ['status' => $statusCode])
         ->status($statusCode));
 
-    $this->get('/test-error-spa', [Header::X_RSC => '1', Header::X_RSC_VERSION => ''])
+    $this->get('/test-error-spa', [Header::X_RSC => '1', 'Accept' => '*/*', Header::X_RSC_VERSION => ''])
         ->assertStatus($statusCode);
 })->with([404, 403, 419, 500]);

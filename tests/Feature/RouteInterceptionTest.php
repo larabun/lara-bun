@@ -49,6 +49,7 @@ test('intercept with referer renders referer page with slot override', function 
 
     $this->get('/photo/123', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
         Header::X_RSC_INTERCEPT => 'modal',
         Header::X_RSC_REFERER => '/feed',
     ])->assertStatus(200);
@@ -84,6 +85,7 @@ test('intercept without referer renders just the interceptor', function () {
 
     $this->get('/photo/123', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
         Header::X_RSC_INTERCEPT => 'modal',
     ])->assertStatus(200);
 });
@@ -117,6 +119,7 @@ test('without intercept header renders normal page component', function () {
 
     $this->get('/photo/123', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ])->assertStatus(200);
 });
 
@@ -136,6 +139,7 @@ test('intercept with non-matching slot returns 404', function () {
 
     $this->get('/photo/123', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
         Header::X_RSC_INTERCEPT => 'nonexistent',
     ])->assertStatus(404);
 });

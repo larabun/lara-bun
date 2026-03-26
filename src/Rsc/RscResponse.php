@@ -154,21 +154,10 @@ class RscResponse implements Responsable
         $version = $this->version ?? $this->resolveVersion();
 
         // Only serve Flight payload for actual SPA fetches, not browser reloads.
-        // Chrome may replay cached X-RSC headers on restore/relaunch — detect
-        // this by checking Sec-Fetch-Mode (navigate = browser, cors = SPA fetch).
+        // Browser navigation (including tab duplicate/restore) sends Accept: text/html.
+        // SPA fetch() sends Accept: */* with the X-RSC header.
         $isRscRequest = $request->hasHeader(Header::X_RSC) || $request->hasHeader(Header::X_RSC_ACTION);
-        $secFetchMode = $request->header('Sec-Fetch-Mode');
-        $isBrowserNav = $secFetchMode === 'navigate';
-
-        \Log::debug('RSC toResponse', [
-            'url' => $request->url(),
-            'X-RSC' => $request->header('X-RSC'),
-            'Sec-Fetch-Mode' => $secFetchMode,
-            'Sec-Fetch-Dest' => $request->header('Sec-Fetch-Dest'),
-            'isRscRequest' => $isRscRequest,
-            'isBrowserNav' => $isBrowserNav,
-            'decision' => $isRscRequest && ! $isBrowserNav ? 'FLIGHT' : 'HTML',
-        ]);
+        $isBrowserNav = str_contains($request->header('Accept', ''), 'text/html');
 
         if ($isRscRequest && ! $isBrowserNav) {
             return $this->toStreamedRscResponse($version);

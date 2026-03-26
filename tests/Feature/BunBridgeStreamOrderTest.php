@@ -83,6 +83,7 @@ test('rsc SPA response sends headers without waiting for stream body', function 
 
     $response = test()->get('/test-stream-timing', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ]);
 
     // Headers are derived from the first yield (stream-start), not the body
@@ -115,6 +116,7 @@ test('rsc SPA response includes metadata from stream-start in headers', function
 
     $response = test()->get('/test-meta-timing', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ]);
 
     $response->assertStatus(200);

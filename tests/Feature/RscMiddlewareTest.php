@@ -10,6 +10,7 @@ test('returns 409 on version mismatch for GET RSC request', function () {
 
     $response = $this->get('/test-version', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
         Header::X_RSC_VERSION => 'stale-version-hash',
     ]);
 
@@ -23,6 +24,7 @@ test('passes through when client version is empty', function () {
 
     $response = $this->get('/test-empty-version', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
         Header::X_RSC_VERSION => '',
     ]);
 
@@ -44,6 +46,7 @@ test('passes through for POST requests even with version mismatch', function () 
 
     $response = $this->post('/test-post-version', [], [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
         Header::X_RSC_VERSION => 'stale-version',
     ]);
 

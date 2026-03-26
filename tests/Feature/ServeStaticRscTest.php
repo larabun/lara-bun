@@ -39,6 +39,7 @@ test('serves pre-rendered flight file on RSC request', function () {
 
     $response = $this->get('/test-page', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ]);
 
     $response->assertStatus(200)
@@ -64,6 +65,7 @@ test('serves pre-rendered html file on non-RSC request', function () {
 test('falls through when no static flight file exists for RSC request', function () {
     $response = $this->get('/test-page', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ]);
 
     $response->assertStatus(200);
@@ -86,6 +88,7 @@ test('includes client chunks header from meta.json', function () {
 
     $response = $this->get('/test-page', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ]);
 
     $chunks = json_decode($response->headers->get(Header::X_RSC_CHUNKS), true);
@@ -102,6 +105,7 @@ test('includes title header when present in meta', function () {
 
     $response = $this->get('/test-page', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ]);
 
     expect($response->headers->get(Header::X_RSC_TITLE))->toBe(rawurlencode('My Page Title'));
@@ -116,6 +120,7 @@ test('omits title header when not in meta', function () {
 
     $response = $this->get('/test-page', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ]);
 
     expect($response->headers->has(Header::X_RSC_TITLE))->toBeFalse();
@@ -131,6 +136,7 @@ test('serves nested static pages', function () {
 
     $response = $this->get('/nested/page', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ]);
 
     $response->assertStatus(200);
@@ -143,6 +149,7 @@ test('requires both flight and meta files to serve static RSC', function () {
 
     $response = $this->get('/test-page', [
         Header::X_RSC => 'true',
+        'Accept' => '*/*',
     ]);
 
     expect($response->getContent())->toBe('dynamic content');

@@ -79,7 +79,7 @@ test('rsc response passes layouts to BunBridge rscStream on SPA navigation', fun
     Route::get('/test-layout-spa', fn () => rsc('Profile')
         ->layout('AppLayout', ['title' => 'Profile']));
 
-    $this->get('/test-layout-spa', [Header::X_RSC => '1', Header::X_RSC_VERSION => ''])
+    $this->get('/test-layout-spa', [Header::X_RSC => '1', 'Accept' => '*/*', Header::X_RSC_VERSION => ''])
         ->assertStatus(200)
         ->assertHeader('Content-Type', 'text/x-component; charset=utf-8');
 });

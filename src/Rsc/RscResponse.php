@@ -156,6 +156,8 @@ class RscResponse implements Responsable
         // Only serve Flight payload for actual SPA fetches, not browser reloads.
         // Browser navigation (including tab duplicate/restore) sends Accept: text/html.
         // SPA fetch() sends Accept: */* with the X-RSC header.
+        // Flight responses also include Cache-Control: no-store to prevent Chrome
+        // from replaying cached Flight responses on tab duplicate/restore.
         $isRscRequest = $request->hasHeader(Header::X_RSC) || $request->hasHeader(Header::X_RSC_ACTION);
         $isBrowserNav = str_contains($request->header('Accept', ''), 'text/html');
 
@@ -190,6 +192,8 @@ class RscResponse implements Responsable
 
         $headers = [
             'Content-Type' => 'text/x-component',
+            'Cache-Control' => 'no-store',
+            'Vary' => Header::X_RSC,
             Header::X_RSC_CHUNKS => json_encode($sharedChunks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
             Header::X_RSC_VERSION => $version,
             'X-Accel-Buffering' => 'no',

@@ -958,6 +958,16 @@ class BunBridge
     {
         $path = $this->socketPaths[$index];
 
+        // Wait briefly for the socket to appear — the Bun worker may still
+        // be starting up (common on startup or after HMR rebuild).
+        $maxWait = 3;
+        $waited = 0;
+
+        while (! file_exists($path) && $waited < $maxWait) {
+            usleep(100_000); // 100ms
+            $waited += 0.1;
+        }
+
         if (! file_exists($path)) {
             throw new RuntimeException(
                 "Bun socket not found at {$path}. Run: php artisan bun:serve"

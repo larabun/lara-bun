@@ -157,7 +157,18 @@ class RscResponse implements Responsable
         // Chrome may replay cached X-RSC headers on restore/relaunch — detect
         // this by checking Sec-Fetch-Mode (navigate = browser, cors = SPA fetch).
         $isRscRequest = $request->hasHeader(Header::X_RSC) || $request->hasHeader(Header::X_RSC_ACTION);
-        $isBrowserNav = $request->header('Sec-Fetch-Mode') === 'navigate';
+        $secFetchMode = $request->header('Sec-Fetch-Mode');
+        $isBrowserNav = $secFetchMode === 'navigate';
+
+        \Log::debug('RSC toResponse', [
+            'url' => $request->url(),
+            'X-RSC' => $request->header('X-RSC'),
+            'Sec-Fetch-Mode' => $secFetchMode,
+            'Sec-Fetch-Dest' => $request->header('Sec-Fetch-Dest'),
+            'isRscRequest' => $isRscRequest,
+            'isBrowserNav' => $isBrowserNav,
+            'decision' => $isRscRequest && ! $isBrowserNav ? 'FLIGHT' : 'HTML',
+        ]);
 
         if ($isRscRequest && ! $isBrowserNav) {
             return $this->toStreamedRscResponse($version);

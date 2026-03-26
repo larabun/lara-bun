@@ -48,6 +48,13 @@ class RscMiddleware
 
         $response->headers->set('Vary', Header::X_RSC, false);
 
+        // Flight responses must not be cached by browsers or CDNs —
+        // otherwise Chrome tab duplicate/restore replays the cached Flight
+        // payload instead of making a fresh HTML request.
+        if ($response->headers->get('Content-Type') === 'text/x-component') {
+            $response->headers->set('Cache-Control', 'no-store');
+        }
+
         if ($this->isRedirect($response) && $this->shouldConvertRedirect($request)) {
             $response->setStatusCode(303);
         }

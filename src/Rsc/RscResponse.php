@@ -192,8 +192,6 @@ class RscResponse implements Responsable
 
         $headers = [
             'Content-Type' => 'text/x-component',
-            'Cache-Control' => 'no-store',
-            'Vary' => Header::X_RSC,
             Header::X_RSC_CHUNKS => json_encode($sharedChunks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
             Header::X_RSC_VERSION => $version,
             'X-Accel-Buffering' => 'no',

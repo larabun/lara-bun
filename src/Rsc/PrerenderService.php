@@ -145,6 +145,8 @@ class PrerenderService
 
     public const PPR_PAYLOAD_MARKER = '<!--__RSC_PPR_PAYLOAD__-->';
 
+    public const NONCE_PLACEHOLDER = '__RSC_CSP_NONCE__';
+
     /**
      * Pre-render a PPR shell for a parameterized route.
      *
@@ -189,6 +191,10 @@ class PrerenderService
             : $result['shellHtml'];
 
         $version = $rscResponse->getVersion();
+
+        if (BunServiceProvider::cspNonce() !== null) {
+            app()->instance('csp-nonce', self::NONCE_PLACEHOLDER);
+        }
 
         $initialJson = json_encode([
             'url' => self::PPR_PAYLOAD_MARKER,
@@ -299,6 +305,12 @@ class PrerenderService
      */
     public function buildHtmlPage(string $url, string $component, string $version, array $result, RscResponse $rscResponse): string
     {
+        // Use a placeholder nonce during prerender so the cached HTML can be
+        // patched with the real per-request nonce at serve time.
+        if (BunServiceProvider::cspNonce() !== null) {
+            app()->instance('csp-nonce', self::NONCE_PLACEHOLDER);
+        }
+
         $initialJson = json_encode([
             'url' => $url,
             'component' => $component,

@@ -5,7 +5,9 @@ namespace LaraBun\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use LaraBun\BunServiceProvider;
 use LaraBun\Rsc\Header;
+use LaraBun\Rsc\PrerenderService;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class ServeStaticRsc
@@ -42,7 +44,17 @@ class ServeStaticRsc
             $htmlFile = "{$basePath}/{$path}.html";
 
             if (file_exists($htmlFile)) {
-                return new Response(file_get_contents($htmlFile), 200, [
+                $html = file_get_contents($htmlFile);
+
+                // Replace the build-time nonce placeholder with the real
+                // per-request CSP nonce so inline scripts pass CSP checks.
+                $nonce = BunServiceProvider::cspNonce();
+
+                if ($nonce) {
+                    $html = str_replace(PrerenderService::NONCE_PLACEHOLDER, $nonce, $html);
+                }
+
+                return new Response($html, 200, [
                     'Content-Type' => 'text/html; charset=UTF-8',
                 ]);
             }

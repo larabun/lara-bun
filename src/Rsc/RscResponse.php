@@ -607,7 +607,7 @@ class RscResponse implements Responsable
      *
      * @return list<string>
      */
-    protected function resolveCssLinks(): array
+    public function resolveCssLinks(): array
     {
         $manifestPath = base_path('bootstrap/rsc/css-manifest.json');
 

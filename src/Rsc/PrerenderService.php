@@ -209,6 +209,7 @@ class PrerenderService
             'body' => $shellBody,
             'initialJson' => $initialJson,
             'scripts' => self::PPR_PAYLOAD_MARKER,
+            'cssLinks' => $rscResponse->resolveCssLinks(),
         ])->render();
 
         // Store under the URI pattern (e.g. posts/_id_)
@@ -274,6 +275,7 @@ class PrerenderService
             'body' => $shellBody,
             'initialJson' => $initialJson,
             'scripts' => self::PPR_PAYLOAD_MARKER,
+            'cssLinks' => $rscResponse->resolveCssLinks(),
         ])->render();
 
         $path = trim($url, '/') ?: 'index';
@@ -325,6 +327,7 @@ class PrerenderService
             'body' => $result['body'],
             'initialJson' => $initialJson,
             'scripts' => $scripts,
+            'cssLinks' => $rscResponse->resolveCssLinks(),
         ])->render();
     }
 

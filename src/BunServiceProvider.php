@@ -136,34 +136,51 @@ class BunServiceProvider extends ServiceProvider
             return new HtmlString(self::$rscHeadCache);
         }
 
-        $buildDir = public_path('build/rsc');
-
-        if (! is_dir($buildDir)) {
-            return new HtmlString('');
-        }
-
         $tags = '';
 
-        // Preload fonts — break the CSS → font dependency chain
-        $fontsDir = public_path('build/css/files');
+        // Font preloads — break the CSS → font dependency chain
+        $fontsManifest = base_path('bootstrap/rsc/css-manifest.json');
 
-        if (is_dir($fontsDir)) {
-            foreach (glob("{$fontsDir}/*.woff2") as $font) {
-                $tags .= "\n    <link rel=\"preload\" href=\"/build/css/files/".basename($font).'" as="font" type="font/woff2" crossorigin>';
+        if (file_exists($fontsManifest)) {
+            $cssUrls = json_decode(file_get_contents($fontsManifest), true) ?? [];
+
+            // Extract font references from CSS URLs' sibling files/ directory
+            foreach ($cssUrls as $urls) {
+                foreach ($urls as $cssUrl) {
+                    $cssDir = dirname(public_path(ltrim($cssUrl, '/'))).'/files';
+
+                    if (is_dir($cssDir)) {
+                        foreach (glob("{$cssDir}/*.woff2") as $font) {
+                            $fontUrl = dirname($cssUrl).'/files/'.basename($font);
+                            $tags .= "\n    <link rel=\"preload\" href=\"{$fontUrl}\" as=\"font\" type=\"font/woff2\" crossorigin>";
+                        }
+
+                        break 2; // Fonts are shared across all CSS — only scan once
+                    }
+                }
             }
         }
 
-        // Modulepreload JS — browser fetches all chunks in parallel
-        foreach (glob("{$buildDir}/entry.hydrate-*.js") as $entry) {
-            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($entry).'" crossorigin>';
-        }
+        // JS modulepreload from browser manifest — single file read, no globs
+        $manifestPath = base_path('bootstrap/rsc/browser-manifest.json');
 
-        foreach (glob("{$buildDir}/chunk-*.js") as $chunk) {
-            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($chunk).'" crossorigin>';
-        }
+        if (file_exists($manifestPath)) {
+            /** @var array{entry?: string, shared?: string[], modules?: array<string, string[]>} $manifest */
+            $manifest = json_decode(file_get_contents($manifestPath), true) ?? [];
 
-        foreach (glob("{$buildDir}/_register_*.js") as $module) {
-            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($module).'" crossorigin>';
+            if (isset($manifest['entry'])) {
+                $tags .= "\n    <link rel=\"modulepreload\" href=\"{$manifest['entry']}\" crossorigin>";
+            }
+
+            foreach ($manifest['shared'] ?? [] as $chunk) {
+                $tags .= "\n    <link rel=\"modulepreload\" href=\"{$chunk}\" crossorigin>";
+            }
+
+            foreach ($manifest['modules'] ?? [] as $chunks) {
+                foreach ($chunks as $chunk) {
+                    $tags .= "\n    <link rel=\"modulepreload\" href=\"{$chunk}\" crossorigin>";
+                }
+            }
         }
 
         self::$rscHeadCache = $tags;

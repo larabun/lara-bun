@@ -128,8 +128,14 @@ class BunServiceProvider extends ServiceProvider
      * and component chunks. Place @rscHead in your <head> to eliminate critical
      * request chains — the browser fetches all JS in parallel on first paint.
      */
+    private static ?string $rscHeadCache = null;
+
     public static function renderRscHead(): HtmlString
     {
+        if (self::$rscHeadCache !== null) {
+            return new HtmlString(self::$rscHeadCache);
+        }
+
         $buildDir = public_path('build/rsc');
 
         if (! is_dir($buildDir)) {
@@ -138,17 +144,29 @@ class BunServiceProvider extends ServiceProvider
 
         $tags = '';
 
+        // Preload fonts — break the CSS → font dependency chain
+        $fontsDir = public_path('build/css/files');
+
+        if (is_dir($fontsDir)) {
+            foreach (glob("{$fontsDir}/*.woff2") as $font) {
+                $tags .= "\n    <link rel=\"preload\" href=\"/build/css/files/".basename($font).'" as="font" type="font/woff2" crossorigin>';
+            }
+        }
+
+        // Modulepreload JS — browser fetches all chunks in parallel
         foreach (glob("{$buildDir}/entry.hydrate-*.js") as $entry) {
-            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($entry).'">';
+            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($entry).'" crossorigin>';
         }
 
         foreach (glob("{$buildDir}/chunk-*.js") as $chunk) {
-            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($chunk).'">';
+            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($chunk).'" crossorigin>';
         }
 
         foreach (glob("{$buildDir}/_register_*.js") as $module) {
-            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($module).'">';
+            $tags .= "\n    <link rel=\"modulepreload\" href=\"/build/rsc/".basename($module).'" crossorigin>';
         }
+
+        self::$rscHeadCache = $tags;
 
         return new HtmlString($tags);
     }

@@ -5,7 +5,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     @foreach (($cssLinks ?? []) as $cssLink)
-        <link rel="stylesheet" href="{{ $cssLink }}" data-rsc-css>
+        <link rel="stylesheet" href="{{ $cssLink }}" fetchpriority="high" data-rsc-css>
     @endforeach
     @rscHead
 </head>

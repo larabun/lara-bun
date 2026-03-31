@@ -27,3 +27,6 @@ export function prefetch(url: string, cacheForMs?: number): void {
 
   fn(url, cacheForMs);
 }
+
+const router = { visit, prefetch };
+export default router;

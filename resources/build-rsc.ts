@@ -1555,8 +1555,21 @@ mkdirSync(clientOutDir, { recursive: true });
 // which is unavailable under react-server conditions in the Bun worker.
 const ssrPlugins: BunPlugin[] = [packageAliasPlugin];
 
+// Create uniquely named SSR wrapper entries to avoid filename collisions
+// (e.g., multiple packages with index.js as their entry).
+const ssrEntryPaths: string[] = [];
+
+for (let i = 0; i < clientComponents.length; i++) {
+  const c = clientComponents[i];
+  const wrapperSource = `export * from "${c.absolutePath}";\nimport * as _mod from "${c.absolutePath}";\nexport default _mod.default ?? _mod;\n`;
+  const wrapperPath = join(clientOutDir, `_ssr_${i}.ts`);
+  mkdirSync(clientOutDir, { recursive: true });
+  writeFileSync(wrapperPath, wrapperSource);
+  ssrEntryPaths.push(wrapperPath);
+}
+
 const ssrResult = await Bun.build({
-  entrypoints: clientComponents.map((c) => c.absolutePath),
+  entrypoints: ssrEntryPaths,
   outdir: clientOutDir,
   target: "bun",
   naming: "[name].[ext]",
@@ -1580,17 +1593,23 @@ console.log(`Built SSR client bundles: ${clientOutDir}/`);
 // "next-themes/dist/index.mjs" where basename alone would be ambiguous.
 const ssrFileMap: Record<string, string> = {};
 
+// Map SSR outputs back to components via wrapper index
 for (const output of ssrResult.outputs) {
   const outputName = basename(output.path).replace(/\.[^.]+$/, "");
+  const match = outputName.match(/^_ssr_(\d+)$/);
 
-  // Find the client component whose entry produced this output
-  for (const c of clientComponents) {
-    const entryName = basename(c.absolutePath).replace(/\.[^.]+$/, "");
+  if (match) {
+    const index = parseInt(match[1], 10);
 
-    if (entryName === outputName) {
-      ssrFileMap[c.relativePath] = basename(output.path);
+    if (index < clientComponents.length) {
+      ssrFileMap[clientComponents[index].relativePath] = basename(output.path);
     }
   }
+}
+
+// Clean up SSR wrapper source files
+for (const wrapperPath of ssrEntryPaths) {
+  try { rmSync(wrapperPath); } catch {}
 }
 
 writeFileSync(

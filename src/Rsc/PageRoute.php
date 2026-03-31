@@ -18,6 +18,9 @@ class PageRoute
 
     protected ?Closure $viewDataCallback = null;
 
+    /** @var Closure|array<string, mixed>|null */
+    protected Closure|array|null $propsValue = null;
+
     protected ?string $nameValue = null;
 
 
@@ -64,6 +67,27 @@ class PageRoute
         $this->viewDataCallback = $callback;
 
         return $this;
+    }
+
+    /**
+     * Pass props to the React page component.
+     * Accepts a static array or a closure for dynamic data.
+     *
+     * @param  Closure|array<string, mixed>  $props
+     */
+    public function props(Closure|array $props): static
+    {
+        $this->propsValue = $props;
+
+        return $this;
+    }
+
+    /**
+     * @return Closure|array<string, mixed>|null
+     */
+    public function getProps(): Closure|array|null
+    {
+        return $this->propsValue;
     }
 
     public function name(string $name): static

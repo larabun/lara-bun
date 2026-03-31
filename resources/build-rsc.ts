@@ -721,7 +721,7 @@ for (const comp of serverComponents) {
 
   if (existsSync(routePhpPath)) {
     const routeSource = readFileSync(routePhpPath, "utf-8");
-    hasDynamicViewData = /viewData\s*\(\s*(fn|function)\s*\(/.test(routeSource);
+    hasDynamicViewData = /(?:viewData|props)\s*\(\s*(fn|function)\s*\(/.test(routeSource);
   }
 
   if (!usesPhp && !hasDynamicViewData) {

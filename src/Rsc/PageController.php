@@ -113,13 +113,26 @@ class PageController
 
             $config = require $path;
 
-            if ($config instanceof PageRoute && $config->getViewData()) {
-                $viewData = is_callable($config->getViewData())
-                    ? app()->call($config->getViewData(), $props)
-                    : $config->getViewData();
+            if (! $config instanceof PageRoute) {
+                continue;
+            }
+
+            // viewData → Blade view only (title, meta tags, etc.)
+            if ($config->getViewData()) {
+                $viewData = app()->call($config->getViewData(), $props);
 
                 foreach ($viewData as $key => $value) {
                     $response->withViewData($key, $value);
+                }
+            }
+
+            // props → React component props
+            if ($config->getProps() !== null) {
+                $pageProps = is_callable($config->getProps())
+                    ? app()->call($config->getProps(), $props)
+                    : $config->getProps();
+
+                foreach ($pageProps as $key => $value) {
                     $response->withProp($key, $value);
                 }
             }

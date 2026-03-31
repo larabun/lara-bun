@@ -700,7 +700,7 @@ for await (const path of glob.scan(sourceDir)) {
 }
 
 // ─── Validate dynamic pages have loading boundaries ─────────────────────────
-// Pages that use php() calls or have route.php with dynamic viewData (closure)
+// Pages that use php() calls or have route.php with dynamic props (closure)
 // are dynamic. Without a loading.tsx in their directory chain, there's no PPR
 // shell — users see a blank screen until the server responds.
 
@@ -715,16 +715,18 @@ for (const comp of serverComponents) {
   const source = readFileSync(comp.absolutePath, "utf-8");
   const usesPhp = /\bphp\s*[<(]/.test(source) || /\bawait\s+php\b/.test(source);
 
-  // Check for route.php with dynamic viewData (closure)
+  // Check for route.php with dynamic props (closure)
   const routePhpPath = join(pageDir, "route.php");
-  let hasDynamicViewData = false;
+  let hasDynamicProps = false;
 
   if (existsSync(routePhpPath)) {
     const routeSource = readFileSync(routePhpPath, "utf-8");
-    hasDynamicViewData = /(?:viewData|props)\s*\(\s*(fn|function)\s*\(/.test(routeSource);
+    // Only check props() closures — viewData() is Blade-only and doesn't
+    // affect React rendering, so it doesn't need a loading boundary.
+    hasDynamicProps = /props\s*\(\s*(fn|function)\s*\(/.test(routeSource);
   }
 
-  if (!usesPhp && !hasDynamicViewData) {
+  if (!usesPhp && !hasDynamicProps) {
     continue;
   }
 
@@ -749,7 +751,7 @@ for (const comp of serverComponents) {
   }
 
   if (!hasLoading) {
-    const reason = usesPhp ? "uses php() calls" : "has route.php with dynamic viewData";
+    const reason = usesPhp ? "uses php() calls" : "has route.php with dynamic props()";
     dynamicPageErrors.push(
       `  ${comp.name} — ${reason} but has no loading.tsx in its directory chain`
     );

@@ -140,6 +140,22 @@ class CreatePost {
 }
 ```
 
+### Passing Data via route.php
+```php
+// props() → React component props
+// viewData() → Blade view only (title, meta)
+return PageRoute::make()
+    ->props(fn () => [
+        'intended_url' => redirect()->intended(route('dashboard'))->getTargetUrl(),
+    ])
+    ->viewData(fn () => [
+        'title' => 'Login',
+    ]);
+```
+- `props()` accepts a static array or closure
+- Closure makes the page dynamic — requires `loading.tsx`
+- `viewData()` is for Blade only (title, meta tags) — never sent to React
+
 ### Inline Environment Variables
 - `PUBLIC_*` env vars are inlined into browser bundles at build time
 - Non-prefixed vars stay server-side only

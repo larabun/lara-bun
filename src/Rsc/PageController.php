@@ -114,10 +114,13 @@ class PageController
             $config = require $path;
 
             if ($config instanceof PageRoute && $config->getViewData()) {
-                $viewData = app()->call($config->getViewData(), $props);
+                $viewData = is_callable($config->getViewData())
+                    ? app()->call($config->getViewData(), $props)
+                    : $config->getViewData();
 
                 foreach ($viewData as $key => $value) {
                     $response->withViewData($key, $value);
+                    $response->withProp($key, $value);
                 }
             }
         }

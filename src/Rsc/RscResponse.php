@@ -127,6 +127,13 @@ class RscResponse implements Responsable
         return $this;
     }
 
+    public function withProp(string $key, mixed $value): static
+    {
+        $this->props[$key] = $value;
+
+        return $this;
+    }
+
     public function version(string $version): static
     {
         $this->version = $version;

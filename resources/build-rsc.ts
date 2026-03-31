@@ -699,6 +699,76 @@ for await (const path of glob.scan(sourceDir)) {
   }
 }
 
+// ─── Validate dynamic pages have loading boundaries ─────────────────────────
+// Pages that use php() calls or have route.php with dynamic viewData (closure)
+// are dynamic. Without a loading.tsx in their directory chain, there's no PPR
+// shell — users see a blank screen until the server responds.
+
+const dynamicPageErrors: string[] = [];
+
+for (const comp of serverComponents) {
+  if (!comp.name.startsWith("app/") || !comp.name.endsWith("/page")) {
+    continue;
+  }
+
+  const pageDir = dirname(comp.absolutePath);
+  const source = readFileSync(comp.absolutePath, "utf-8");
+  const usesPhp = /\bphp\s*[<(]/.test(source) || /\bawait\s+php\b/.test(source);
+
+  // Check for route.php with dynamic viewData (closure)
+  const routePhpPath = join(pageDir, "route.php");
+  let hasDynamicViewData = false;
+
+  if (existsSync(routePhpPath)) {
+    const routeSource = readFileSync(routePhpPath, "utf-8");
+    hasDynamicViewData = /viewData\s*\(\s*(fn|function)\s*\(/.test(routeSource);
+  }
+
+  if (!usesPhp && !hasDynamicViewData) {
+    continue;
+  }
+
+  // Walk up from page directory to app/ looking for loading.tsx
+  let hasLoading = false;
+  let dir = pageDir;
+  const appRoot = join(sourceDir, "app");
+
+  while (dir.startsWith(appRoot)) {
+    for (const ext of ["tsx", "ts", "jsx", "js"]) {
+      if (existsSync(join(dir, `loading.${ext}`))) {
+        hasLoading = true;
+        break;
+      }
+    }
+
+    if (hasLoading) break;
+
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  if (!hasLoading) {
+    const reason = usesPhp ? "uses php() calls" : "has route.php with dynamic viewData";
+    dynamicPageErrors.push(
+      `  ${comp.name} — ${reason} but has no loading.tsx in its directory chain`
+    );
+  }
+}
+
+if (dynamicPageErrors.length > 0) {
+  console.error("\nError: Dynamic pages must have a loading.tsx boundary for PPR.\n");
+  console.error("Add a loading.tsx file in the page's directory (or a parent directory)");
+  console.error("to provide a fallback UI while the server fetches data.\n");
+
+  for (const err of dynamicPageErrors) {
+    console.error(err);
+  }
+
+  console.error("");
+  process.exit(1);
+}
+
 // ─── Discover Package Client Components ─────────────────────────────────────
 
 // Scan the package's resources/js/ directory for "use client" files.

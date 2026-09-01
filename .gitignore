@@ -10,4 +10,5 @@ composer.lock
 bootstrap/rsc/vite
 bootstrap/rsc/vite-test
 bootstrap/rsc/validate-*
+bootstrap/rsc/cfg-*
 public/build/rsc-vite

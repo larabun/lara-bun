@@ -32,28 +32,38 @@ const assetsBaseUrl = process.env.BUN_RSC_ASSETS_URL || '/build/rsc-vite/'
 // React Compiler is opt-in BY INSTALLATION — no config flag. If the toolchain
 // is present in the app's node_modules it is wired automatically; otherwise it
 // is omitted. (React 19 needs no react-compiler-runtime.)
-export const REACT_COMPILER_PACKAGES = [
-  'babel-plugin-react-compiler',
-  '@vitejs/plugin-react',
-  '@rolldown/plugin-babel',
+export const USER_CONFIG_NAMES = [
+  'vite.rsc.config.ts',
+  'vite.rsc.config.mts',
+  'vite.rsc.config.js',
+  'vite.rsc.config.mjs',
 ] as const
 
 /**
- * Which of the React Compiler packages the app has installed. The compiler
- * runs only with all three: the Babel plugin does the work, but it hooks into
- * the react() layer via @rolldown/plugin-babel, and rsc() alone has no such
- * layer.
+ * Find the app's own Vite config for the RSC build, if it has one.
+ *
+ * Anything an app wants in this build — the React Compiler, Tailwind, extra
+ * aliases — is declared there and merged in. The engine takes no view on which
+ * plugins an app should use and detects nothing.
  */
-export function detectReactCompiler(root: string): { enabled: boolean; missing: string[] } {
-  const missing = REACT_COMPILER_PACKAGES.filter(
-    (pkg) => !existsSync(join(root, 'node_modules', pkg)),
-  )
+export function findUserViteConfig(root: string): string | null {
+  const explicit = process.env.BUN_RSC_VITE_CONFIG
 
-  return { enabled: missing.length === 0, missing }
+  if (explicit) {
+    const path = resolve(explicit)
+
+    return existsSync(path) ? path : null
+  }
+
+  for (const name of USER_CONFIG_NAMES) {
+    const path = join(root, name)
+    if (existsSync(path)) return path
+  }
+
+  return null
 }
 
-const reactCompiler = detectReactCompiler(projectRoot)
-const reactCompilerEnabled = reactCompiler.enabled
+const userViteConfig = findUserViteConfig(projectRoot)
 
 interface Component {
   name: string // route-relative key, e.g. "app/page", "app/layout"
@@ -485,19 +495,26 @@ function generateViteConfig(): string {
   const ssrEntry = join(genDir, 'entry.ssr.tsx')
   const browserEntry = join(genDir, 'entry.browser.tsx')
 
-  // React Compiler (when installed) is a Babel pass wired into the react()
-  // layer — never into rsc(), which doesn't transform JSX. rsc() stays first.
-  const imports = reactCompilerEnabled
-    ? "import rsc from '@vitejs/plugin-rsc'\nimport react, { reactCompilerPreset } from '@vitejs/plugin-react'\nimport babel from '@rolldown/plugin-babel'\nimport { defineConfig } from 'vite'"
+  const imports = userViteConfig
+    ? `import rsc from '@vitejs/plugin-rsc'\nimport { defineConfig, mergeConfig } from 'vite'\nimport userConfig from ${JSON.stringify(userViteConfig)}`
     : "import rsc from '@vitejs/plugin-rsc'\nimport { defineConfig } from 'vite'"
 
-  const plugins = reactCompilerEnabled
-    ? 'rsc(), react(), babel({ include: /\\.[jt]sx?$/, presets: [reactCompilerPreset()] })'
-    : 'rsc()'
+  // With an app config present, the engine keeps the structural keys it owns
+  // (entries, output dirs, base) and appends the app's plugins after rsc(),
+  // which must lead: a react()/babel layer transforms what rsc() has already
+  // split into client and server graphs.
+  const exportStatement = userViteConfig
+    ? `export default defineConfig(async (env) => {
+  const user = typeof userConfig === 'function' ? await userConfig(env) : (userConfig ?? {})
+  const merged = mergeConfig(user, base)
+  merged.plugins = [rsc(), ...(user.plugins ?? [])]
+  return merged
+})`
+    : 'export default defineConfig({ ...base, plugins: [rsc()] })'
 
   return `${imports}
 
-export default defineConfig({
+const base = {
   // Public URL for browser-facing client assets (served from public/ by the
   // web server — never through PHP).
   base: ${JSON.stringify(assetsBaseUrl)},
@@ -506,7 +523,6 @@ export default defineConfig({
   // symlinked (local dev / monorepo), else "use client" components SSR against a
   // second React copy and hooks throw (ReactSharedInternals dispatcher is null).
   resolve: { dedupe: ['react', 'react-dom', 'react-server-dom-webpack', '@vitejs/plugin-rsc'] },
-  plugins: [${plugins}],
   build: { emptyOutDir: true },
   environments: {
     // Server bundles — stay under the (non-public) out dir.
@@ -515,7 +531,9 @@ export default defineConfig({
     // Client bundle — emitted into public/ so the web server serves it directly.
     client: { build: { outDir: ${JSON.stringify(publicAssetsDir)}, emptyOutDir: true, rollupOptions: { input: { index: ${JSON.stringify(browserEntry)} } } } },
   },
-})
+}
+
+${exportStatement}
 `
 }
 
@@ -618,11 +636,8 @@ function main(): void {
   discover(appDir)
   log(`Discovered ${components.size} route components:`, [...components.keys()].join(', '))
 
-  if (reactCompilerEnabled) {
-    log('React Compiler: enabled')
-  } else if (reactCompiler.missing.length < REACT_COMPILER_PACKAGES.length) {
-    // Partially installed — say what is missing rather than silently skipping.
-    log('React Compiler not enabled — also install: ' + reactCompiler.missing.join(', '))
+  if (userViteConfig) {
+    log('Using app Vite config: ' + userViteConfig)
   }
 
   const loadingErrors = validateLoadingBoundaries()

@@ -90,10 +90,10 @@ beforeAll(async () => {
     throw new Error(`fixture build failed (${code}):\n${await new Response(proc.stderr).text()}`)
   }
 
-  // The worker runs the bundle with NODE_ENV=production; React's Flight adds a
-  // debug channel outside production, so match the real runtime here.
-  process.env.NODE_ENV = 'production'
-
+  // Deliberately not forcing NODE_ENV=production here. It is shared with every
+  // other test file in the process, and React only exports act() from its
+  // development build — pinning production breaks the useForm suite depending
+  // on file order. The assertions below hold in either build.
   engine = await import(bundlePath)
   engine.installPhpFn(async (fn: string, ...args: unknown[]) => {
     if (fn === 'getUser') return { display: 'ramon' }
@@ -405,56 +405,91 @@ describe('loading.tsx validation', () => {
   })
 })
 
-describe('react compiler detection', () => {
-  /** Build a fake app root containing only the given node_modules packages. */
-  function rootWith(packages: string[]): string {
-    const dir = mkdtempSync(join(tmpdir(), 'larabun-compiler-'))
-
-    for (const pkg of packages) {
-      mkdirSync(join(dir, 'node_modules', pkg), { recursive: true })
-    }
-
-    return dir
+describe('app vite config', () => {
+  /**
+   * The engine has no opinion about which plugins an app uses — the React
+   * Compiler, Tailwind, anything else. An app declares them in its own
+   * vite.rsc.config and the engine merges them in.
+   */
+  async function engineModule() {
+    return import(join(packageRoot, 'resources/build-rsc-vite.ts'))
   }
 
-  test('enables the compiler only when all three packages are installed', async () => {
-    const { detectReactCompiler, REACT_COMPILER_PACKAGES } = await import(
-      join(packageRoot, 'resources/build-rsc-vite.ts')
+  test('finds a vite.rsc.config in the app root', async () => {
+    const { findUserViteConfig } = await engineModule()
+    const dir = mkdtempSync(join(tmpdir(), 'larabun-cfg-'))
+    writeFileSync(join(dir, 'vite.rsc.config.ts'), 'export default {}')
+
+    expect(findUserViteConfig(dir)).toBe(join(dir, 'vite.rsc.config.ts'))
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('returns null when the app has no config', async () => {
+    const { findUserViteConfig } = await engineModule()
+    const dir = mkdtempSync(join(tmpdir(), 'larabun-cfg-'))
+
+    expect(findUserViteConfig(dir)).toBeNull()
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('applies the app plugins during the build', async () => {
+    // Proves the merge actually reaches the build rather than just resolving a
+    // path: a plugin that only the app config supplies must transform output.
+    const marker = 'LARABUN_USER_PLUGIN_RAN'
+    const app = mkdtempSync(join(tmpdir(), 'larabun-cfgapp-'))
+    const buildDir = mkdtempSync(join(packageRoot, 'bootstrap/rsc/cfg-'))
+    const configPath = join(buildDir, 'vite.rsc.config.mjs')
+
+    mkdirSync(join(app, 'app'), { recursive: true })
+    writeFileSync(
+      join(app, 'app/layout.tsx'),
+      'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
     )
-    const dir = rootWith([...REACT_COMPILER_PACKAGES])
-
-    expect(detectReactCompiler(dir).enabled).toBe(true)
-    expect(detectReactCompiler(dir).missing).toEqual([])
-
-    rmSync(dir, { recursive: true, force: true })
-  })
-
-  test('stays off and names what is missing when only the babel plugin is present', async () => {
-    const { detectReactCompiler } = await import(join(packageRoot, 'resources/build-rsc-vite.ts'))
-    const dir = rootWith(['babel-plugin-react-compiler'])
-    const result = detectReactCompiler(dir)
-
-    // The Babel plugin alone does nothing: it hooks into the react() layer,
-    // and rsc() on its own has no such layer.
-    expect(result.enabled).toBe(false)
-    expect(result.missing).toContain('@vitejs/plugin-react')
-    expect(result.missing).toContain('@rolldown/plugin-babel')
-
-    rmSync(dir, { recursive: true, force: true })
-  })
-
-  test('stays off for an app with none of them', async () => {
-    const { detectReactCompiler, REACT_COMPILER_PACKAGES } = await import(
-      join(packageRoot, 'resources/build-rsc-vite.ts')
+    writeFileSync(join(app, 'app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
+    writeFileSync(
+      configPath,
+      `export default {
+  plugins: [{
+    name: 'larabun-marker',
+    transform(code, id) {
+      if (id.includes('entry.browser')) {
+        return code + '\\nglobalThis.__marker = "${marker}";\\n'
+      }
+      return null
+    },
+  }],
+}
+`,
     )
-    const dir = rootWith([])
-    const result = detectReactCompiler(dir)
 
-    expect(result.enabled).toBe(false)
-    expect(result.missing).toHaveLength(REACT_COMPILER_PACKAGES.length)
+    const proc = Bun.spawn(['bun', join(packageRoot, 'resources/build-rsc-vite.ts')], {
+      cwd: packageRoot,
+      env: {
+        ...process.env,
+        LARA_BUN_PROJECT_ROOT: packageRoot,
+        BUN_RSC_SOURCE_DIR: app,
+        BUN_RSC_OUT_DIR: buildDir,
+        BUN_RSC_ASSETS_DIR: join(buildDir, 'public'),
+        BUN_RSC_VITE_CONFIG: configPath,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
 
-    rmSync(dir, { recursive: true, force: true })
-  })
+    expect(await proc.exited).toBe(0)
+
+    const assets = join(buildDir, 'public/assets')
+    const ran = readdirSync(assets).some((f) =>
+      readFileSync(join(assets, f), 'utf-8').includes(marker),
+    )
+
+    expect(ran).toBe(true)
+
+    rmSync(app, { recursive: true, force: true })
+    rmSync(buildDir, { recursive: true, force: true })
+  }, 120_000)
 })
 
 describe('form data serialization', () => {

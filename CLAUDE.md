@@ -28,11 +28,14 @@ Two suites, both run from the package root:
 - **PHP (Pest + orchestra/testbench)** — the Laravel layer, with BunBridge mocked.
   - All: `vendor/bin/pest --compact`
   - One file: `vendor/bin/pest tests/Feature/RouteInterceptionTest.php`
-- **JS (bun:test)** — the vite RSC engine itself, which the PHP suite never loads.
+- **JS (bun:test)** — the vite RSC engine and the client hooks, which the PHP suite never loads.
   Builds `tests/fixtures/rsc-app` and asserts on what the generated entry renders:
   layout/slot/intercept composition, Suspense streaming order, metadata, client
   references, server actions, and the loading.tsx build validation.
   - `bun test tests/js` (or `bun run test`)
+  - `useForm` runs against a real React renderer under happy-dom. Do not force
+    `NODE_ENV=production` process-wide in a test file — React only exports
+    `act()` from its development build, and the suites share a process.
 
 Add engine-behaviour tests to the JS suite — mocking BunBridge in Pest cannot
 catch a rendering regression.

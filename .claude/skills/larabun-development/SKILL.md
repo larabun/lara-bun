@@ -192,8 +192,30 @@ The `stream-start` frame MUST be read eagerly from the main socket before enteri
   `public/build/rsc-vite` and is served directly, never through PHP
 - The plugin handles directive splitting, client references and CSS; React 19
   hoists the `<title>`/`<meta>` rendered inside the tree
-- React Compiler switches on automatically when the app installs
-  `babel-plugin-react-compiler`, `@vitejs/plugin-react` and `@rolldown/plugin-babel`
+### Extending the build
+
+The engine owns the structural config — entries, output dirs, `base` — and has
+no opinion about plugins. An app adds its own in `vite.rsc.config.ts` at the
+project root (or point `BUN_RSC_VITE_CONFIG` anywhere), and they are merged in
+after `rsc()`:
+
+```ts
+// vite.rsc.config.ts
+import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [
+    react({ babel: { plugins: ['babel-plugin-react-compiler'] } }),
+  ],
+})
+```
+
+That is all the React Compiler needs — install `@vitejs/plugin-react` and
+`babel-plugin-react-compiler` in the app and it runs. The same file is where
+Tailwind, extra aliases, or any other plugin belongs. `rsc()` always runs
+first, since a `react()`/babel layer has to transform what it has already
+split into client and server graphs.
 
 ### loading.tsx requirement
 

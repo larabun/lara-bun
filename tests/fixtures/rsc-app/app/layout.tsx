@@ -4,7 +4,7 @@ import { Nav } from '../Nav'
 
 export const metadata = { title: { template: '%s · LaraBun', default: 'LaraBun Docs' }, description: 'default description' }
 
-export default function Layout({ children }: { children: ReactNode }) {
+export default function Layout({ children, modal }: { children: ReactNode; modal?: ReactNode }) {
   return (
     <html lang="en">
       <head>
@@ -12,6 +12,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       </head>
       <body>
         <Nav />
+        {modal}
         {children}
       </body>
     </html>

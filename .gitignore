@@ -8,4 +8,6 @@ composer.lock
 /.rsc-vite-gen
 /dist
 bootstrap/rsc/vite
+bootstrap/rsc/vite-test
+bootstrap/rsc/validate-*
 public/build/rsc-vite

@@ -15,7 +15,7 @@ LaraBun bridges Laravel (PHP) and Bun (JavaScript) via Unix sockets for React Se
 ## Key Conventions
 
 - PHP follows Laravel conventions with Pint formatting
-- TypeScript uses Bun's bundler (not Vite) for RSC builds
+- RSC builds run through Vite + @vitejs/plugin-rsc (`resources/build-rsc-vite.ts`)
 - Client components use `"use client"` directive
 - Server actions use `"use server"` directive
 - Socket communication uses a binary frame protocol (4-byte length + JSON)
@@ -23,10 +23,19 @@ LaraBun bridges Laravel (PHP) and Bun (JavaScript) via Unix sockets for React Se
 
 ## Testing
 
-- The package has a standalone Pest suite (orchestra/testbench). Run it from the package root:
-- Run all tests: `vendor/bin/pest --compact`
-- Run specific: `vendor/bin/pest tests/Feature/RouteInterceptionTest.php`
-- Tests use Mockery for BunBridge mocking
+Two suites, both run from the package root:
+
+- **PHP (Pest + orchestra/testbench)** — the Laravel layer, with BunBridge mocked.
+  - All: `vendor/bin/pest --compact`
+  - One file: `vendor/bin/pest tests/Feature/RouteInterceptionTest.php`
+- **JS (bun:test)** — the vite RSC engine itself, which the PHP suite never loads.
+  Builds `tests/fixtures/rsc-app` and asserts on what the generated entry renders:
+  layout/slot/intercept composition, Suspense streaming order, metadata, client
+  references, server actions, and the loading.tsx build validation.
+  - `bun test tests/js` (or `bun run test`)
+
+Add engine-behaviour tests to the JS suite — mocking BunBridge in Pest cannot
+catch a rendering regression.
 
 ## Development Setup
 

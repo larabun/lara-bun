@@ -417,6 +417,90 @@ export default defineConfig({
 `
 }
 
+// ── Validation ───────────────────────────────────────────────────────────────
+
+/**
+ * Extract the body of a file's default-exported function.
+ *
+ * Only the page component's OWN body matters for the loading.tsx rule — sibling
+ * components declared in the same file render behind their own boundaries, so
+ * their php() calls do not block the route's shell.
+ */
+function defaultExportBody(source: string): string | null {
+  const match = source.match(/export\s+default\s+(?:async\s+)?function[^(]*\([^)]*\)\s*{/)
+  if (!match) return null
+
+  // Walk from the opening brace to its match, ignoring braces in strings.
+  let depth = 0
+  const start = match.index! + match[0].length - 1
+
+  for (let i = start; i < source.length; i++) {
+    const ch = source[i]
+    if (ch === '{') depth++
+    else if (ch === '}' && --depth === 0) return source.slice(start, i + 1)
+  }
+
+  return null
+}
+
+/** Does the page component's own render await php()? */
+function pageBlocksOnPhp(source: string): boolean {
+  const isAsyncDefault = /export\s+default\s+async\s+function/.test(source)
+  if (!isAsyncDefault) return false
+
+  const body = defaultExportBody(source)
+
+  return body !== null && /\bphp\s*[<(]|\bawait\s+php\b/.test(body)
+}
+
+/** Walk up from the page directory to app/ looking for a loading file. */
+function hasLoadingInChain(pageDir: string): boolean {
+  let dir = pageDir
+
+  while (dir.startsWith(appDir)) {
+    if (findRouteFile(dir, 'loading')) return true
+    if (dir === appDir) break
+    dir = dirname(dir)
+  }
+
+  return false
+}
+
+/**
+ * A route needs loading.tsx only when the PAGE ITSELF blocks — an async default
+ * export awaiting php(), or route.php resolving props() through a closure. Both
+ * suspend before anything can paint, so without a boundary the user sees a
+ * blank screen. A page whose slow work lives in children behind their own
+ * <Suspense> already paints a shell and needs nothing.
+ */
+function validateLoadingBoundaries(): string[] {
+  const errors: string[] = []
+
+  for (const c of components.values()) {
+    if (!c.name.endsWith('/page') && c.name !== 'app/page') continue
+
+    const pageDir = dirname(c.absPath)
+    const source = readFileSync(c.absPath, 'utf-8')
+
+    let reason: string | null = null
+
+    if (pageBlocksOnPhp(source)) {
+      reason = 'its default export awaits php()'
+    } else {
+      const routePhp = join(pageDir, 'route.php')
+      if (existsSync(routePhp) && /props\s*\(\s*(fn|function)\s*\(/.test(readFileSync(routePhp, 'utf-8'))) {
+        reason = 'route.php resolves props() through a closure'
+      }
+    }
+
+    if (reason && !hasLoadingInChain(pageDir)) {
+      errors.push(`  ${c.name} — ${reason}, but has no loading.tsx in its directory chain`)
+    }
+  }
+
+  return errors
+}
+
 // ── Run ────────────────────────────────────────────────────────────────────
 
 if (!existsSync(appDir)) {
@@ -431,6 +515,19 @@ if (reactCompilerEnabled) {
   log('React Compiler: enabled')
 } else if (existsSync(join(projectRoot, 'node_modules/babel-plugin-react-compiler'))) {
   log('React Compiler found but not enabled — also install @vitejs/plugin-react and @rolldown/plugin-babel to run it.')
+}
+
+const loadingErrors = validateLoadingBoundaries()
+
+if (loadingErrors.length) {
+  log('')
+  log('Error: a page that blocks before it can paint needs a loading.tsx boundary.')
+  log('')
+  for (const e of loadingErrors) log(e)
+  log('')
+  log('Add loading.tsx in the page directory (or a parent), or move the slow work')
+  log('into a child component wrapped in its own <Suspense> so the page can paint.')
+  process.exit(1)
 }
 
 if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true })

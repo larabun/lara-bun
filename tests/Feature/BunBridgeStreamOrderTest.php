@@ -10,8 +10,8 @@
  * before any callback processing can delay it.
  */
 
-use LaraBun\BunBridge;
-use LaraBun\Rsc\Header;
+use LaravelRsc\BunBridge;
+use LaravelRsc\Rsc\Header;
 
 test('rscStream yields stream-start before stream chunks', function () {
     $bridge = Mockery::mock(BunBridge::class)->makePartial();

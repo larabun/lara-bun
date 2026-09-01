@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\Support\BunBinary;
+use LaravelRsc\Support\BunBinary;
 
 test('releaseAsset maps macOS arm64 to the darwin aarch64 build', function () {
     expect(BunBinary::releaseAsset('Darwin', 'arm64'))

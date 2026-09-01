@@ -1,10 +1,9 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use LaraBun\BunBridge;
-use LaraBun\Rsc\Header;
-use LaraBun\Rsc\PageDefinition;
-use LaraBun\Rsc\PageRouteRegistrar;
+use LaravelRsc\BunBridge;
+use LaravelRsc\Rsc\Header;
+use LaravelRsc\Rsc\PageDefinition;
+use LaravelRsc\Rsc\PageRouteRegistrar;
 
 beforeEach(function () {
     $this->bridgeMock = Mockery::mock(BunBridge::class);

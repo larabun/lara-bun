@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\Rsc\RscResponse;
+use LaravelRsc\Rsc\RscResponse;
 
 test('layout method returns the response instance for chaining', function () {
     $response = new RscResponse('Dashboard');

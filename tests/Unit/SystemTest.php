@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\Support\System;
+use LaravelRsc\Support\System;
 
 test('cpuCount returns at least one core', function () {
     expect(System::cpuCount())->toBeInt()->toBeGreaterThanOrEqual(1);

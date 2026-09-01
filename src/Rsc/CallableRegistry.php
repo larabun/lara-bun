@@ -1,17 +1,20 @@
 <?php
 
-namespace LaraBun\Rsc;
+namespace LaravelRsc\Rsc;
 
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\Response;
 use Illuminate\Pipeline\Pipeline;
+use Illuminate\Routing\Attributes\Controllers\Middleware;
+use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
-use LaraBun\Rsc\Attributes\Authenticated;
-use LaraBun\Rsc\Attributes\Can;
+use LaravelRsc\Rsc\Attributes\Authenticated;
+use LaravelRsc\Rsc\Attributes\Can;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
@@ -171,7 +174,7 @@ class CallableRegistry
     private function resolveAttributes(string $class, string $method): array
     {
         $refClass = new ReflectionClass($class);
-        $middlewareAttribute = \Illuminate\Routing\Attributes\Controllers\Middleware::class;
+        $middlewareAttribute = Middleware::class;
 
         $authenticated = array_map(
             fn (\ReflectionAttribute $a): Authenticated => $a->newInstance(),
@@ -223,13 +226,13 @@ class CallableRegistry
 
         // Resolve middleware alias (e.g. 'auth' → Authenticate::class)
         // through the router so Pipeline gets the actual class, not the helper function.
-        $router = $this->container->make(\Illuminate\Routing\Router::class);
+        $router = $this->container->make(Router::class);
         $resolved = $router->resolveMiddleware([$middleware]);
 
         (new Pipeline($this->container))
             ->send($request)
             ->through($resolved)
-            ->then(fn () => new \Illuminate\Http\Response('', 200));
+            ->then(fn () => new Response('', 200));
     }
 
     public function hasCallables(): bool

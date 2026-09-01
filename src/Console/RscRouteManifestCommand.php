@@ -1,10 +1,10 @@
 <?php
 
-namespace LaraBun\Console;
+namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
-use LaraBun\Rsc\PageRoute;
-use LaraBun\Rsc\PageScanner;
+use LaravelRsc\Rsc\PageRoute;
+use LaravelRsc\Rsc\PageScanner;
 
 class RscRouteManifestCommand extends Command
 {

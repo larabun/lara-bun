@@ -9,7 +9,7 @@
  * These drive the real (unmocked) BunBridge against in-process socket pairs.
  */
 
-use LaraBun\BunBridge;
+use LaravelRsc\BunBridge;
 
 function bridgeFrame(string $json): string
 {

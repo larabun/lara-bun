@@ -1,6 +1,6 @@
 <?php
 
-namespace LaraBun\Rsc;
+namespace LaravelRsc\Rsc;
 
 use Closure;
 
@@ -22,7 +22,6 @@ class PageRoute
     protected Closure|array|null $propsValue = null;
 
     protected ?string $nameValue = null;
-
 
     protected ?string $domainValue = null;
 

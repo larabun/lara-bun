@@ -1,5 +1,5 @@
 // Vite-engine client bootstrap. Uses @vitejs/plugin-rsc's browser runtime as
-// the Flight deserializer + action encoder, and drives LaraBun's engine-agnostic
+// the Flight deserializer + action encoder, and drives the package's engine-agnostic
 // navigate.ts SPA engine (Link, prefetch, popstate) through it. This replaces
 // the bun engine's createRscApp + the hand-rolled webpack shim — the plugin
 // resolves client references itself.
@@ -63,7 +63,7 @@ export async function createViteRscApp(container: Document | Element = document)
   (window as unknown as { __rsc_navigate: typeof navigate }).__rsc_navigate = navigate;
   (window as unknown as { __rsc_prefetch: typeof prefetch }).__rsc_prefetch = prefetch;
 
-  // Hydrate from LaraBun's RSC endpoint (same url + X-RSC, no version header).
+  // Hydrate from the RSC endpoint (same url + X-RSC, no version header).
   const res = await fetch(window.location.href, { headers: { "X-RSC": "1" } });
 
   // Seed the SPA engine with the build this page was served from, so a

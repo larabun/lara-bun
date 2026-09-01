@@ -1,11 +1,11 @@
 <?php
 
-namespace LaraBun\Rsc;
+namespace LaravelRsc\Rsc;
 
 use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Http\Request;
-use LaraBun\BunBridge;
-use LaraBun\BunServiceProvider;
+use LaravelRsc\BunBridge;
+use LaravelRsc\LaravelRscServiceProvider;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -232,7 +232,7 @@ class RscResponse implements Responsable
     protected function toStreamedHtmlResponse(string $version, Request $request): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $nonce = BunServiceProvider::cspNonce();
+        $nonce = LaravelRscServiceProvider::cspNonce();
         $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $nonce);
 
         // First yield: {clientChunks, metadata}

@@ -1,9 +1,9 @@
 <?php
 
-namespace LaraBun\Rsc;
+namespace LaravelRsc\Rsc;
 
 use Illuminate\Routing\Router;
-use LaraBun\Http\Middleware\ServeStaticRsc;
+use LaravelRsc\Http\Middleware\ServeStaticRsc;
 
 class PageRouteRegistrar
 {

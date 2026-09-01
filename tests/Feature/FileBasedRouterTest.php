@@ -1,12 +1,9 @@
 <?php
 
-use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\Route;
-use LaraBun\Http\Middleware\ServeStaticRsc;
-use LaraBun\Rsc\PageController;
-use LaraBun\Rsc\PageDefinition;
-use LaraBun\Rsc\PageRouteRegistrar;
-use LaraBun\Rsc\PageScanner;
+use LaravelRsc\Http\Middleware\ServeStaticRsc;
+use LaravelRsc\Rsc\PageDefinition;
+use LaravelRsc\Rsc\PageRouteRegistrar;
+use LaravelRsc\Rsc\PageScanner;
 
 test('registers a static route for root page', function () {
     $registrar = new PageRouteRegistrar(app('router'));
@@ -120,7 +117,7 @@ test('applies route.php middleware', function () {
 
     file_put_contents($configDir.'/route.php', <<<'PHP'
 <?php
-use LaraBun\Rsc\PageRoute;
+use LaravelRsc\Rsc\PageRoute;
 
 return PageRoute::make()->middleware(['auth', 'verified']);
 PHP);
@@ -157,14 +154,14 @@ test('merges directory-level and page-level middleware', function () {
 
     file_put_contents($dirConfigDir.'/route.php', <<<'PHP'
 <?php
-use LaraBun\Rsc\PageRoute;
+use LaravelRsc\Rsc\PageRoute;
 
 return PageRoute::make()->middleware(['auth']);
 PHP);
 
     file_put_contents($pageConfigDir.'/route.php', <<<'PHP'
 <?php
-use LaraBun\Rsc\PageRoute;
+use LaravelRsc\Rsc\PageRoute;
 
 return PageRoute::make()->middleware(['verified']);
 PHP);

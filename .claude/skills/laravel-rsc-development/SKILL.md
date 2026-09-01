@@ -1,12 +1,12 @@
 ---
-name: larabun-development
-description: "Develops LaraBun applications — React Server Components, file-based routing, Forms, useForm, server actions, rpc() callables, optimistic updates, streaming, Suspense, and the build pipeline."
+name: laravel-rsc-development
+description: "Develops Laravel RSC applications — React Server Components, file-based routing, Forms, useForm, server actions, rpc() callables, optimistic updates, streaming, Suspense, and the build pipeline."
 license: MIT
 metadata:
-  author: larabun
+  author: laravel-rsc
 ---
 
-# RSC Development for LaraBun
+# RSC Development for Laravel RSC
 
 ## When to Apply
 
@@ -72,7 +72,7 @@ export async function addTodo(formData: FormData) {
 ### Form Component
 ```tsx
 "use client";
-import { Form } from "lara-bun/router";
+import { Form } from "laravel-rsc/router";
 import { addTodo } from "./actions";
 
 type FormValues = { title: string };
@@ -95,7 +95,7 @@ export default function TodoForm() {
 ### useForm Hook
 ```tsx
 "use client";
-import { useForm } from "lara-bun/router";
+import { useForm } from "laravel-rsc/router";
 import { updateProfile } from "./actions";
 
 const { data, setData, errors, error, pending, recentlySuccessful, submit } =
@@ -186,7 +186,7 @@ The `stream-start` frame MUST be read eagerly from the main socket before enteri
 
 `resources/vite.ts` — the `rscRoutes()` Vite plugin (`resources/build-rsc-vite.ts` is the thin CLI that picks a config and runs Vite):
 - Discovers `page`/`layout`/`loading`/`default` route components under `app/`
-- Generates the three plugin entries (rsc / ssr / browser) carrying LaraBun's
+- Generates the three plugin entries (rsc / ssr / browser) carrying Laravel RSC's
   `buildElement` composition and the worker's render contract
 - Server bundles land in `bootstrap/rsc/vite`; the browser bundle goes to
   `public/build/rsc-vite` and is served directly, never through PHP
@@ -199,7 +199,7 @@ project root (or point `BUN_RSC_VITE_CONFIG` anywhere):
 
 ```ts
 // vite.rsc.config.ts
-import { rscRoutes } from 'lara-bun/vite'
+import { rscRoutes } from 'laravel-rsc/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
@@ -265,7 +265,7 @@ Tunable with `BUN_RSC_SHELL_TTL` and `BUN_RSC_SHELL_SWR`. Two caveats:
 
 ### Cache invalidation
 
-Shells are tagged `larabun-shell` via `Cache-Tag` (Cloudflare) and
+Shells are tagged `laravel-rsc-shell` via `Cache-Tag` (Cloudflare) and
 `Surrogate-Key` (Fastly/Varnish), so a deploy hook can purge every shell at
 once instead of waiting out the TTL. **Purge on deploy** — a shell references
 hashed asset URLs, and once those 404 the client never boots to fill the hole.

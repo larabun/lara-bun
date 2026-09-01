@@ -1,6 +1,6 @@
 <?php
 
-namespace LaraBun\Console;
+namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
 use ReflectionClass;

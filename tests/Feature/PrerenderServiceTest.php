@@ -4,9 +4,9 @@
 // the inputs rsc:build iterates to decide what gets prerendered.
 
 use Illuminate\Support\Facades\Route;
-use LaraBun\Rsc\PageDefinition;
-use LaraBun\Rsc\PageRouteRegistrar;
-use LaraBun\Rsc\PrerenderService;
+use LaravelRsc\Rsc\PageDefinition;
+use LaravelRsc\Rsc\PageRouteRegistrar;
+use LaravelRsc\Rsc\PrerenderService;
 
 beforeEach(function () {
     $this->prerender = new PrerenderService;
@@ -27,7 +27,7 @@ afterEach(function () {
 function staticPathsConfig(string $dir, string $name, string $paths): string
 {
     $path = $dir.'/'.$name.'.php';
-    file_put_contents($path, "<?php\n\nreturn LaraBun\\Rsc\\PageRoute::make()->staticPaths({$paths});\n");
+    file_put_contents($path, "<?php\n\nreturn LaravelRsc\\Rsc\\PageRoute::make()->staticPaths({$paths});\n");
 
     return $path;
 }

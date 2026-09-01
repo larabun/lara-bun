@@ -1,16 +1,16 @@
 {
-    "name": "larabun/lara-bun",
-    "description": "A Laravel-to-Bun bridge via Unix sockets",
+    "name": "larabun/laravel-rsc",
+    "description": "React Server Components for Laravel, rendered by a JavaScript runtime over a local socket",
     "type": "library",
     "keywords": [
         "laravel",
-        "bun",
-        "javascript",
-        "typescript",
-        "unix-socket",
-        "rsc"
+        "react",
+        "rsc",
+        "react-server-components",
+        "ssr",
+        "streaming"
     ],
-    "homepage": "https://github.com/larabun/lara-bun",
+    "homepage": "https://github.com/larabun/laravel-rsc",
     "authors": [
         {
             "name": "Ramon Malcolm",
@@ -32,7 +32,7 @@
     },
     "autoload": {
         "psr-4": {
-            "LaraBun\\": "src/"
+            "LaravelRsc\\": "src/"
         },
         "files": [
             "src/helpers.php"
@@ -51,10 +51,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "LaraBun\\BunServiceProvider"
+                "LaravelRsc\\LaravelRscServiceProvider"
             ],
             "aliases": {
-                "Bun": "LaraBun\\Facades\\Bun"
+                "Bun": "LaravelRsc\\Facades\\Bun"
             }
         }
     },

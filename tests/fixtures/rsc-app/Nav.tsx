@@ -1,6 +1,6 @@
 'use client'
 
-// Uses LaraBun's real Link so the fixture exercises the SPA engine
+// Uses Laravel RSC's real Link so the fixture exercises the SPA engine
 // (prefetch on hover + intercepted click -> window.__rsc_navigate).
 import Link from '../../../resources/js/Link'
 

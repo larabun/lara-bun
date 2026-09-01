@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\Rsc\RscResponse;
+use LaravelRsc\Rsc\RscResponse;
 
 test('getComponent returns the component name', function () {
     $response = new RscResponse('Dashboard');

@@ -9,7 +9,7 @@
 //   export default defineConfig({ plugins: [rscRoutes(), react({ compiler: true })] })
 //
 // The plugin discovers the app/ route tree, generates the three entries that
-// carry LaraBun's composition and the worker's render contract, and supplies
+// carry the route composition and the worker's render contract, and supplies
 // the structural config (entries, output dirs, base). @vitejs/plugin-rsc is
 // included here so it always runs before any react() layer the app adds.
 
@@ -202,7 +202,7 @@ function applyHost() {
   ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = currentHost
 }
 
-// LaraBun composition: layout(outer..inner) > Suspense(loading, innermost-first) > page.
+// Composition: layout(outer..inner) > Suspense(loading, innermost-first) > page.
 function buildElement(
   component: string,
   props: Record<string, unknown>,

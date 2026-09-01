@@ -264,7 +264,7 @@ describe('metadata', () => {
   test('applies the nearest layout title template to the page title', async () => {
     const md = await engine.resolveMetadata('app/page', {}, LAYOUTS)
 
-    expect(md.title).toBe('Ramon Page · LaraBun')
+    expect(md.title).toBe('Ramon Page · Laravel RSC')
   })
 
   test('page metadata overrides layout defaults', async () => {
@@ -276,14 +276,14 @@ describe('metadata', () => {
   test('falls back to the layout default title when the page has none', async () => {
     const md = await engine.resolveMetadata('app/feed/page', {}, LAYOUTS)
 
-    expect(md.title).toBe('LaraBun Docs')
+    expect(md.title).toBe('Laravel RSC Docs')
   })
 
   test('renders resolved metadata into the document head', async () => {
     const { htmlStream } = await engine.handleRscHtmlStream('app/page', {}, LAYOUTS, [], {}, {})
     const html = await text(htmlStream)
 
-    expect(html).toContain('<title>Ramon Page · LaraBun</title>')
+    expect(html).toContain('<title>Ramon Page · Laravel RSC</title>')
     expect(html).toContain('content="A test page"')
   })
 })

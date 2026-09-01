@@ -5,9 +5,9 @@ use Illuminate\Auth\AuthenticationException;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Illuminate\Validation\ValidationException;
-use LaraBun\BunBridge;
-use LaraBun\Rsc\Header;
-use LaraBun\Rsc\RscRedirectException;
+use LaravelRsc\BunBridge;
+use LaravelRsc\Rsc\Header;
+use LaravelRsc\Rsc\RscRedirectException;
 
 beforeEach(function () {
     $this->bridgeMock = Mockery::mock(BunBridge::class);

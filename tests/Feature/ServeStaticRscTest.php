@@ -2,9 +2,9 @@
 
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Route;
-use LaraBun\Http\Middleware\ServeStaticRsc;
-use LaraBun\Rsc\Header;
-use LaraBun\Rsc\PrerenderService;
+use LaravelRsc\Http\Middleware\ServeStaticRsc;
+use LaravelRsc\Rsc\Header;
+use LaravelRsc\Rsc\PrerenderService;
 
 beforeEach(function () {
     $this->staticDir = sys_get_temp_dir().'/rsc-static-test-'.uniqid();

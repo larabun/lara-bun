@@ -1,12 +1,12 @@
 <?php
 
-namespace LaraBun\Rsc;
+namespace LaravelRsc\Rsc;
 
 use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
-use LaraBun\BunBridge;
-use LaraBun\BunServiceProvider;
+use LaravelRsc\BunBridge;
+use LaravelRsc\LaravelRscServiceProvider;
 use Symfony\Component\Process\Process;
 
 class PrerenderService
@@ -206,7 +206,7 @@ class PrerenderService
 
         $version = $rscResponse->getVersion();
 
-        if (BunServiceProvider::cspNonce() !== null) {
+        if (LaravelRscServiceProvider::cspNonce() !== null) {
             app()->instance('csp-nonce', self::NONCE_PLACEHOLDER);
         }
 
@@ -371,7 +371,7 @@ class PrerenderService
     {
         // Use a placeholder nonce during prerender so the cached HTML can be
         // patched with the real per-request nonce at serve time.
-        if (BunServiceProvider::cspNonce() !== null) {
+        if (LaravelRscServiceProvider::cspNonce() !== null) {
             app()->instance('csp-nonce', self::NONCE_PLACEHOLDER);
         }
 

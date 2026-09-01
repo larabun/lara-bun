@@ -1,9 +1,9 @@
 <?php
 
-namespace LaraBun\Console;
+namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
-use LaraBun\Support\BunBinary;
+use LaravelRsc\Support\BunBinary;
 use RuntimeException;
 use ZipArchive;
 
@@ -86,7 +86,7 @@ class BunInstallCommand extends Command
         $version = $this->binaryVersion($target);
         $this->info("Bun {$version} installed at {$target}");
         $this->newLine();
-        $this->line('Point LaraBun at it by setting in your .env:');
+        $this->line('Point Laravel RSC at it by setting in your .env:');
         $this->line('  BUN_BINARY='.$this->envValue($target));
 
         return self::SUCCESS;
@@ -134,8 +134,8 @@ class BunInstallCommand extends Command
         }
 
         $context = stream_context_create([
-            'http' => ['header' => "User-Agent: LaraBun\r\n", 'follow_location' => 1, 'timeout' => 300],
-            'https' => ['header' => "User-Agent: LaraBun\r\n", 'follow_location' => 1, 'timeout' => 300],
+            'http' => ['header' => "User-Agent: LaravelRsc\r\n", 'follow_location' => 1, 'timeout' => 300],
+            'https' => ['header' => "User-Agent: LaravelRsc\r\n", 'follow_location' => 1, 'timeout' => 300],
         ]);
 
         return @copy($url, $dest, $context) && is_file($dest) && filesize($dest) > 0;

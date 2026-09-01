@@ -1,8 +1,10 @@
-# LaraBun Package
+# Laravel RSC Package
 
 ## Overview
 
-LaraBun bridges Laravel (PHP) and Bun (JavaScript) via Unix sockets for React Server Components, streaming HTML, PHP callables, and server actions.
+React Server Components for Laravel. PHP drives a JavaScript runtime over a local socket to render RSC, stream HTML, call back into PHP, and run server actions.
+
+The package is `larabun/laravel-rsc` (namespace `LaravelRsc\`). The routing layer is a host-agnostic Vite plugin (`rscRoutes()`); Bun is the runtime today but the engine also runs on Node.
 
 ## Architecture
 
@@ -43,8 +45,8 @@ catch a rendering regression.
 ## Development Setup
 
 - Package source: `/Users/ramonmalcolm/Herd/lara-bun` (git repo, branch: `main`) — run the unit/feature suite here
-- Integration app: `/Users/ramonmalcolm/Herd/larabun-docs` (git repo, branch: `main`) — real consuming app for end-to-end/manual testing; requires the published `larabun/lara-bun` package and ships a Dockerfile
-- After package changes: `composer update larabun/lara-bun` in consuming apps
+- Integration app: `/Users/ramonmalcolm/Herd/larabun-docs` (git repo, branch: `main`) — real consuming app for end-to-end/manual testing; requires the published `larabun/laravel-rsc` package and ships a Dockerfile
+- After package changes: `composer update larabun/laravel-rsc` in consuming apps
 - After TS changes: `php artisan rsc:build` to rebuild bundles
 
 ## Critical Patterns

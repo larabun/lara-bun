@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\Support\System;
+use LaravelRsc\Support\System;
 
 return [
     // Explicit path to the Bun executable. Leave null to auto-discover

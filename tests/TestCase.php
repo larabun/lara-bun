@@ -2,7 +2,7 @@
 
 namespace Tests;
 
-use LaraBun\BunServiceProvider;
+use LaravelRsc\LaravelRscServiceProvider;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
 
 abstract class TestCase extends OrchestraTestCase
@@ -10,7 +10,7 @@ abstract class TestCase extends OrchestraTestCase
     protected function getPackageProviders($app): array
     {
         return [
-            BunServiceProvider::class,
+            LaravelRscServiceProvider::class,
         ];
     }
 

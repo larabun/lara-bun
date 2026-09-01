@@ -1,8 +1,9 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use LaraBun\BunBridge;
-use LaraBun\Rsc\Header;
+use LaravelRsc\BunBridge;
+use LaravelRsc\Rsc\Header;
+use LaravelRsc\Rsc\RscRedirectException;
 
 beforeEach(function () {
     $this->bridgeMock = Mockery::mock(BunBridge::class);
@@ -69,14 +70,14 @@ test('redirect to non-RSC route returns X-RSC-Redirect header without text/x-com
         ->once()
         ->andReturnUsing(function () {
             return (function () {
-                throw new \LaraBun\Rsc\RscRedirectException('/blade-page');
+                throw new RscRedirectException('/blade-page');
                 yield; // @phpstan-ignore deadCode.unreachable
             })();
         });
 
     $response = $this->post('/_rsc/action', [], [
-        \LaraBun\Rsc\Header::X_RSC_ACTION => 'myAction',
-        \LaraBun\Rsc\Header::X_RSC_CONTENT_TYPE => 'text/plain',
+        Header::X_RSC_ACTION => 'myAction',
+        Header::X_RSC_CONTENT_TYPE => 'text/plain',
         'Content-Type' => 'application/octet-stream',
     ]);
 

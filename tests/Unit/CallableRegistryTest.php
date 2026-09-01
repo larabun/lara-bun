@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\Rsc\CallableRegistry;
+use LaravelRsc\Rsc\CallableRegistry;
 
 class InvokableCallable
 {

@@ -1,7 +1,8 @@
 <?php
 
-use LaraBun\BunBridge;
-use LaraBun\Rsc\Header;
+use LaravelRsc\BunBridge;
+use LaravelRsc\Rsc\Header;
+use LaravelRsc\Rsc\RscResponse;
 
 beforeEach(function () {
     $this->bridgeMock = Mockery::mock(BunBridge::class);
@@ -109,7 +110,7 @@ test('rsc helper returns response that supports layout chaining', function () {
         ->layout('AppLayout')
         ->layout('DashboardLayout');
 
-    expect($response)->toBeInstanceOf(\LaraBun\Rsc\RscResponse::class);
+    expect($response)->toBeInstanceOf(RscResponse::class);
 
     $layouts = (new ReflectionProperty($response, 'layouts'))->getValue($response);
 

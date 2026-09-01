@@ -1,6 +1,6 @@
 <?php
 
-namespace LaraBun\Rsc;
+namespace LaravelRsc\Rsc;
 
 class RscRedirectException extends \RuntimeException
 {

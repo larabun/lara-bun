@@ -1,6 +1,6 @@
 <?php
 
-namespace LaraBun\Rsc;
+namespace LaravelRsc\Rsc;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;

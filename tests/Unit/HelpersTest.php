@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\Rsc\RscResponse;
+use LaravelRsc\Rsc\RscResponse;
 
 test('rsc helper creates RscResponse', function () {
     $response = rsc('Dashboard');

@@ -65,7 +65,7 @@ test('includes staticPaths from a route.php simple list', function () {
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
-        "<?php\n\nreturn LaraBun\\Rsc\\PageRoute::make()->staticPaths(['installation', 'configuration']);\n",
+        "<?php\n\nreturn LaravelRsc\\Rsc\\PageRoute::make()->staticPaths(['installation', 'configuration']);\n",
     );
 
     $entry = collect(manifest())->firstWhere('urlPattern', '/docs/{slug}');
@@ -79,7 +79,7 @@ test('groups and deduplicates staticPaths given multi-param combinations', funct
     writeRouteFile(
         $this->sourceDir,
         'app/posts/[year]/[slug]/route.php',
-        "<?php\n\nreturn LaraBun\\Rsc\\PageRoute::make()->staticPaths([\n".
+        "<?php\n\nreturn LaravelRsc\\Rsc\\PageRoute::make()->staticPaths([\n".
         "    ['year' => '2026', 'slug' => 'a'],\n".
         "    ['year' => '2026', 'slug' => 'b'],\n".
         "]);\n",
@@ -96,7 +96,7 @@ test('extracts literal alternations from where constraints', function () {
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
-        "<?php\n\nreturn LaraBun\\Rsc\\PageRoute::make()->where('slug', 'alpha|beta');\n",
+        "<?php\n\nreturn LaravelRsc\\Rsc\\PageRoute::make()->where('slug', 'alpha|beta');\n",
     );
 
     $entry = collect(manifest())->firstWhere('urlPattern', '/docs/{slug}');
@@ -109,7 +109,7 @@ test('skips where constraints that are not simple alternations', function () {
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
-        "<?php\n\nreturn LaraBun\\Rsc\\PageRoute::make()->where('slug', '[0-9]+');\n",
+        "<?php\n\nreturn LaravelRsc\\Rsc\\PageRoute::make()->where('slug', '[0-9]+');\n",
     );
 
     $entry = collect(manifest())->firstWhere('urlPattern', '/docs/{slug}');

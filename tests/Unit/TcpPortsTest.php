@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\BunBridge;
+use LaravelRsc\BunBridge;
 
 test('tcpPorts assigns non-overlapping main and callback port ranges', function () {
     // 3 workers, base 7940: mains 7940-7942, callbacks 7943-7945.

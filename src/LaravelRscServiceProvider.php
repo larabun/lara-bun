@@ -1,24 +1,24 @@
 <?php
 
-namespace LaraBun;
+namespace LaravelRsc;
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\ServiceProvider;
-use LaraBun\Console\BunDevCommand;
-use LaraBun\Console\BunInstallCommand;
-use LaraBun\Console\BunServeCommand;
-use LaraBun\Console\RscActionManifestCommand;
-use LaraBun\Console\RscBuildCommand;
-use LaraBun\Console\RscPagesCommand;
-use LaraBun\Console\RscRouteManifestCommand;
-use LaraBun\Rsc\CallableRegistry;
-use LaraBun\Rsc\PageRouteRegistrar;
-use LaraBun\Rsc\PageScanner;
-use LaraBun\Rsc\RscActionController;
-use LaraBun\Rsc\RscMiddleware;
+use LaravelRsc\Console\BunDevCommand;
+use LaravelRsc\Console\BunInstallCommand;
+use LaravelRsc\Console\BunServeCommand;
+use LaravelRsc\Console\RscActionManifestCommand;
+use LaravelRsc\Console\RscBuildCommand;
+use LaravelRsc\Console\RscPagesCommand;
+use LaravelRsc\Console\RscRouteManifestCommand;
+use LaravelRsc\Rsc\CallableRegistry;
+use LaravelRsc\Rsc\PageRouteRegistrar;
+use LaravelRsc\Rsc\PageScanner;
+use LaravelRsc\Rsc\RscActionController;
+use LaravelRsc\Rsc\RscMiddleware;
 
-class BunServiceProvider extends ServiceProvider
+class LaravelRscServiceProvider extends ServiceProvider
 {
     /**
      * Get the CSP nonce for inline script tags.

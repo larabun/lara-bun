@@ -1,5 +1,5 @@
 {
-    "name": "larabun/lara-bun",
+    "name": "laravel-rsc",
     "private": true,
     "type": "module",
     "peerDependencies": {

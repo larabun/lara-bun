@@ -1,6 +1,6 @@
 <?php
 
-namespace LaraBun\Support;
+namespace LaravelRsc\Support;
 
 class System
 {

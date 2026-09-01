@@ -4,9 +4,9 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
-use LaraBun\Rsc\Attributes\Authenticated;
-use LaraBun\Rsc\Attributes\Can;
-use LaraBun\Rsc\CallableRegistry;
+use LaravelRsc\Rsc\Attributes\Authenticated;
+use LaravelRsc\Rsc\Attributes\Can;
+use LaravelRsc\Rsc\CallableRegistry;
 
 #[Authenticated]
 class AuthenticatedActions

@@ -1,8 +1,9 @@
 <?php
 
-namespace LaraBun\Facades;
+namespace LaravelRsc\Facades;
 
 use Illuminate\Support\Facades\Facade;
+use LaravelRsc\BunBridge;
 
 /**
  * @method static mixed call(string $function, array $args = [])
@@ -10,12 +11,12 @@ use Illuminate\Support\Facades\Facade;
  * @method static bool ping()
  * @method static void disconnect()
  *
- * @see \LaraBun\BunBridge
+ * @see BunBridge
  */
 class Bun extends Facade
 {
     protected static function getFacadeAccessor(): string
     {
-        return \LaraBun\BunBridge::class;
+        return BunBridge::class;
     }
 }

@@ -1,9 +1,9 @@
 <?php
 
-namespace LaraBun\Console;
+namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
-use LaraBun\Support\BunBinary;
+use LaravelRsc\Support\BunBinary;
 use Symfony\Component\Process\Process;
 
 class BunDevCommand extends Command

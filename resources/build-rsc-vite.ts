@@ -13,7 +13,7 @@ const outDir = resolve(process.env.BUN_RSC_OUT_DIR || join(projectRoot, 'bootstr
 const genDir = join(outDir, '.gen')
 
 function log(...args: unknown[]): void {
-  console.error('[lara-bun:vite]', ...args)
+  console.error('[laravel-rsc]', ...args)
 }
 
 export const USER_CONFIG_NAMES = [

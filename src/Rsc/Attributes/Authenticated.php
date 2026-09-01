@@ -1,6 +1,6 @@
 <?php
 
-namespace LaraBun\Rsc\Attributes;
+namespace LaravelRsc\Rsc\Attributes;
 
 use Attribute;
 

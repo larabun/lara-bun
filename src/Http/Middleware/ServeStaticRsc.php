@@ -1,13 +1,13 @@
 <?php
 
-namespace LaraBun\Http\Middleware;
+namespace LaravelRsc\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use LaraBun\BunServiceProvider;
-use LaraBun\Rsc\Header;
-use LaraBun\Rsc\PrerenderService;
+use LaravelRsc\LaravelRscServiceProvider;
+use LaravelRsc\Rsc\Header;
+use LaravelRsc\Rsc\PrerenderService;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class ServeStaticRsc
@@ -65,7 +65,7 @@ class ServeStaticRsc
     {
         // Replace the build-time nonce placeholder with the real per-request
         // CSP nonce so inline scripts pass CSP checks.
-        $nonce = BunServiceProvider::cspNonce();
+        $nonce = LaravelRscServiceProvider::cspNonce();
 
         if ($nonce) {
             $html = str_replace(PrerenderService::NONCE_PLACEHOLDER, $nonce, $html);

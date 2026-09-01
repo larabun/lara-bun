@@ -1,10 +1,10 @@
 <?php
 
-namespace LaraBun\Console;
+namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
-use LaraBun\BunBridge;
-use LaraBun\Support\BunBinary;
+use LaravelRsc\BunBridge;
+use LaravelRsc\Support\BunBinary;
 
 class BunServeCommand extends Command
 {

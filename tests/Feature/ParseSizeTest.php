@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\BunBridge;
+use LaravelRsc\BunBridge;
 
 it('parses megabytes', function () {
     expect(BunBridge::parseSize('25mb'))->toBe(25 * 1024 * 1024);

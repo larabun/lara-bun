@@ -1,6 +1,6 @@
 <?php
 
-use LaraBun\Rsc\PageRoute;
+use LaravelRsc\Rsc\PageRoute;
 
 test('make creates a new instance', function () {
     $route = PageRoute::make();
@@ -105,4 +105,3 @@ test('domain defaults to null', function () {
 
     expect($route->getDomain())->toBeNull();
 });
-

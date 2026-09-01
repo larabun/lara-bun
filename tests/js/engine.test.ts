@@ -434,6 +434,56 @@ describe('app vite config', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  test('refuses a config that puts a JSX transform ahead of rsc()', async () => {
+    // rsc() splits the graph into client and server; a JSX transform running
+    // first sees the wrong graph and fails somewhere unrelated. Refuse instead.
+    //
+    // Vite's own enforce ordering already puts rsc() ahead of a plain plugin,
+    // so only a plugin forcing itself early actually inverts the order.
+    const app = mkdtempSync(join(tmpdir(), 'larabun-order-'))
+    const buildDir = mkdtempSync(join(packageRoot, 'bootstrap/rsc/cfg-'))
+    const configPath = join(buildDir, 'vite.rsc.config.mjs')
+
+    mkdirSync(join(app, 'app'), { recursive: true })
+    writeFileSync(
+      join(app, 'app/layout.tsx'),
+      'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
+    )
+    writeFileSync(join(app, 'app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
+    writeFileSync(
+      configPath,
+      `import { larabun } from ${JSON.stringify(join(packageRoot, 'resources/vite.ts'))}
+
+export default {
+  plugins: [{ name: 'vite:react-babel', enforce: 'pre' }, larabun()],
+}
+`,
+    )
+
+    const proc = Bun.spawn(['bun', join(packageRoot, 'resources/build-rsc-vite.ts')], {
+      cwd: packageRoot,
+      env: {
+        ...process.env,
+        LARA_BUN_PROJECT_ROOT: packageRoot,
+        BUN_RSC_SOURCE_DIR: app,
+        BUN_RSC_OUT_DIR: buildDir,
+        BUN_RSC_ASSETS_DIR: join(buildDir, 'public'),
+        BUN_RSC_VITE_CONFIG: configPath,
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    const [code, stderr] = [await proc.exited, await new Response(proc.stderr).text()]
+
+    expect(code).not.toBe(0)
+    expect(stderr).toContain('vite:react-babel')
+    expect(stderr).toContain('resolved ahead of rsc()')
+
+    rmSync(app, { recursive: true, force: true })
+    rmSync(buildDir, { recursive: true, force: true })
+  }, 120_000)
+
   test('applies the app plugins during the build', async () => {
     // Proves the merge actually reaches the build rather than just resolving a
     // path: a plugin that only the app config supplies must transform output.
@@ -448,18 +498,24 @@ describe('app vite config', () => {
       'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
     )
     writeFileSync(join(app, 'app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
+    // The app composes larabun() itself — this is the documented shape.
     writeFileSync(
       configPath,
-      `export default {
-  plugins: [{
-    name: 'larabun-marker',
-    transform(code, id) {
-      if (id.includes('entry.browser')) {
-        return code + '\\nglobalThis.__marker = "${marker}";\\n'
-      }
-      return null
+      `import { larabun } from ${JSON.stringify(join(packageRoot, 'resources/vite.ts'))}
+
+export default {
+  plugins: [
+    larabun(),
+    {
+      name: 'larabun-marker',
+      transform(code, id) {
+        if (id.includes('entry.browser')) {
+          return code + '\\nglobalThis.__marker = "${marker}";\\n'
+        }
+        return null
+      },
     },
-  }],
+  ],
 }
 `,
     )

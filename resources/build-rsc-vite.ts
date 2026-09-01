@@ -1,37 +1,21 @@
-// LaraBun Vite RSC engine (BUN_RSC_ENGINE=vite) — parallel to build-rsc.ts.
+// CLI behind `php artisan rsc:build`.
 //
-// The @vitejs/plugin-rsc plugin handles all the generic RSC bundling that
-// build-rsc.ts hand-rolls (the 3 builds, "use client"/"use server" directive
-// handling, client-reference manifests). This engine keeps only LaraBun's own
-// layer: discover file-routes, generate the 3 plugin entries with LaraBun's
-// buildElement composition + the worker's render contract, and run `vite build`.
-//
-// Milestone scope: discovery of page/layout/loading routes + a loadable
-// entry.rsc exposing renderRscStream/renderHtml/handleAction/resolveMetadata
-// with php() injected inside the render (per the Stage 1 finding). Parallel
-// slots, intercepts, typed-route codegen and manifest translation come next.
+// The build itself lives in the Vite plugin (resources/vite.ts). This only
+// decides which config Vite runs: the app's own vite.rsc.config if it has one,
+// otherwise a minimal generated config that just uses the plugin. Either way
+// Vite runs that config directly — nothing is merged on top of it.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 
 const projectRoot = resolve(process.env.LARA_BUN_PROJECT_ROOT || process.cwd())
-const sourceDir = resolve(process.env.BUN_RSC_SOURCE_DIR || join(projectRoot, 'resources/js/rsc'))
 const outDir = resolve(process.env.BUN_RSC_OUT_DIR || join(projectRoot, 'bootstrap/rsc/vite'))
-const appDir = join(sourceDir, 'app')
-
-// Generated entries live under the (in-project) out dir so module resolution
-// can walk up to the project's node_modules (@vitejs/plugin-rsc, react, ...).
 const genDir = join(outDir, '.gen')
 
-// The CLIENT bundle is browser-facing and must be web-served from public/; the
-// rsc/ssr bundles are SERVER code and stay under outDir (never public). `base`
-// is the public URL the plugin uses for client asset references.
-const publicAssetsDir = resolve(process.env.BUN_RSC_ASSETS_DIR || join(projectRoot, 'public/build/rsc-vite'))
-const assetsBaseUrl = process.env.BUN_RSC_ASSETS_URL || '/build/rsc-vite/'
+function log(...args: unknown[]): void {
+  console.error('[lara-bun:vite]', ...args)
+}
 
-// React Compiler is opt-in BY INSTALLATION — no config flag. If the toolchain
-// is present in the app's node_modules it is wired automatically; otherwise it
-// is omitted. (React 19 needs no react-compiler-runtime.)
 export const USER_CONFIG_NAMES = [
   'vite.rsc.config.ts',
   'vite.rsc.config.mts',
@@ -43,8 +27,8 @@ export const USER_CONFIG_NAMES = [
  * Find the app's own Vite config for the RSC build, if it has one.
  *
  * Anything an app wants in this build — the React Compiler, Tailwind, extra
- * aliases — is declared there and merged in. The engine takes no view on which
- * plugins an app should use and detects nothing.
+ * aliases — is declared there. The engine takes no view on which plugins an
+ * app should use and detects nothing.
  */
 export function findUserViteConfig(root: string): string | null {
   const explicit = process.env.BUN_RSC_VITE_CONFIG
@@ -63,613 +47,53 @@ export function findUserViteConfig(root: string): string | null {
   return null
 }
 
-const userViteConfig = findUserViteConfig(projectRoot)
-
-interface Component {
-  name: string // route-relative key, e.g. "app/page", "app/layout"
-  absPath: string
-  alias: string // safe JS identifier for the generated import
-}
-
-function log(...args: unknown[]): void {
-  console.error('[lara-bun:vite]', ...args)
-}
-
-// ── Discovery ────────────────────────────────────────────────────────────────
-
-const ROUTE_FILES = ['page', 'layout', 'loading', 'default']
-const EXTS = ['tsx', 'jsx', 'ts', 'js']
-
-function findRouteFile(dir: string, base: string): string | null {
-  for (const ext of EXTS) {
-    const p = join(dir, `${base}.${ext}`)
-    if (existsSync(p)) return p
-  }
-  return null
-}
-
-function componentName(absPath: string): string {
-  const rel = relative(sourceDir, absPath).replace(/\\/g, '/')
-  return rel.replace(/\.(tsx|jsx|ts|js)$/, '')
-}
-
-function toAlias(name: string): string {
-  return '_c_' + name.replace(/[^a-zA-Z0-9]/g, '_')
-}
-
-const components = new Map<string, Component>()
-
-function register(absPath: string): Component {
-  const name = componentName(absPath)
-  const existing = components.get(name)
-  if (existing) return existing
-  const c: Component = { name, absPath, alias: toAlias(name) }
-  components.set(name, c)
-  return c
-}
-
-/** Walk app/ collecting page/layout/loading/default components. */
-function discover(dir: string): void {
-  for (const base of ROUTE_FILES) {
-    const p = findRouteFile(dir, base)
-    if (p) register(p)
-  }
-
-  for (const entry of readdirSync(dir)) {
-    const abs = join(dir, entry)
-    if (statSync(abs).isDirectory()) discover(abs)
-  }
-}
-
-function hasMetadata(absPath: string): boolean {
-  const src = readFileSync(absPath, 'utf-8')
-  return /export\s+(const\s+metadata|(async\s+)?function\s+generateMetadata)/.test(src)
-}
-
-// ── Codegen ──────────────────────────────────────────────────────────────────
-
-function generateEntryRsc(): string {
-  const imports: string[] = []
-  const mapEntries: string[] = []
-  const metaEntries: string[] = []
-
-  for (const c of components.values()) {
-    imports.push(`import ${c.alias} from ${JSON.stringify(c.absPath)}`)
-    mapEntries.push(`  ${JSON.stringify(c.name)}: ${c.alias},`)
-
-    if (hasMetadata(c.absPath)) {
-      imports.push(`import * as ${c.alias}_meta from ${JSON.stringify(c.absPath)}`)
-      metaEntries.push(
-        `  ${JSON.stringify(c.name)}: { static: ${c.alias}_meta.metadata, generate: ${c.alias}_meta.generateMetadata },`,
-      )
-    }
-  }
-
-  return `// GENERATED by build-rsc-vite.ts — do not edit.
-import { renderToReadableStream, decodeReply, loadServerAction } from '@vitejs/plugin-rsc/rsc'
-import { Suspense, createElement, Fragment } from 'react'
-${imports.join('\n')}
-
-type PhpFn = (name: string, ...args: unknown[]) => Promise<unknown>
-type LayoutEntry = { component: string; props?: Record<string, unknown> }
-type SlotOverride = { component: string; props?: Record<string, unknown> }
-
-const components: Record<string, any> = {
-${mapEntries.join('\n')}
-}
-
-const metadataMap: Record<string, { static?: any; generate?: (p: any) => any }> = {
-${metaEntries.join('\n')}
-}
-
-// LaraBun installs php() via installPhpFn (worker contract). Per the Stage 1
-// finding, globalThis.php must be set synchronously INSIDE each render fn
-// (applyPhp) right before renderToReadableStream — setting it once ahead of a
-// separate render call does not reach the Flight render.
-let currentPhp: PhpFn | null = null
-
-export function installPhpFn(php: PhpFn) {
-  currentPhp = php
-  return () => {
-    if (currentPhp === php) currentPhp = null
-  }
-}
-
-function applyPhp() {
-  ;(globalThis as unknown as { php?: PhpFn | null }).php = currentPhp
-}
-
-// LaraBun composition: layout(outer..inner) > Suspense(loading, innermost-first) > page.
-function buildElement(
-  component: string,
-  props: Record<string, unknown>,
-  layouts: LayoutEntry[],
-  loadings: string[],
-  parallelSlots: Record<string, string>,
-  slotOverrides: Record<string, SlotOverride>,
-  head: unknown[] = [],
-) {
-  const Component = components[component]
-  if (!Component) throw new Error('Unknown RSC component: ' + component)
-
-  let element = createElement(Component, props)
-
-  for (let i = loadings.length - 1; i >= 0; i--) {
-    const Loading = components[loadings[i]]
-    element = createElement(Suspense, { fallback: Loading ? createElement(Loading) : null }, element)
-  }
-
-  // <title>/<meta> go OUTSIDE the Suspense boundaries so they reach the shell
-  // immediately — inside, they would be withheld until the page's data
-  // resolves, delaying the whole document on a slow page.
-  if (head.length) element = createElement(Fragment, null, ...head, element)
-
-  const slotElements: Record<string, unknown> = {}
-  for (const [slot, value] of Object.entries(parallelSlots)) {
-    const override = slotOverrides[slot]
-    if (override) {
-      const OverrideComp = components[override.component]
-      slotElements[slot] = OverrideComp ? createElement(OverrideComp, override.props ?? {}) : null
-    } else {
-      const SlotComp = components[value]
-      slotElements[slot] = SlotComp ? createElement(SlotComp, props) : null
-    }
-  }
-
-  for (let i = layouts.length - 1; i >= 0; i--) {
-    const Layout = components[layouts[i].component]
-    if (!Layout) continue
-    const layoutProps = { ...(layouts[i].props ?? {}) }
-    if (i === layouts.length - 1) {
-      element = createElement(Layout, { ...layoutProps, ...slotElements, children: element })
-    } else {
-      element = createElement(Layout, { ...layoutProps, children: element })
-    }
-  }
-
-  return element
-}
-
-// Resolve route metadata into React elements. React 19 hoists <title>/<meta>
-// rendered anywhere in the tree into <head> — so the "vite way" for metadata is
-// to render it as elements, no PHP-side <head> string injection.
-async function renderTree(
-  component: string,
-  props: Record<string, unknown>,
-  layouts: LayoutEntry[],
-  loadings: string[],
-  parallelSlots: Record<string, string>,
-  slotOverrides: Record<string, SlotOverride>,
-) {
-  const md = await resolveMetadata(component, props, layouts)
-  const head: unknown[] = []
-
-  if (md) {
-    if (md.title != null) head.push(createElement('title', { key: '__t' }, String(md.title)))
-    if (md.description != null) head.push(createElement('meta', { key: '__d', name: 'description', content: String(md.description) }))
-    for (const [k, v] of Object.entries(md)) {
-      if (k === 'title' || k === 'description' || v == null) continue
-      head.push(createElement('meta', { key: '__m_' + k, name: k, content: String(v) }))
-    }
-  }
-
-  // Metadata elements are rendered INSIDE the document tree so React 19 hoists
-  // <title>/<meta> into <head> (hoisting only works from within the tree).
-  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head)
-}
-
-// SPA-navigation Flight stream (worker: rsc-stream).
-export async function handleRscStream(
-  component: string,
-  props: Record<string, unknown> = {},
-  layouts: LayoutEntry[] = [],
-  loadings: string[] = [],
-  parallelSlots: Record<string, string> = {},
-  slotOverrides: Record<string, SlotOverride> = {},
-): Promise<{ stream: ReadableStream; clientChunks: unknown }> {
-  applyPhp()
-  return {
-    stream: renderToReadableStream(await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides)),
-    clientChunks: {},
-  }
-}
-
-// Initial-load HTML stream + hydration payload (worker: rsc-html-stream).
-export async function handleRscHtmlStream(
-  component: string,
-  props: Record<string, unknown> = {},
-  layouts: LayoutEntry[] = [],
-  loadings: string[] = [],
-  parallelSlots: Record<string, string> = {},
-  slotOverrides: Record<string, SlotOverride> = {},
-  nonce?: string,
-): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: unknown }> {
-  applyPhp()
-  const flight = renderToReadableStream(await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides))
-  const [forHtml, forPayload] = flight.tee()
-  const rscPayloadPromise = new Response(forPayload).text()
-  const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(forHtml, nonce)
-  return { htmlStream, rscPayloadPromise, clientChunks: {} }
-}
-
-// Server action (worker: rsc-action).
-export async function handleAction(
-  actionId: string,
-  body: string | FormData,
-  contentType = 'text/plain',
-): Promise<{ stream: ReadableStream }> {
-  applyPhp()
-
-  let decodable: string | FormData = body
-
-  // A multipart body reaches us as a latin1 string — PHP base64s the raw bytes
-  // over the socket and the worker decodes them byte-for-byte. Rebuild the
-  // bytes so FormData parses, or any File argument is lost.
-  if (typeof body === 'string' && contentType.includes('multipart/form-data')) {
-    const bytes = new Uint8Array(body.length)
-    for (let i = 0; i < body.length; i++) bytes[i] = body.charCodeAt(i)
-    decodable = await new Response(bytes, { headers: { 'Content-Type': contentType } }).formData()
-  }
-
-  const args = (await decodeReply(decodable)) as unknown[]
-  const action = await loadServerAction(actionId)
-  const result = await (action as (...a: unknown[]) => unknown)(...args)
-  return { stream: renderToReadableStream(result) }
-}
-
-export async function resolveMetadata(
-  component: string,
-  props: Record<string, unknown> = {},
-  layouts: LayoutEntry[] = [],
-): Promise<Record<string, unknown> | null> {
-  const pageEntry = metadataMap[component]
-  const page: Record<string, unknown> = pageEntry
-    ? (pageEntry.generate ? ((await pageEntry.generate(props)) ?? {}) : { ...(pageEntry.static ?? {}) })
-    : {}
-
-  // Non-title metadata: layout defaults (outer→inner), page overrides.
-  const merged: Record<string, unknown> = {}
-  for (const l of layouts) {
-    const s = metadataMap[l.component]?.static
-    if (s) for (const [k, v] of Object.entries(s)) if (k !== 'title') merged[k] = v
-  }
-  for (const [k, v] of Object.entries(page)) if (k !== 'title') merged[k] = v
-
-  // Title: the page title with the NEAREST layout title.template applied; if the
-  // page has no title, the nearest layout default/string title.
-  let title: string | undefined = typeof page.title === 'string' ? page.title : undefined
-  for (let i = layouts.length - 1; i >= 0; i--) {
-    const lt = metadataMap[layouts[i].component]?.static?.title as
-      | string | { template?: string; default?: string } | undefined
-    if (lt && typeof lt === 'object') {
-      if (title != null && lt.template) { title = lt.template.replace('%s', title); break }
-      if (title == null && lt.default) { title = lt.default; break }
-    } else if (title == null && typeof lt === 'string') { title = lt; break }
-  }
-  if (title != null) merged.title = title
-
-  return Object.keys(merged).length ? merged : null
-}
-
-// Buffered render (worker: rsc / rscWithoutCallbacks — used at prerender time).
-export async function handleRsc(
-  component: string,
-  props: Record<string, unknown> = {},
-  _callbackSocket: string | null = null,
-  layouts: LayoutEntry[] = [],
-  loadings: string[] = [],
-  parallelSlots: Record<string, string> = {},
-): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean }> {
-  applyPhp()
-  // renderTree (not bare buildElement) so the prerendered Flight payload carries
-  // the same <title>/<meta> elements the live SPA payload does.
-  const flight = renderToReadableStream(await renderTree(component, props, layouts, loadings, parallelSlots, {}))
-  const [forHtml, forPayload] = flight.tee()
-  const rscPayload = await new Response(forPayload).text()
-  const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(forHtml)
-  const body = await new Response(htmlStream).text()
-  return { body, rscPayload, clientChunks: {}, usedDynamicApis: false }
-}
-
-// PPR shell + classification (worker: rsc-ppr-shell — build-time).
-//
-// php() is replaced by a probe that records the call and never resolves, so
-// every subtree depending on per-request data stays suspended while everything
-// static renders normally. Whatever React has flushed when the deadline passes
-// IS the shell: layouts, static markup, and Suspense fallbacks.
-//
-// The two flags this returns are what the prerender pipeline classifies on:
-//   usedDynamicApis — the page touched php(), so it cannot be frozen whole
-//   timedOut        — the render never finished, i.e. it is still waiting on
-//                     data, so only the shell is safe to cache
-// A page that sets neither is genuinely static and can be prerendered fully.
-const PPR_SHELL_TIMEOUT_MS = Number(process.env.BUN_RSC_PPR_TIMEOUT_MS || 2000)
-
-export async function handleRscPprShell(
-  component: string,
-  props: Record<string, unknown> = {},
-  layouts: LayoutEntry[] = [],
-  loadings: string[] = [],
-  parallelSlots: Record<string, string> = {},
-): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
-  let usedDynamicApis = false
-  const realPhp = (globalThis as any).php
-
-  ;(globalThis as any).php = (..._args: unknown[]) => {
-    usedDynamicApis = true
-    // Never resolves: the awaiting component suspends and React renders its
-    // Suspense fallback into the shell instead of the real content.
-    return new Promise(() => {})
-  }
-
-  let shellHtml = ''
-  let completed = false
-  let error: string | undefined
-  let cancel: (() => void) | null = null
-
-  const produce = (async () => {
-    try {
-      const tree = await renderTree(component, props, layouts, loadings, parallelSlots, {})
-      const flight = renderToReadableStream(tree)
-      const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-      // Errors here are expected: the render is aborted once the shell is out.
-      const htmlStream = await ssr.handleSsr(flight, undefined, () => {})
-
-      const reader = htmlStream.getReader()
-      // Cancelling aborts the suspended SSR render, which surfaces React's
-      // "render was aborted" both synchronously and as a rejection. Neither is
-      // interesting — we already have the shell.
-      cancel = () => {
-        try {
-          const pending = reader.cancel()
-          if (pending && typeof pending.catch === 'function') pending.catch(() => {})
-        } catch {}
-      }
-      const decoder = new TextDecoder()
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        shellHtml += decoder.decode(value, { stream: true })
-      }
-
-      completed = true
-    } catch (e: any) {
-      error = e?.message ?? String(e)
-    }
-  })()
-
-  await Promise.race([produce, new Promise((r) => setTimeout(r, PPR_SHELL_TIMEOUT_MS))])
-
-  // Release the suspended render; its pending php() promises never settle.
-  if (!completed) cancel?.()
-  ;(globalThis as any).php = realPhp
-
-  return { shellHtml, clientChunks: {}, timedOut: !completed, usedDynamicApis, error }
-}
-
-export default async function handler(): Promise<Response> {
-  return new Response('lara-bun vite engine', { headers: { 'content-type': 'text/plain' } })
-}
-`
-}
-
-function generateEntrySsr(): string {
-  return `// GENERATED by build-rsc-vite.ts — do not edit.
-import { createFromReadableStream } from '@vitejs/plugin-rsc/ssr'
-import { renderToReadableStream } from 'react-dom/server.edge'
-
-export async function handleSsr(
-  rscStream: ReadableStream,
-  nonce?: string,
-  onError?: (error: unknown) => void,
-): Promise<ReadableStream> {
-  const root = await createFromReadableStream(rscStream)
-  const bootstrapScriptContent = await (import.meta as any).viteRsc.loadBootstrapScriptContent('index')
-  // Without an onError handler React rejects each abortable task on its own,
-  // and those rejections surface as unhandled — noisy for the PPR shell render,
-  // which aborts on purpose once it has the shell.
-  return renderToReadableStream(root as any, {
-    bootstrapScriptContent,
-    nonce,
-    onError: onError ?? ((error: unknown) => { console.error('[lara-bun:ssr]', error) }),
-  })
-}
-`
-}
-
-function generateEntryBrowser(): string {
-  const clientBootstrap = join(import.meta.dir, 'js/createViteRscApp.ts')
-
-  return `// GENERATED by build-rsc-vite.ts — do not edit.
-import { createViteRscApp } from ${JSON.stringify(clientBootstrap)}
-
-createViteRscApp()
-`
-}
-
-function generateViteConfig(): string {
-  const rscEntry = join(genDir, 'entry.rsc.tsx')
-  const ssrEntry = join(genDir, 'entry.ssr.tsx')
-  const browserEntry = join(genDir, 'entry.browser.tsx')
-
-  const imports = userViteConfig
-    ? `import rsc from '@vitejs/plugin-rsc'\nimport { defineConfig, mergeConfig } from 'vite'\nimport userConfig from ${JSON.stringify(userViteConfig)}`
-    : "import rsc from '@vitejs/plugin-rsc'\nimport { defineConfig } from 'vite'"
-
-  // With an app config present, the engine keeps the structural keys it owns
-  // (entries, output dirs, base) and appends the app's plugins after rsc(),
-  // which must lead: a react()/babel layer transforms what rsc() has already
-  // split into client and server graphs.
-  const exportStatement = userViteConfig
-    ? `export default defineConfig(async (env) => {
-  const user = typeof userConfig === 'function' ? await userConfig(env) : (userConfig ?? {})
-  const merged = mergeConfig(user, base)
-  merged.plugins = [rsc(), ...(user.plugins ?? [])]
-  return merged
-})`
-    : 'export default defineConfig({ ...base, plugins: [rsc()] })'
-
-  return `${imports}
-
-const base = {
-  // Public URL for browser-facing client assets (served from public/ by the
-  // web server — never through PHP).
-  base: ${JSON.stringify(assetsBaseUrl)},
-  root: ${JSON.stringify(outDir)},
-  // Force single instances of React/RSC runtime — critical when the package is
-  // symlinked (local dev / monorepo), else "use client" components SSR against a
-  // second React copy and hooks throw (ReactSharedInternals dispatcher is null).
-  resolve: { dedupe: ['react', 'react-dom', 'react-server-dom-webpack', '@vitejs/plugin-rsc'] },
-  build: { emptyOutDir: true },
-  environments: {
-    // Server bundles — stay under the (non-public) out dir.
-    rsc: { build: { rollupOptions: { input: { index: ${JSON.stringify(rscEntry)} } } } },
-    ssr: { build: { rollupOptions: { input: { index: ${JSON.stringify(ssrEntry)} } } } },
-    // Client bundle — emitted into public/ so the web server serves it directly.
-    client: { build: { outDir: ${JSON.stringify(publicAssetsDir)}, emptyOutDir: true, rollupOptions: { input: { index: ${JSON.stringify(browserEntry)} } } } },
-  },
-}
-
-${exportStatement}
-`
-}
-
-// ── Validation ───────────────────────────────────────────────────────────────
-
 /**
- * Extract the body of a file's default-exported function.
- *
- * Only the page component's OWN body matters for the loading.tsx rule — sibling
- * components declared in the same file render behind their own boundaries, so
- * their php() calls do not block the route's shell.
+ * Write the fallback config used when the app has none of its own — the plugin
+ * and nothing else, so a project works without a Vite config to maintain.
  */
-function defaultExportBody(source: string): string | null {
-  const match = source.match(/export\s+default\s+(?:async\s+)?function[^(]*\([^)]*\)\s*{/)
-  if (!match) return null
-
-  // Walk from the opening brace to its match, ignoring braces in strings.
-  let depth = 0
-  const start = match.index! + match[0].length - 1
-
-  for (let i = start; i < source.length; i++) {
-    const ch = source[i]
-    if (ch === '{') depth++
-    else if (ch === '}' && --depth === 0) return source.slice(start, i + 1)
-  }
-
-  return null
-}
-
-/** Does the page component's own render await php()? */
-function pageBlocksOnPhp(source: string): boolean {
-  const isAsyncDefault = /export\s+default\s+async\s+function/.test(source)
-  if (!isAsyncDefault) return false
-
-  const body = defaultExportBody(source)
-
-  return body !== null && /\bphp\s*[<(]|\bawait\s+php\b/.test(body)
-}
-
-/** Walk up from the page directory to app/ looking for a loading file. */
-function hasLoadingInChain(pageDir: string): boolean {
-  let dir = pageDir
-
-  while (dir.startsWith(appDir)) {
-    if (findRouteFile(dir, 'loading')) return true
-    if (dir === appDir) break
-    dir = dirname(dir)
-  }
-
-  return false
-}
-
-/**
- * A route needs loading.tsx only when the PAGE ITSELF blocks — an async default
- * export awaiting php(), or route.php resolving props() through a closure. Both
- * suspend before anything can paint, so without a boundary the user sees a
- * blank screen. A page whose slow work lives in children behind their own
- * <Suspense> already paints a shell and needs nothing.
- */
-function validateLoadingBoundaries(): string[] {
-  const errors: string[] = []
-
-  for (const c of components.values()) {
-    if (!c.name.endsWith('/page') && c.name !== 'app/page') continue
-
-    const pageDir = dirname(c.absPath)
-    const source = readFileSync(c.absPath, 'utf-8')
-
-    let reason: string | null = null
-
-    if (pageBlocksOnPhp(source)) {
-      reason = 'its default export awaits php()'
-    } else {
-      const routePhp = join(pageDir, 'route.php')
-      if (existsSync(routePhp) && /props\s*\(\s*(fn|function)\s*\(/.test(readFileSync(routePhp, 'utf-8'))) {
-        reason = 'route.php resolves props() through a closure'
-      }
-    }
-
-    if (reason && !hasLoadingInChain(pageDir)) {
-      errors.push(`  ${c.name} — ${reason}, but has no loading.tsx in its directory chain`)
-    }
-  }
-
-  return errors
-}
-
-// ── Run ────────────────────────────────────────────────────────────────────
-
-/**
- * Build entrypoint. Guarded so this module can be imported (by tests, or by
- * tooling that only wants the exported helpers) without running a build.
- */
-function main(): void {
-  if (!existsSync(appDir)) {
-    log(`No app directory at ${appDir} — nothing to build.`)
-    process.exit(1)
-  }
-
-  discover(appDir)
-  log(`Discovered ${components.size} route components:`, [...components.keys()].join(', '))
-
-  if (userViteConfig) {
-    log('Using app Vite config: ' + userViteConfig)
-  }
-
-  const loadingErrors = validateLoadingBoundaries()
-
-  if (loadingErrors.length) {
-    log('')
-    log('Error: a page that blocks before it can paint needs a loading.tsx boundary.')
-    log('')
-    for (const e of loadingErrors) log(e)
-    log('')
-    log('Add loading.tsx in the page directory (or a parent), or move the slow work')
-    log('into a child component wrapped in its own <Suspense> so the page can paint.')
-    process.exit(1)
-  }
-
-  if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true })
+export function writeDefaultConfig(pluginPath: string, target: string): string {
   mkdirSync(genDir, { recursive: true })
 
-  writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc())
-  writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr())
-  writeFileSync(join(genDir, 'entry.browser.tsx'), generateEntryBrowser())
-  writeFileSync(join(genDir, 'vite.config.mjs'), generateViteConfig())
+  writeFileSync(
+    target,
+    `// GENERATED by build-rsc-vite.ts — do not edit.
+// Add a vite.rsc.config.ts to your project root to take this over.
+import { larabun } from ${JSON.stringify(pluginPath)}
+import { defineConfig } from 'vite'
+
+export default defineConfig({ plugins: [larabun()] })
+`,
+  )
+
+  return target
+}
+
+function main(): void {
+  const userConfig = findUserViteConfig(projectRoot)
+  let configPath: string
+
+  if (userConfig) {
+    log(`Using app Vite config: ${userConfig}`)
+    configPath = userConfig
+  } else {
+    configPath = writeDefaultConfig(join(import.meta.dir, 'vite.ts'), join(genDir, 'vite.config.mjs'))
+  }
 
   const watch = process.env.BUN_RSC_WATCH === '1'
-  const viteArgs = [process.execPath, 'x', '--bun', 'vite', 'build', '--config', join(genDir, 'vite.config.mjs')]
+  const viteArgs = [process.execPath, 'x', '--bun', 'vite', 'build', '--config', configPath]
   if (watch) viteArgs.push('--watch')
 
-  log(`Generated entries; running vite build${watch ? ' --watch' : ''}...`)
+  log(`Running vite build${watch ? ' --watch' : ''}...`)
 
   const proc = Bun.spawnSync(viteArgs, {
     cwd: projectRoot,
-    env: { ...process.env, NODE_ENV: watch ? 'development' : 'production' },
+    env: {
+      ...process.env,
+      NODE_ENV: watch ? 'development' : 'production',
+      // Vite stages the config through node_modules/.vite-temp, so the plugin
+      // cannot locate this package from its own import.meta. Pass it through.
+      LARA_BUN_PACKAGE_DIR: import.meta.dir,
+    },
     stdout: 'inherit',
     stderr: 'inherit',
   })

@@ -17,7 +17,7 @@ Activate this skill when:
 - Implementing parallel routes (@folder) or route interception
 - Adding php() callables or server actions
 - Debugging streaming, Suspense, or hydration issues
-- Modifying the build pipeline (build-rsc-vite.ts, worker.ts)
+- Modifying the build pipeline (resources/vite.ts, worker.ts)
 
 ## File-Based Routing
 
@@ -218,7 +218,7 @@ The `stream-start` frame MUST be read eagerly from the main socket before enteri
 
 ## Build System
 
-`resources/build-rsc-vite.ts` — runs Vite with `@vitejs/plugin-rsc`:
+`resources/vite.ts` — the `larabun()` Vite plugin (`resources/build-rsc-vite.ts` is the thin CLI that picks a config and runs Vite):
 - Discovers `page`/`layout`/`loading`/`default` route components under `app/`
 - Generates the three plugin entries (rsc / ssr / browser) carrying LaraBun's
   `buildElement` composition and the worker's render contract
@@ -228,32 +228,39 @@ The `stream-start` frame MUST be read eagerly from the main socket before enteri
   hoists the `<title>`/`<meta>` rendered inside the tree
 ### Extending the build
 
-The engine owns the structural config — entries, output dirs, `base` — and has
-no opinion about plugins. An app adds its own in `vite.rsc.config.ts` at the
-project root (or point `BUN_RSC_VITE_CONFIG` anywhere), and they are merged in
-after `rsc()`:
+The build is a Vite plugin the app composes. Create `vite.rsc.config.ts` at the
+project root (or point `BUN_RSC_VITE_CONFIG` anywhere):
 
 ```ts
 // vite.rsc.config.ts
+import { larabun } from 'lara-bun/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [react({ compiler: true })],
+  plugins: [larabun(), react({ compiler: true })],
 })
 ```
 
-That enables the React Compiler — install `@vitejs/plugin-react` and
-`oxc-transform-react` in the app and it runs, no Babel involved. The Babel
-route still works if you need its options:
+`larabun()` discovers the `app/` route tree, generates the three entries, and
+supplies the structural config (entries, output dirs, `base`). It includes
+`@vitejs/plugin-rsc`, so you never add `rsc()` yourself. Vite runs this config
+directly — nothing is merged on top of it. Without a config the build falls
+back to `larabun()` alone, so a project works with no Vite config at all.
+
+Put `larabun()` first. A JSX transform running before `rsc()` sees the module
+graph before the client/server split; the build refuses with a message naming
+the offending plugin rather than failing somewhere unrelated.
+
+`react({ compiler: true })` enables the React Compiler — install
+`@vitejs/plugin-react` and `oxc-transform-react` in the app and it runs, no
+Babel involved. The Babel route still works if you need its options:
 
 ```ts
 react({ babel: { plugins: ['babel-plugin-react-compiler'] } })
 ```
 
-The same file is where Tailwind, extra aliases, or any other plugin belongs.
-`rsc()` always runs first, since a `react()` layer has to transform what it has
-already split into client and server graphs.
+Tailwind, aliases, and any other plugin belong in the same file.
 
 ### loading.tsx requirement
 

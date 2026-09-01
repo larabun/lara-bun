@@ -332,21 +332,81 @@ export async function handleRsc(
   return { body, rscPayload, clientChunks: {}, usedDynamicApis: false }
 }
 
-// PPR shell (worker: rsc-ppr-shell — build-time). Basic full-shell render for
-// now; true partial-prerender dynamic-API detection is a later stage.
+// PPR shell + classification (worker: rsc-ppr-shell — build-time).
+//
+// php() is replaced by a probe that records the call and never resolves, so
+// every subtree depending on per-request data stays suspended while everything
+// static renders normally. Whatever React has flushed when the deadline passes
+// IS the shell: layouts, static markup, and Suspense fallbacks.
+//
+// The two flags this returns are what the prerender pipeline classifies on:
+//   usedDynamicApis — the page touched php(), so it cannot be frozen whole
+//   timedOut        — the render never finished, i.e. it is still waiting on
+//                     data, so only the shell is safe to cache
+// A page that sets neither is genuinely static and can be prerendered fully.
+const PPR_SHELL_TIMEOUT_MS = Number(process.env.BUN_RSC_PPR_TIMEOUT_MS || 2000)
+
 export async function handleRscPprShell(
   component: string,
   props: Record<string, unknown> = {},
   layouts: LayoutEntry[] = [],
   loadings: string[] = [],
   parallelSlots: Record<string, string> = {},
-): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean }> {
-  applyPhp()
-  const flight = renderToReadableStream(await renderTree(component, props, layouts, loadings, parallelSlots, {}))
-  const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(flight)
-  const shellHtml = await new Response(htmlStream).text()
-  return { shellHtml, clientChunks: {}, timedOut: false, usedDynamicApis: false }
+): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean; error?: string }> {
+  let usedDynamicApis = false
+  const realPhp = (globalThis as any).php
+
+  ;(globalThis as any).php = (..._args: unknown[]) => {
+    usedDynamicApis = true
+    // Never resolves: the awaiting component suspends and React renders its
+    // Suspense fallback into the shell instead of the real content.
+    return new Promise(() => {})
+  }
+
+  let shellHtml = ''
+  let completed = false
+  let error: string | undefined
+  let cancel: (() => void) | null = null
+
+  const produce = (async () => {
+    try {
+      const tree = await renderTree(component, props, layouts, loadings, parallelSlots, {})
+      const flight = renderToReadableStream(tree)
+      const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
+      // Errors here are expected: the render is aborted once the shell is out.
+      const htmlStream = await ssr.handleSsr(flight, undefined, () => {})
+
+      const reader = htmlStream.getReader()
+      // Cancelling aborts the suspended SSR render, which surfaces React's
+      // "render was aborted" both synchronously and as a rejection. Neither is
+      // interesting — we already have the shell.
+      cancel = () => {
+        try {
+          const pending = reader.cancel()
+          if (pending && typeof pending.catch === 'function') pending.catch(() => {})
+        } catch {}
+      }
+      const decoder = new TextDecoder()
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        shellHtml += decoder.decode(value, { stream: true })
+      }
+
+      completed = true
+    } catch (e: any) {
+      error = e?.message ?? String(e)
+    }
+  })()
+
+  await Promise.race([produce, new Promise((r) => setTimeout(r, PPR_SHELL_TIMEOUT_MS))])
+
+  // Release the suspended render; its pending php() promises never settle.
+  if (!completed) cancel?.()
+  ;(globalThis as any).php = realPhp
+
+  return { shellHtml, clientChunks: {}, timedOut: !completed, usedDynamicApis, error }
 }
 
 export default async function handler(): Promise<Response> {
@@ -360,10 +420,21 @@ function generateEntrySsr(): string {
 import { createFromReadableStream } from '@vitejs/plugin-rsc/ssr'
 import { renderToReadableStream } from 'react-dom/server.edge'
 
-export async function handleSsr(rscStream: ReadableStream, nonce?: string): Promise<ReadableStream> {
+export async function handleSsr(
+  rscStream: ReadableStream,
+  nonce?: string,
+  onError?: (error: unknown) => void,
+): Promise<ReadableStream> {
   const root = await createFromReadableStream(rscStream)
   const bootstrapScriptContent = await (import.meta as any).viteRsc.loadBootstrapScriptContent('index')
-  return renderToReadableStream(root as any, { bootstrapScriptContent, nonce })
+  // Without an onError handler React rejects each abortable task on its own,
+  // and those rejections surface as unhandled — noisy for the PPR shell render,
+  // which aborts on purpose once it has the shell.
+  return renderToReadableStream(root as any, {
+    bootstrapScriptContent,
+    nonce,
+    onError: onError ?? ((error: unknown) => { console.error('[lara-bun:ssr]', error) }),
+  })
 }
 `
 }

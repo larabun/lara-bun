@@ -191,6 +191,56 @@ describe('suspense streaming', () => {
   })
 })
 
+describe('ppr classification', () => {
+  /**
+   * The build asks handleRscPprShell to classify each route. It swaps php()
+   * for a probe that never resolves, so anything depending on per-request data
+   * stays suspended and only the static shell is flushed. The two flags decide
+   * whether a page may be frozen whole, cached as a shell, or left dynamic.
+   */
+  test('reports a page with no php() as fully static', async () => {
+    const r = await engine.handleRscPprShell('app/static/page', {}, LAYOUTS, [], {})
+
+    expect(r.usedDynamicApis).toBe(false)
+    expect(r.timedOut).toBe(false)
+    // A static page renders to completion, so the shell IS the page.
+    expect(r.shellHtml).toContain('Static hello from vite engine')
+  })
+
+  test('reports a page that awaits php() as dynamic', async () => {
+    const r = await engine.handleRscPprShell('app/page', {}, LAYOUTS, ['app/loading'], {})
+
+    expect(r.usedDynamicApis).toBe(true)
+    expect(r.timedOut).toBe(true)
+  })
+
+  test('captures the loading.tsx fallback as the shell when the page itself blocks', async () => {
+    const r = await engine.handleRscPprShell('app/page', {}, LAYOUTS, ['app/loading'], {})
+
+    // The page never renders, so the shell is the layout plus the boundary.
+    expect(r.shellHtml).toContain('<nav>')
+    expect(r.shellHtml).not.toContain('Hello ')
+  })
+
+  test('captures the page markup as the shell when only a child is dynamic', async () => {
+    // This is the case PPR exists for: a real static shell with a hole in it.
+    const r = await engine.handleRscPprShell('app/slow2/page', {}, LAYOUTS, [], {})
+
+    expect(r.usedDynamicApis).toBe(true)
+    expect(r.shellHtml).toContain('id="slow2-shell"')
+    expect(r.shellHtml).not.toContain('arrived after')
+  })
+
+  test('leaves the real php() implementation installed afterwards', async () => {
+    await engine.handleRscPprShell('app/page', {}, LAYOUTS, ['app/loading'], {})
+
+    // The probe must not leak into subsequent request-time renders.
+    const { stream } = await engine.handleRscStream('app/page', { name: 'ramon' }, LAYOUTS, [], {}, {})
+
+    expect(await text(stream)).toContain('ramon')
+  })
+})
+
 describe('metadata', () => {
   test('applies the nearest layout title template to the page title', async () => {
     const md = await engine.resolveMetadata('app/page', {}, LAYOUTS)

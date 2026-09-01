@@ -2,11 +2,11 @@
 
 namespace LaraBun;
 
-use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\HtmlString;
+use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\ServiceProvider;
 use LaraBun\Console\BunDevCommand;
+use LaraBun\Console\BunInstallCommand;
 use LaraBun\Console\BunServeCommand;
 use LaraBun\Console\RscActionManifestCommand;
 use LaraBun\Console\RscBuildCommand;
@@ -37,7 +37,7 @@ class BunServiceProvider extends ServiceProvider
             // not bound
         }
 
-        return \Illuminate\Support\Facades\Vite::cspNonce();
+        return Vite::cspNonce();
     }
 
     public function register(): void
@@ -86,7 +86,6 @@ class BunServiceProvider extends ServiceProvider
         }
 
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'lara-bun');
-        $this->registerBladeDirectives();
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
@@ -99,6 +98,7 @@ class BunServiceProvider extends ServiceProvider
 
             $this->commands([
                 BunDevCommand::class,
+                BunInstallCommand::class,
                 BunServeCommand::class,
                 RscActionManifestCommand::class,
                 RscBuildCommand::class,
@@ -106,174 +106,5 @@ class BunServiceProvider extends ServiceProvider
                 RscRouteManifestCommand::class,
             ]);
         }
-    }
-
-    private function registerBladeDirectives(): void
-    {
-        Blade::directive('rscScripts', function (string $expression) {
-            return "<?php echo \LaraBun\BunServiceProvider::renderRscScripts({$expression}); ?>";
-        });
-
-        Blade::directive('rscHead', function () {
-            return "<?php echo \LaraBun\BunServiceProvider::renderRscHead(); ?>";
-        });
-
-        Blade::directive('rscNonce', function () {
-            return '<?php echo \LaraBun\BunServiceProvider::cspNonce() ? \'nonce="\' . e(\LaraBun\BunServiceProvider::cspNonce()) . \'"\' : \'\'; ?>';
-        });
-    }
-
-    /**
-     * Render <link rel="modulepreload"> hints for the hydrate entry, shared chunks,
-     * and component chunks. Place @rscHead in your <head> to eliminate critical
-     * request chains — the browser fetches all JS in parallel on first paint.
-     */
-    private static ?string $rscHeadCache = null;
-
-    public static function renderRscHead(): HtmlString
-    {
-        if (self::$rscHeadCache !== null) {
-            return new HtmlString(self::$rscHeadCache);
-        }
-
-        $tags = '';
-
-        // Font preloads — break the CSS → font dependency chain
-        $fontsManifest = base_path('bootstrap/rsc/css-manifest.json');
-
-        if (file_exists($fontsManifest)) {
-            $cssUrls = json_decode(file_get_contents($fontsManifest), true) ?? [];
-
-            // Extract font references from CSS URLs' sibling files/ directory
-            foreach ($cssUrls as $urls) {
-                foreach ($urls as $cssUrl) {
-                    $cssDir = dirname(public_path(ltrim($cssUrl, '/'))).'/files';
-
-                    if (is_dir($cssDir)) {
-                        foreach (glob("{$cssDir}/*.woff2") as $font) {
-                            $fontUrl = dirname($cssUrl).'/files/'.basename($font);
-                            $tags .= "\n    <link rel=\"preload\" href=\"{$fontUrl}\" as=\"font\" type=\"font/woff2\" crossorigin>";
-                        }
-
-                        break 2; // Fonts are shared across all CSS — only scan once
-                    }
-                }
-            }
-        }
-
-        // JS modulepreload from browser manifest — single file read, no globs
-        $manifestPath = base_path('bootstrap/rsc/browser-manifest.json');
-
-        if (file_exists($manifestPath)) {
-            /** @var array{entry?: string, shared?: string[], modules?: array<string, string[]>} $manifest */
-            $manifest = json_decode(file_get_contents($manifestPath), true) ?? [];
-
-            if (isset($manifest['entry'])) {
-                $tags .= "\n    <link rel=\"modulepreload\" href=\"{$manifest['entry']}\" crossorigin>";
-            }
-
-            foreach ($manifest['shared'] ?? [] as $chunk) {
-                $tags .= "\n    <link rel=\"modulepreload\" href=\"{$chunk}\" crossorigin>";
-            }
-
-            foreach ($manifest['modules'] ?? [] as $chunks) {
-                foreach ($chunks as $chunk) {
-                    $tags .= "\n    <link rel=\"modulepreload\" href=\"{$chunk}\" crossorigin>";
-                }
-            }
-        }
-
-        self::$rscHeadCache = $tags;
-
-        return new HtmlString($tags);
-    }
-
-    /**
-     * Render the inline script block and module tags needed to hydrate RSC client components.
-     *
-     * Accepts either a structured browser manifest (with entry/shared/modules) or
-     * a flat array of chunk URLs for backwards compatibility.
-     *
-     * @param  string  $rscPayload  The Flight payload string
-     * @param  array<string, mixed>|string[]  $browserManifest  Structured manifest or flat chunk array
-     */
-    public static function renderRscScripts(string $rscPayload, array $browserManifest): HtmlString
-    {
-        if ($browserManifest === []) {
-            return new HtmlString('');
-        }
-
-        // Support both structured manifest and legacy flat array
-        if (isset($browserManifest['entry'])) {
-            $entry = $browserManifest['entry'];
-            $shared = $browserManifest['shared'] ?? [];
-        } else {
-            // Legacy flat array — first chunk is entry, rest are shared
-            $entry = $browserManifest[0] ?? '';
-            $shared = array_slice($browserManifest, 1);
-        }
-
-        $encodedPayload = json_encode($rscPayload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG);
-        $nonce = static::cspNonce();
-        $nonceAttr = $nonce ? ' nonce="'.e($nonce).'"' : '';
-
-        // Only emit script tags for shared chunks + hydrate entry.
-        // Component chunks are loaded on demand by Flight via __webpack_chunk_load__.
-        $chunkTags = '';
-        foreach ($shared as $chunk) {
-            $escaped = e($chunk);
-            $chunkTags .= "\n    <script type=\"module\" src=\"{$escaped}\"{$nonceAttr}></script>";
-        }
-
-        $escapedEntry = e($entry);
-        $chunkTags .= "\n    <script type=\"module\" src=\"{$escapedEntry}\"{$nonceAttr}></script>";
-
-        $hmrScript = '';
-        $devFlagPath = storage_path('framework/rsc-dev');
-
-        if (file_exists($devFlagPath)) {
-            $hmrPort = (int) (file_get_contents($devFlagPath) ?: 3001);
-            $hmrScript = <<<HMRJS
-
-    <script{$nonceAttr}>
-        (function() {
-            var ws, timer;
-            function connect() {
-                ws = new WebSocket('ws://localhost:{$hmrPort}');
-                ws.onmessage = function(e) {
-                    if (e.data === 'reload' && window.__rsc_navigate) {
-                        window.__rsc_navigate(location.pathname + location.search, { replace: true, preserveScroll: true });
-                    } else {
-                        location.reload();
-                    }
-                };
-                ws.onclose = function() { timer = setTimeout(connect, 1000); };
-            }
-            connect();
-        })();
-    </script>
-HMRJS;
-        }
-
-        return new HtmlString(<<<HTML
-    <script{$nonceAttr}>
-        window.__RSC_PAYLOAD__ = {$encodedPayload};
-        window.__RSC_MODULES__ = {};
-        window.__webpack_require__ = function(id) { return window.__RSC_MODULES__[id]; };
-        window.__webpack_get_script_filename__ = function(chunkId) { return chunkId; };
-        window.__webpack_chunk_load__ = function(chunkUrl) {
-            return new Promise(function(resolve, reject) {
-                var existing = document.querySelector('script[src="' + chunkUrl + '"]');
-                if (existing) { resolve(); return; }
-                var script = document.createElement('script');
-                script.type = 'module';
-                script.src = chunkUrl;
-                script.onload = resolve;
-                script.onerror = reject;
-                document.head.appendChild(script);
-            });
-        };
-    </script>{$chunkTags}{$hmrScript}
-HTML);
     }
 }

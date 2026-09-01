@@ -25,7 +25,7 @@ Activate this skill when:
 ## Running Tests
 
 ```bash
-# From the test app directory (/Users/ramonmalcolm/Downloads/lara-bun)
+# From the package root (/Users/ramonmalcolm/Herd/lara-bun) — standalone testbench suite
 vendor/bin/pest --compact                           # all tests
 vendor/bin/pest tests/Feature/RouteInterceptionTest.php  # specific file
 vendor/bin/pest --filter="intercept"                # by name

@@ -3,8 +3,10 @@
 namespace LaraBun\Rsc;
 
 use Illuminate\Contracts\Support\Responsable;
+use Illuminate\Http\Request;
 use LaraBun\BunBridge;
 use LaraBun\BunServiceProvider;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RscResponse implements Responsable
@@ -154,9 +156,9 @@ class RscResponse implements Responsable
     }
 
     /**
-     * @param  \Illuminate\Http\Request  $request
+     * @param  Request  $request
      */
-    public function toResponse($request): \Symfony\Component\HttpFoundation\Response
+    public function toResponse($request): Response
     {
         $version = $this->version ?? $this->resolveVersion();
 
@@ -236,96 +238,42 @@ class RscResponse implements Responsable
     }
 
     /**
-     * Stream HTML for initial page loads with Suspense support.
+     * Stream the initial-load HTML.
      *
-     * React renders the shell (with Suspense fallbacks) immediately.
-     * As async components resolve, React injects completion <template> +
-     * <script> tags that swap in the resolved content. The browser handles
-     * this automatically — no client JS needed for the initial swap.
+     * The worker returns a COMPLETE HTML document — the root layout renders
+     * <html> and @vitejs/plugin-rsc injects the client bootstrap script + CSS
+     * <link>s into the streamed markup, with Suspense completions streaming as
+     * async content resolves. We stream it straight through.
      */
-    protected function toStreamedHtmlResponse(string $version, \Illuminate\Http\Request $request): StreamedResponse
+    protected function toStreamedHtmlResponse(string $version, Request $request): StreamedResponse
     {
         $bridge = app(BunBridge::class);
-        $nonce = \LaraBun\BunServiceProvider::cspNonce();
+        $nonce = BunServiceProvider::cspNonce();
         $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $nonce);
 
-        // First yield: {clientChunks: [...], metadata: {...}}
+        // First yield: {clientChunks, metadata}
         $meta = $generator->current();
-        $clientChunks = $meta['clientChunks'] ?? [];
-
-        // Apply page metadata as viewData defaults (route.php viewData takes precedence)
         $this->applyMetadataDefaults($meta['metadata'] ?? null);
 
-        $url = $request->getRequestUri();
-        $component = $this->component;
-
-        // Pre-render the Blade shell with placeholders so we can split it
-        // into head/tail and stream the RSC body between them.
-        $bodyMarker = '<!--__RSC_BODY__-->';
-        $initialMarker = '<!--__RSC_INITIAL__-->';
-        $scriptsMarker = '<!--__RSC_SCRIPTS__-->';
-        $rootView = $this->rootView ?? config('bun.rsc.root_view', 'lara-bun::rsc-app');
-
-        $shell = view($rootView, [
-            ...$this->viewData,
-            'body' => $bodyMarker,
-            'initialJson' => $initialMarker,
-            'scripts' => $scriptsMarker,
-            'cssLinks' => $this->resolveCssLinks(),
-        ])->render();
-
-        [$shellHead, $shellTail] = explode($bodyMarker, $shell, 2);
-
-        // Inject metadata tags into <head> automatically — no blade changes needed
-        $metaTags = $this->buildMetaTags();
-
-        if ($metaTags !== '' && stripos($shellHead, '</head>') !== false) {
-            $shellHead = str_ireplace('</head>', $metaTags."\n</head>", $shellHead);
-        }
-
-        return new StreamedResponse(function () use ($generator, $version, $url, $component, $clientChunks, $shellHead, $shellTail, $initialMarker, $scriptsMarker): void {
+        return new StreamedResponse(function () use ($generator): void {
             while (ob_get_level() > 0) {
                 ob_end_flush();
             }
 
-            // HTML head — send immediately so the browser starts parsing
-            echo $shellHead;
-            flush();
-
-            // Stream HTML body chunks from Bun (shell + Suspense completions)
             $generator->next();
-            $rscPayload = '';
 
             while ($generator->valid()) {
                 $value = $generator->current();
 
-                if (is_array($value) && isset($value['rscPayload'])) {
-                    $rscPayload = $value['rscPayload'];
-                    $generator->next();
-
-                    continue;
+                // String yields are HTML chunks; the trailing {rscPayload} array
+                // is skipped (the client hydrates from the RSC endpoint).
+                if (! is_array($value)) {
+                    echo $value;
+                    flush();
                 }
 
-                echo $value;
-                flush();
                 $generator->next();
             }
-
-            // Replace the placeholder scripts/initial in the tail
-            $initialJson = json_encode([
-                'url' => $url,
-                'component' => $component,
-                'version' => $version,
-            ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
-
-            $tail = str_replace(
-                [$initialMarker, $scriptsMarker],
-                [$initialJson, BunServiceProvider::renderRscScripts($rscPayload, $clientChunks)],
-                $shellTail,
-            );
-
-            echo $tail;
-            flush();
         }, $this->statusCode, [
             'Content-Type' => 'text/html; charset=utf-8',
             'X-Accel-Buffering' => 'no',
@@ -445,7 +393,6 @@ class RscResponse implements Responsable
      *   - array: icons: [{ url: "/icon.png", sizes: "32x32" }]
      *   - object: icons: { icon: "/favicon.ico", apple: "/apple-touch-icon.png" }
      *
-     * @param  mixed  $icons
      * @return string[]
      */
     protected function buildIconTags(mixed $icons): array

@@ -4,6 +4,7 @@ namespace LaraBun\Console;
 
 use Illuminate\Console\Command;
 use LaraBun\BunBridge;
+use LaraBun\Support\BunBinary;
 
 class BunServeCommand extends Command
 {
@@ -23,12 +24,25 @@ class BunServeCommand extends Command
 
     private const MAX_CONSECUTIVE_FAILURES = 5;
 
+    private string $transport = 'unix';
+
+    private string $host = '127.0.0.1';
+
+    private int $basePort = 7940;
+
+    private int $workerCount = 1;
+
     public function handle(): int
     {
         $baseSocketPath = $this->option('socket') ?? config('bun.socket_path', '/tmp/bun-bridge.sock');
         $functionsDir = config('bun.functions_dir', resource_path('bun'));
         $workerCount = max(1, (int) config('bun.workers', 1));
         $workerPath = realpath(__DIR__.'/../../resources/worker.ts');
+
+        $this->workerCount = $workerCount;
+        $this->transport = config('bun.transport', 'unix') === 'tcp' ? 'tcp' : 'unix';
+        $this->host = (string) config('bun.host', '127.0.0.1');
+        $this->basePort = (int) config('bun.port', 7940);
 
         if ($workerPath === false) {
             $this->error('Worker not found in package resources');
@@ -41,7 +55,7 @@ class BunServeCommand extends Command
         $bunPath = $this->findBun();
 
         if ($bunPath === null) {
-            $this->error('Bun executable not found. Install it via: curl -fsSL https://bun.sh/install | bash');
+            $this->error('Bun executable not found. Run: php artisan bun:install (or set BUN_BINARY to its path).');
 
             return self::FAILURE;
         }
@@ -80,18 +94,17 @@ class BunServeCommand extends Command
         string $bunPath,
         ?string $rscBundle = null,
     ): int {
-        $this->info("Starting Bun bridge on {$socketPath}");
+        $this->socketPaths[0] = $this->transport === 'tcp'
+            ? $this->host.':'.BunBridge::tcpPorts($this->basePort, $this->workerCount, 0)['main']
+            : $socketPath;
+
+        $this->info("Starting Bun bridge on {$this->socketPaths[0]}");
         $this->outputConfig($functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath);
 
-        if (! $this->option('watch')) {
-            return $this->runBlocking($socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath, $rscBundle);
-        }
-
-        $this->socketPaths[0] = $socketPath;
         $this->lastBuildTime = $this->getBuildTime();
         $this->trapSignals();
 
-        $process = $this->spawnWorker($bunPath, $workerPath, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+        $process = $this->spawnWorker($bunPath, $workerPath, 0, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
         if ($process === null) {
             $this->error('Failed to start Bun process');
@@ -100,111 +113,17 @@ class BunServeCommand extends Command
         }
 
         $this->processes[0] = $process;
-        $this->info('Watching for RSC build changes...');
 
-        while (true) {
-            pcntl_signal_dispatch();
-
-            if ($this->processes === []) {
-                return self::SUCCESS;
-            }
-
-            // Check if the build output changed
-            $currentBuildTime = $this->getBuildTime();
-
-            if ($currentBuildTime > $this->lastBuildTime) {
-                $this->lastBuildTime = $currentBuildTime;
-                $this->consecutiveFailures = 0;
-                $this->newLine();
-                $this->info('Build change detected — restarting worker...');
-
-                $this->shutdownAll();
-
-                // Small delay for the build to finish writing all files
-                usleep(500_000);
-
-                $process = $this->spawnWorker($bunPath, $workerPath, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
-
-                if ($process === null) {
-                    $this->error('Failed to restart worker');
-
-                    return self::FAILURE;
-                }
-
-                $this->processes[0] = $process;
-                $this->info('Worker restarted.');
-            }
-
-            // Check if the worker died
-            $status = proc_get_status($this->processes[0]);
-
-            if (! $status['running']) {
-                proc_close($this->processes[0]);
-
-                if ($status['exitcode'] !== 0) {
-                    $this->consecutiveFailures++;
-
-                    if ($this->consecutiveFailures >= self::MAX_CONSECUTIVE_FAILURES) {
-                        $this->error("Worker crashed {$this->consecutiveFailures} times consecutively. Stopping.");
-                        $this->error('Fix the error above and restart with: php artisan bun:serve');
-
-                        return self::FAILURE;
-                    }
-
-                    $this->warn("Worker exited with code {$status['exitcode']}, restarting ({$this->consecutiveFailures}/".self::MAX_CONSECUTIVE_FAILURES.')...');
-
-                    usleep(1_000_000 * $this->consecutiveFailures); // Back off: 1s, 2s, 3s...
-
-                    $process = $this->spawnWorker($bunPath, $workerPath, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
-
-                    if ($process === null) {
-                        $this->error('Failed to restart worker');
-
-                        return self::FAILURE;
-                    }
-
-                    $this->processes[0] = $process;
-                } else {
-                    unset($this->processes[0]);
-                }
-            }
-
-            usleep(100_000); // 100ms
-        }
-    }
-
-    private function runBlocking(
-        string $socketPath,
-        string $functionsDir,
-        bool $hasFunctionsDir,
-        string $entryPoints,
-        string $workerPath,
-        string $bunPath,
-        ?string $rscBundle = null,
-    ): int {
-        $env = $this->buildWorkerEnv($socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
-
-        $process = proc_open(
-            [$bunPath, 'run', $workerPath],
-            [
-                0 => STDIN,
-                1 => STDERR,
-                2 => STDERR,
-            ],
-            $pipes,
-            base_path(),
-            $env,
-        );
-
-        if (! is_resource($process)) {
-            $this->error('Failed to start Bun process');
-
-            return self::FAILURE;
+        if ($this->option('watch')) {
+            $this->info('Watching for RSC build changes...');
         }
 
-        $status = proc_close($process);
-
-        return $status === 0 ? self::SUCCESS : self::FAILURE;
+        // Supervise the worker in every mode (not just --watch): a crashed
+        // worker is auto-restarted with backoff so a bare `bun:serve` is
+        // production-safe without an external process manager. This is process
+        // liveness supervision (a cheap proc_get_status poll off the request
+        // path) — filesystem watching for rebuilds only happens under --watch.
+        return $this->monitorProcesses($bunPath, $workerPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
     }
 
     private function serveMultiple(
@@ -220,7 +139,9 @@ class BunServeCommand extends Command
         $base = preg_replace('/\.sock$/', '', $baseSocketPath);
 
         for ($i = 0; $i < $workerCount; $i++) {
-            $this->socketPaths[$i] = "{$base}-{$i}.sock";
+            $this->socketPaths[$i] = $this->transport === 'tcp'
+                ? $this->host.':'.BunBridge::tcpPorts($this->basePort, $workerCount, $i)['main']
+                : "{$base}-{$i}.sock";
         }
 
         $this->info("Starting Bun bridge with {$workerCount} workers");
@@ -235,7 +156,7 @@ class BunServeCommand extends Command
         $this->trapSignals();
 
         for ($i = 0; $i < $workerCount; $i++) {
-            $process = $this->spawnWorker($bunPath, $workerPath, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+            $process = $this->spawnWorker($bunPath, $workerPath, $i, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
             if ($process === null) {
                 $this->error("Failed to start worker {$i}");
@@ -256,13 +177,14 @@ class BunServeCommand extends Command
     private function spawnWorker(
         string $bunPath,
         string $workerPath,
+        int $index,
         string $socketPath,
         string $functionsDir,
         bool $hasFunctionsDir,
         string $entryPoints,
         ?string $rscBundle = null,
     ) {
-        $env = $this->buildWorkerEnv($socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+        $env = $this->buildWorkerEnv($index, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
         $process = proc_open(
             [$bunPath, 'run', $workerPath],
@@ -295,6 +217,9 @@ class BunServeCommand extends Command
     ): int {
         $watching = $this->option('watch');
 
+        $count = count($this->processes);
+        $this->info("Supervising {$count} worker(s) — auto-restart on crash.".($watching ? ' Watching for rebuilds.' : ''));
+
         while (true) {
             pcntl_signal_dispatch();
 
@@ -315,7 +240,7 @@ class BunServeCommand extends Command
                     usleep(500_000);
 
                     foreach ($this->socketPaths as $i => $socketPath) {
-                        $process = $this->spawnWorker($bunPath, $workerPath, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+                        $process = $this->spawnWorker($bunPath, $workerPath, $i, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
                         if ($process === null) {
                             $this->error("Failed to restart worker {$i}, shutting down");
@@ -357,7 +282,7 @@ class BunServeCommand extends Command
 
                     usleep(1_000_000 * $this->consecutiveFailures);
 
-                    $newProcess = $this->spawnWorker($bunPath, $workerPath, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+                    $newProcess = $this->spawnWorker($bunPath, $workerPath, $i, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
                     if ($newProcess === null) {
                         $this->error("Failed to restart worker {$i}, shutting down");
@@ -441,7 +366,7 @@ class BunServeCommand extends Command
 
         if ($postMaxSize > 0 && $postMaxSize < $bodySizeLimit) {
             $this->warn(
-                "PHP's post_max_size (".ini_get('post_max_size').") is lower than body_size_limit ("
+                "PHP's post_max_size (".ini_get('post_max_size').') is lower than body_size_limit ('
                 .config('bun.rsc.body_size_limit', '25mb').'). '
                 .'PHP will silently reject server action payloads above '.ini_get('post_max_size').'.'
             );
@@ -470,13 +395,22 @@ class BunServeCommand extends Command
     /**
      * @return array<string, string>
      */
-    private function buildWorkerEnv(string $socketPath, string $functionsDir, bool $hasFunctionsDir, string $entryPoints, ?string $rscBundle = null): array
+    private function buildWorkerEnv(int $index, string $socketPath, string $functionsDir, bool $hasFunctionsDir, string $entryPoints, ?string $rscBundle = null): array
     {
         // Start with inherited environment — proc_open replaces the entire
         // env when an array is passed, so we must include PATH, HOME, etc.
         $env = getenv();
 
-        $env['BUN_BRIDGE_SOCKET'] = $socketPath;
+        if ($this->transport === 'tcp') {
+            $ports = BunBridge::tcpPorts($this->basePort, $this->workerCount, $index);
+            $env['BUN_TRANSPORT'] = 'tcp';
+            $env['BUN_HOST'] = $this->host;
+            $env['BUN_MAIN_PORT'] = (string) $ports['main'];
+            $env['BUN_CB_PORT'] = (string) $ports['cb'];
+        } else {
+            $env['BUN_BRIDGE_SOCKET'] = $socketPath;
+        }
+
         $env['NODE_ENV'] = $this->option('watch') ? 'development' : 'production';
 
         if ($hasFunctionsDir) {
@@ -537,24 +471,6 @@ class BunServeCommand extends Command
 
     private function findBun(): ?string
     {
-        $candidates = [
-            '/opt/homebrew/bin/bun',
-            '/usr/local/bin/bun',
-            ($_SERVER['HOME'] ?? '').'/.bun/bin/bun',
-        ];
-
-        foreach ($candidates as $path) {
-            if (is_executable($path)) {
-                return $path;
-            }
-        }
-
-        $which = trim((string) shell_exec('which bun 2>/dev/null'));
-
-        if ($which !== '' && is_executable($which)) {
-            return $which;
-        }
-
-        return null;
+        return BunBinary::resolve();
     }
 }

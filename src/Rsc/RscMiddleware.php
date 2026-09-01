@@ -13,7 +13,7 @@ class RscMiddleware
      */
     public function version(Request $request): string
     {
-        $buildDir = public_path('build/rsc');
+        $buildDir = config('bun.rsc.assets_dir', public_path('build/rsc-vite'));
 
         if (! is_dir($buildDir)) {
             return '';

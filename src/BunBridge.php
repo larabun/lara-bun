@@ -13,7 +13,7 @@ use Socket;
 class BunBridge
 {
     /** @var string[] */
-    private array $socketPaths;
+    private array $socketPaths = [];
 
     /**
      * Pool of available (idle) sockets per worker index.
@@ -26,7 +26,18 @@ class BunBridge
     private array $cbPool = [];
 
     /** @var string[] */
-    private array $cbSocketPaths;
+    private array $cbSocketPaths = [];
+
+    /** 'unix' | 'tcp' */
+    private string $transport = 'unix';
+
+    private string $host = '127.0.0.1';
+
+    /** @var array<int, int> per-worker main TCP port */
+    private array $mainPorts = [];
+
+    /** @var array<int, int> per-worker callback TCP port */
+    private array $cbPorts = [];
 
     private int $cbIdCounter = 0;
 
@@ -42,10 +53,25 @@ class BunBridge
             throw new RuntimeException('The sockets extension is required. Enable it in php.ini.');
         }
 
-        $basePath = config('bun.socket_path', '/tmp/bun-bridge.sock');
         $this->workerCount = max(1, (int) config('bun.workers', 1));
         $this->currentWorker = $this->workerCount > 1 ? random_int(0, $this->workerCount - 1) : 0;
         $this->maxFrameSize = self::parseSize(config('bun.rsc.body_size_limit', '1mb'));
+        $this->transport = config('bun.transport', 'unix') === 'tcp' ? 'tcp' : 'unix';
+
+        if ($this->transport === 'tcp') {
+            $this->host = (string) config('bun.host', '127.0.0.1');
+            $basePort = (int) config('bun.port', 7940);
+
+            for ($i = 0; $i < $this->workerCount; $i++) {
+                $ports = self::tcpPorts($basePort, $this->workerCount, $i);
+                $this->mainPorts[$i] = $ports['main'];
+                $this->cbPorts[$i] = $ports['cb'];
+            }
+
+            return;
+        }
+
+        $basePath = config('bun.socket_path', '/tmp/bun-bridge.sock');
 
         if ($this->workerCount === 1) {
             $this->socketPaths = [$basePath];
@@ -58,6 +84,21 @@ class BunBridge
                 $this->cbSocketPaths[] = "{$base}-{$i}.sock.cb";
             }
         }
+    }
+
+    /**
+     * Per-worker TCP port assignment, shared by PHP and the serve command so
+     * both sides agree. Main ports occupy [base, base+N); callback ports follow
+     * at [base+N, base+2N), so the two ranges never overlap.
+     *
+     * @return array{main: int, cb: int}
+     */
+    public static function tcpPorts(int $basePort, int $workerCount, int $index): array
+    {
+        return [
+            'main' => $basePort + $index,
+            'cb' => $basePort + $workerCount + $index,
+        ];
     }
 
     public function call(string $function, array $args = []): mixed
@@ -132,6 +173,7 @@ class BunBridge
         $mainSocket = $this->checkout($index);
         $callbackId = $hasCallbacks ? $this->nextCallbackId() : null;
         $callbackSocket = null;
+        $callbackBuffer = '';
 
         try {
             if ($hasCallbacks && $callbackId) {
@@ -145,8 +187,6 @@ class BunBridge
                 'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
-
-            $callbackBuffer = '';
 
             while (true) {
                 $read = [$mainSocket];
@@ -196,7 +236,10 @@ class BunBridge
             throw $e;
         } finally {
             if ($callbackSocket !== null) {
-                $this->releaseCallback($index, $callbackSocket);
+                // $mainSocket is nulled only on the successful return path; the
+                // catch above closes it on error without nulling. A non-empty
+                // buffer means a partial callback frame remains.
+                $this->releaseCallback($index, $callbackSocket, $mainSocket === null && $callbackBuffer === '');
             }
         }
     }
@@ -226,6 +269,8 @@ class BunBridge
         $callbackId = $hasCallbacks ? $this->nextCallbackId() : null;
         $callbackSocket = null;
 
+        $callbackBuffer = '';
+
         try {
             if ($hasCallbacks && $callbackId) {
                 $callbackSocket = $this->checkoutCallback($index, $callbackId);
@@ -240,10 +285,11 @@ class BunBridge
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
 
-            // Read stream-start eagerly from the main socket BEFORE entering
-            // the select loop. This ensures HTTP headers are sent immediately
-            // even if a php() callback arrives first on the callback socket.
-            $startFrame = $this->readFrame($mainSocket);
+            // Read stream-start before the main loop so HTTP headers flush
+            // immediately, but service callbacks while waiting — metadata
+            // resolution on the worker may itself issue php() calls, which would
+            // otherwise deadlock against a bare readFrame() here.
+            $startFrame = $this->readStartFrame($mainSocket, $callbackSocket, $registry, $callbackBuffer);
             $this->throwIfAuthError($startFrame);
 
             if (isset($startFrame['error'])) {
@@ -255,7 +301,7 @@ class BunBridge
                 'metadata' => $startFrame['metadata'] ?? null,
             ];
 
-            $callbackBuffer = '';
+            $idleTimeout = $this->streamIdleTimeout();
 
             while (true) {
                 $read = [$mainSocket];
@@ -266,10 +312,14 @@ class BunBridge
 
                 $write = [];
                 $except = [];
-                $changed = socket_select($read, $write, $except, null);
+                $changed = socket_select($read, $write, $except, $idleTimeout);
 
                 if ($changed === false) {
                     throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
+                }
+
+                if ($changed === 0) {
+                    throw new RuntimeException("Bun RSC stream exceeded {$idleTimeout}s idle timeout");
                 }
 
                 // Always drain the main socket first — yield stream chunks to
@@ -341,7 +391,10 @@ class BunBridge
             }
 
             if ($callbackSocket !== null) {
-                $this->releaseCallback($index, $callbackSocket);
+                // $mainSocket is nulled only on clean completion; a non-empty
+                // buffer means a partial callback frame is still pending. Either
+                // makes the socket unsafe to pool.
+                $this->releaseCallback($index, $callbackSocket, $mainSocket === null && $callbackBuffer === '');
             }
         }
     }
@@ -373,6 +426,8 @@ class BunBridge
         $callbackId = $hasCallbacks ? $this->nextCallbackId() : null;
         $callbackSocket = null;
 
+        $callbackBuffer = '';
+
         try {
             if ($hasCallbacks && $callbackId) {
                 $callbackSocket = $this->checkoutCallback($index, $callbackId);
@@ -388,8 +443,11 @@ class BunBridge
                 'nonce' => $nonce,
             ], JSON_THROW_ON_ERROR));
 
-            // Read html-start eagerly before entering the select loop
-            $startFrame = $this->readFrame($mainSocket);
+            // Read html-start before the main loop so HTTP headers flush
+            // immediately, but service callbacks while waiting — metadata
+            // resolution on the worker may itself issue php() calls, which would
+            // otherwise deadlock against a bare readFrame() here.
+            $startFrame = $this->readStartFrame($mainSocket, $callbackSocket, $registry, $callbackBuffer);
             $this->throwIfAuthError($startFrame);
 
             if (isset($startFrame['error'])) {
@@ -398,7 +456,7 @@ class BunBridge
 
             yield ['clientChunks' => $startFrame['clientChunks'] ?? [], 'metadata' => $startFrame['metadata'] ?? null];
 
-            $callbackBuffer = '';
+            $idleTimeout = $this->streamIdleTimeout();
 
             while (true) {
                 $read = [$mainSocket];
@@ -409,10 +467,14 @@ class BunBridge
 
                 $write = [];
                 $except = [];
-                $changed = socket_select($read, $write, $except, null);
+                $changed = socket_select($read, $write, $except, $idleTimeout);
 
                 if ($changed === false) {
                     throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
+                }
+
+                if ($changed === 0) {
+                    throw new RuntimeException("Bun RSC HTML stream exceeded {$idleTimeout}s idle timeout");
                 }
 
                 if (in_array($mainSocket, $read, true)) {
@@ -485,7 +547,10 @@ class BunBridge
             }
 
             if ($callbackSocket !== null) {
-                $this->releaseCallback($index, $callbackSocket);
+                // $mainSocket is nulled only on clean completion; a non-empty
+                // buffer means a partial callback frame is still pending. Either
+                // makes the socket unsafe to pool.
+                $this->releaseCallback($index, $callbackSocket, $mainSocket === null && $callbackBuffer === '');
             }
         }
     }
@@ -509,6 +574,7 @@ class BunBridge
         $mainSocket = $this->checkout($index);
         $callbackId = $hasCallbacks ? $this->nextCallbackId() : null;
         $callbackSocket = null;
+        $callbackBuffer = '';
 
         try {
             if ($hasCallbacks && $callbackId) {
@@ -526,7 +592,7 @@ class BunBridge
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
 
-            $callbackBuffer = '';
+            $idleTimeout = $this->streamIdleTimeout();
 
             while (true) {
                 $read = [$mainSocket];
@@ -535,10 +601,14 @@ class BunBridge
                 }
                 $write = [];
                 $except = [];
-                $changed = socket_select($read, $write, $except, null);
+                $changed = socket_select($read, $write, $except, $idleTimeout);
 
                 if ($changed === false) {
                     throw new RuntimeException('socket_select() failed');
+                }
+
+                if ($changed === 0) {
+                    throw new RuntimeException("Bun RSC action exceeded {$idleTimeout}s idle timeout");
                 }
 
                 if (in_array($mainSocket, $read, true)) {
@@ -560,6 +630,7 @@ class BunBridge
                     }
                     if ($type === 'action-chunk') {
                         yield $frame['data'] ?? '';
+
                         continue;
                     }
                     if ($type === 'action-end') {
@@ -578,7 +649,7 @@ class BunBridge
                 @socket_close($mainSocket);
             }
             if ($callbackSocket !== null) {
-                $this->releaseCallback($index, $callbackSocket);
+                $this->releaseCallback($index, $callbackSocket, $mainSocket === null && $callbackBuffer === '');
             }
         }
     }
@@ -780,41 +851,45 @@ class BunBridge
      */
     private function readFrame(Socket $socket): array
     {
-        $header = socket_read($socket, 4, PHP_BINARY_READ);
-
-        if ($header === false || strlen($header) < 4) {
-            throw new RuntimeException('Failed to read from socket');
-        }
-
-        $length = unpack('N', $header)[1];
+        $length = unpack('N', $this->readExactly($socket, 4))[1];
 
         if ($length <= 0 || $length > $this->maxFrameSize) {
             throw new RuntimeException('Invalid frame length from socket');
         }
 
-        $body = socket_read($socket, $length, PHP_BINARY_READ);
-
-        if ($body === false || $body === '') {
-            throw new RuntimeException('Failed to read from socket');
-        }
-
-        while (strlen($body) < $length) {
-            $chunk = socket_read($socket, $length - strlen($body), PHP_BINARY_READ);
-
-            if ($chunk === false || $chunk === '') {
-                throw new RuntimeException('Failed to read from socket');
-            }
-
-            $body .= $chunk;
-        }
-
-        $data = json_decode($body, true);
+        $data = json_decode($this->readExactly($socket, $length), true);
 
         if (! is_array($data)) {
             throw new RuntimeException('Invalid JSON response from socket');
         }
 
         return $data;
+    }
+
+    /**
+     * Read exactly $length bytes, looping until satisfied.
+     *
+     * A single socket_read on a stream socket may return fewer bytes than
+     * requested — including a partial 4-byte header when the worker's write
+     * lands across packet boundaries under load. Treating a short read as
+     * fatal caused sporadic "Failed to read from socket" errors on large
+     * streamed payloads, so both the header and body are read through here.
+     */
+    private function readExactly(Socket $socket, int $length): string
+    {
+        $buffer = '';
+
+        while (strlen($buffer) < $length) {
+            $chunk = socket_read($socket, $length - strlen($buffer), PHP_BINARY_READ);
+
+            if ($chunk === false || $chunk === '') {
+                throw new RuntimeException('Failed to read from socket');
+            }
+
+            $buffer .= $chunk;
+        }
+
+        return $buffer;
     }
 
     /**
@@ -845,12 +920,22 @@ class BunBridge
 
     /**
      * Check out a socket from the pool for exclusive use.
-     * Creates a new connection if no idle sockets are available.
+     *
+     * Pooled sockets the worker closed while they sat idle (restart, deploy,
+     * crash) are detected and discarded here, so a stale connection surfaces
+     * as a fresh reconnect rather than a 500 on the next request. Creates a
+     * new connection when none are idle.
      */
     private function checkout(int $index): Socket
     {
-        if (! empty($this->pool[$index])) {
-            return array_pop($this->pool[$index]);
+        while (! empty($this->pool[$index])) {
+            $socket = array_pop($this->pool[$index]);
+
+            if (! $this->socketHasPendingData($socket)) {
+                return $socket;
+            }
+
+            @socket_close($socket);
         }
 
         return $this->createSocket($index);
@@ -870,75 +955,144 @@ class BunBridge
      */
     private function checkoutCallback(int $index, string $callbackId): Socket
     {
-        if (! empty($this->cbPool[$index])) {
+        while (! empty($this->cbPool[$index])) {
             $socket = array_pop($this->cbPool[$index]);
 
-            // Re-register with new callbackId
-            $this->writeFrame($socket, json_encode([
-                'type' => 'register',
-                'id' => $callbackId,
-            ], JSON_THROW_ON_ERROR));
+            // Skip sockets the worker closed while idle.
+            if ($this->socketHasPendingData($socket)) {
+                @socket_close($socket);
 
-            return $socket;
+                continue;
+            }
+
+            try {
+                // Re-register with the new callbackId.
+                $this->writeFrame($socket, json_encode([
+                    'type' => 'register',
+                    'id' => $callbackId,
+                ], JSON_THROW_ON_ERROR));
+
+                return $socket;
+            } catch (RuntimeException) {
+                // Socket died between the liveness check and the register
+                // write; discard it and try the next pooled connection.
+                @socket_close($socket);
+            }
         }
 
         return $this->createCallbackSocket($index, $callbackId);
     }
 
-    private function releaseCallback(int $index, Socket $socket): void
+    private function releaseCallback(int $index, Socket $socket, bool $clean = true): void
     {
+        // A dirty callback socket must never be pooled. If a partial frame was
+        // buffered, an unanswered callback request is still on the wire, or the
+        // render ended via an exception, the next request to check this socket
+        // out would resume mid-frame or execute a stale callback under the
+        // wrong session/auth context. Discard it and let the pool recreate a
+        // fresh connection.
+        if (! $clean || $this->socketHasPendingData($socket)) {
+            @socket_close($socket);
+
+            return;
+        }
+
         $this->cbPool[$index][] = $socket;
+    }
+
+    /**
+     * Non-blocking check for unread bytes (or EOF) on a socket.
+     *
+     * A healthy idle pooled socket has nothing to read. If select reports it
+     * readable, the worker either closed the connection (EOF) or left an
+     * unconsumed frame on the wire — in both cases the socket is unsafe to
+     * reuse and must be discarded rather than pooled.
+     */
+    private function socketHasPendingData(Socket $socket): bool
+    {
+        $read = [$socket];
+        $write = [];
+        $except = [];
+
+        return @socket_select($read, $write, $except, 0) > 0;
+    }
+
+    /**
+     * Idle timeout (seconds) for the streaming select loops. Bounds how long a
+     * hung render may hold an FPM worker before it is aborted.
+     */
+    private function streamIdleTimeout(): int
+    {
+        return max(1, (int) config('bun.rsc.stream_timeout', 30));
+    }
+
+    /**
+     * Read the opening frame of a stream (stream-start / html-start) while
+     * concurrently servicing php() callbacks on the callback socket.
+     *
+     * The Bun worker resolves page metadata (generateMetadata) before it emits
+     * the opening frame, and that resolution may itself issue php() callbacks.
+     * A bare readFrame() here would never answer those callbacks, so the worker
+     * could never produce the opening frame — both sides deadlock until the
+     * socket timeout fires. Servicing callbacks during the wait preserves the
+     * "opening frame yielded first" guarantee without the deadlock.
+     *
+     * @return array<string, mixed>
+     */
+    private function readStartFrame(Socket $mainSocket, ?Socket $callbackSocket, CallableRegistry $registry, string &$callbackBuffer): array
+    {
+        if ($callbackSocket === null) {
+            return $this->readFrame($mainSocket);
+        }
+
+        $timeout = $this->streamIdleTimeout();
+
+        while (true) {
+            $read = [$mainSocket, $callbackSocket];
+            $write = [];
+            $except = [];
+
+            $changed = socket_select($read, $write, $except, $timeout);
+
+            if ($changed === false) {
+                throw new RuntimeException('socket_select() failed: '.socket_strerror(socket_last_error()));
+            }
+
+            if ($changed === 0) {
+                throw new RuntimeException("Bun render exceeded {$timeout}s idle timeout waiting for stream start");
+            }
+
+            // Prioritise the opening frame. If it is ready the worker has
+            // already resolved metadata, so any pending callback is for the
+            // streaming body and the main loop will drain it after we return.
+            if (in_array($mainSocket, $read, true)) {
+                return $this->readFrame($mainSocket);
+            }
+
+            if (in_array($callbackSocket, $read, true)) {
+                $this->handleCallbackData($callbackSocket, $callbackBuffer, $registry);
+            }
+        }
     }
 
     private function createCallbackSocket(int $index, string $callbackId): Socket
     {
-        $path = $this->cbSocketPaths[$index];
-
-        if (! file_exists($path)) {
-            throw new RuntimeException(
-                "Bun callback socket not found at {$path}. Ensure bun:serve is running."
+        if ($this->transport === 'tcp') {
+            $port = $this->cbPorts[$index];
+            $socket = $this->connectWithRetry(
+                fn () => $this->openConnection(true, $this->host, $port, "Bun callback listener {$this->host}:{$port}"),
             );
-        }
+        } else {
+            $path = $this->cbSocketPaths[$index];
 
-        $socket = socket_create(AF_UNIX, SOCK_STREAM, 0);
-
-        if ($socket === false) {
-            throw new RuntimeException(
-                'Failed to create callback socket: '.socket_strerror(socket_last_error())
-            );
-        }
-
-        $connected = @socket_connect($socket, $path);
-
-        if (! $connected) {
-            $error = socket_last_error($socket);
-
-            if ($error === SOCKET_EINPROGRESS || $error === SOCKET_EALREADY || $error === 0) {
-                socket_set_nonblock($socket);
-                $write = [$socket];
-                $read = null;
-                $except = null;
-
-                $ready = socket_select($read, $write, $except, 3);
-
-                if ($ready === false || $ready === 0) {
-                    socket_close($socket);
-
-                    throw new RuntimeException('Callback socket connection timed out');
-                }
-
-                socket_set_block($socket);
-            } else {
-                $errorMsg = socket_strerror($error);
-                socket_close($socket);
-
-                throw new RuntimeException("Failed to connect to callback socket: {$errorMsg}");
+            if (! file_exists($path)) {
+                throw new RuntimeException(
+                    "Bun callback socket not found at {$path}. Ensure bun:serve is running."
+                );
             }
-        }
 
-        $timeout = ['sec' => 10, 'usec' => 0];
-        socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, $timeout);
-        socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, $timeout);
+            $socket = $this->openConnection(false, $path, null, "Bun callback socket at {$path}");
+        }
 
         // Register with the Bun callback server
         $this->writeFrame($socket, json_encode([
@@ -956,14 +1110,29 @@ class BunBridge
 
     private function createSocket(int $index): Socket
     {
+        if ($this->transport === 'tcp') {
+            $port = $this->mainPorts[$index];
+
+            return $this->connectWithRetry(
+                fn () => $this->openConnection(true, $this->host, $port, "Bun worker {$this->host}:{$port}"),
+            );
+        }
+
         $path = $this->socketPaths[$index];
+        $this->waitForSocketFile($path);
 
-        // Wait briefly for the socket to appear — the Bun worker may still
-        // be starting up (common on startup or after HMR rebuild).
-        $maxWait = 3;
-        $waited = 0;
+        return $this->openConnection(false, $path, null, "Bun socket at {$path}");
+    }
 
-        while (! file_exists($path) && $waited < $maxWait) {
+    /**
+     * Wait briefly for a Unix socket file to appear — the Bun worker may still
+     * be starting up (on boot or after an HMR rebuild).
+     */
+    private function waitForSocketFile(string $path): void
+    {
+        $waited = 0.0;
+
+        while (! file_exists($path) && $waited < 3.0) {
             usleep(100_000); // 100ms
             $waited += 0.1;
         }
@@ -973,24 +1142,52 @@ class BunBridge
                 "Bun socket not found at {$path}. Run: php artisan bun:serve"
             );
         }
+    }
 
-        $socket = socket_create(AF_UNIX, SOCK_STREAM, 0);
+    /**
+     * Retry a connection attempt for up to 3 seconds. For TCP there is no
+     * socket file to wait on, so a worker that is still binding its port
+     * returns connection-refused; we retry until it is listening.
+     */
+    private function connectWithRetry(\Closure $connect): Socket
+    {
+        $deadline = microtime(true) + 3.0;
+
+        while (true) {
+            try {
+                return $connect();
+            } catch (RuntimeException $e) {
+                if (microtime(true) >= $deadline) {
+                    throw $e;
+                }
+
+                usleep(100_000); // 100ms
+            }
+        }
+    }
+
+    /**
+     * Open a blocking, timeout-guarded stream connection to the worker over
+     * either a Unix socket path or a TCP host/port. Uses a non-blocking connect
+     * with a 3-second select so it never hangs when the worker isn't ready.
+     */
+    private function openConnection(bool $tcp, string $address, ?int $port, string $label): Socket
+    {
+        $socket = socket_create($tcp ? AF_INET : AF_UNIX, SOCK_STREAM, $tcp ? SOL_TCP : 0);
 
         if ($socket === false) {
-            throw new RuntimeException(
-                'Failed to create socket: '.socket_strerror(socket_last_error())
-            );
+            throw new RuntimeException('Failed to create socket: '.socket_strerror(socket_last_error()));
         }
 
-        // Use non-blocking connect with a 3-second timeout to avoid hanging
-        // when the socket file exists but the worker hasn't started listening yet.
         socket_set_nonblock($socket);
-        $connected = @socket_connect($socket, $path);
+        $connected = $tcp
+            ? @socket_connect($socket, $address, $port)
+            : @socket_connect($socket, $address);
 
         if (! $connected) {
             $error = socket_last_error($socket);
 
-            // EINPROGRESS (115) or EALREADY (114) means connection is in progress
+            // EINPROGRESS/EALREADY: connection is in progress — wait for writable.
             if ($error === SOCKET_EINPROGRESS || $error === SOCKET_EALREADY || $error === 0) {
                 $write = [$socket];
                 $read = null;
@@ -1001,17 +1198,23 @@ class BunBridge
                 if ($ready === false || $ready === 0) {
                     socket_close($socket);
 
-                    throw new RuntimeException(
-                        "Bun worker not ready (connection timed out). Is 'php artisan bun:serve' running?"
-                    );
+                    throw new RuntimeException("{$label} not ready (connection timed out).");
+                }
+
+                // A writable non-blocking socket may still have failed to
+                // connect (e.g. TCP connection refused) — confirm via SO_ERROR.
+                $soError = socket_get_option($socket, SOL_SOCKET, SO_ERROR);
+
+                if ($soError !== 0) {
+                    socket_close($socket);
+
+                    throw new RuntimeException("{$label} connection failed: ".socket_strerror($soError));
                 }
             } else {
-                $errorMsg = socket_strerror($error);
+                $message = socket_strerror($error);
                 socket_close($socket);
 
-                throw new RuntimeException(
-                    "Failed to connect to Bun socket: {$errorMsg}. Run: php artisan bun:serve"
-                );
+                throw new RuntimeException("Failed to connect to {$label}: {$message}");
             }
         }
 
@@ -1020,6 +1223,11 @@ class BunBridge
         $timeout = ['sec' => 10, 'usec' => 0];
         socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, $timeout);
         socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, $timeout);
+
+        if ($tcp) {
+            // Low-latency small frames — disable Nagle's algorithm.
+            @socket_set_option($socket, SOL_TCP, TCP_NODELAY, 1);
+        }
 
         return $socket;
     }

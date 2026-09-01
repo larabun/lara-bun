@@ -3,3 +3,9 @@
 composer.lock
 .phpunit.result.cache
 .DS_Store
+
+# LaraBun Vite RSC engine (generated + build output)
+/.rsc-vite-gen
+/dist
+bootstrap/rsc/vite
+public/build/rsc-vite

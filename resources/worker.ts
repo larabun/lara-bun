@@ -1,4 +1,4 @@
-import { unlinkSync } from "node:fs";
+import { chmodSync, unlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ServerAuthenticationError, ServerAuthorizationError, ServerRedirectError, ServerValidationError } from "./errors";
 
@@ -188,6 +188,13 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
 const functionsDir = process.env.BUN_BRIDGE_FUNCTIONS_DIR;
 const socketPath = process.env.BUN_BRIDGE_SOCKET ?? "/tmp/bun-bridge.sock";
 
+// Transport: 'unix' (default) listens on socketPath; 'tcp' listens on
+// BUN_HOST:BUN_MAIN_PORT (main) and BUN_HOST:BUN_CB_PORT (callbacks).
+const isTcp = process.env.BUN_TRANSPORT === "tcp";
+const tcpHost = process.env.BUN_HOST ?? "127.0.0.1";
+const mainPort = parseInt(process.env.BUN_MAIN_PORT ?? "0", 10);
+const cbPort = parseInt(process.env.BUN_CB_PORT ?? "0", 10);
+
 if (functionsDir) {
   await discoverFunctions(functionsDir);
 }
@@ -243,7 +250,9 @@ let rscHandler: RscHandlerModule | null = null;
 
 if (process.env.BUN_RSC_BUNDLE) {
   try {
-    rscHandler = (await import("./rsc-handler")) as RscHandlerModule;
+    // The built @vitejs/plugin-rsc entry IS the handler — it exports the
+    // installPhpFn / handleRsc* / handleAction / resolveMetadata contract.
+    rscHandler = (await import(process.env.BUN_RSC_BUNDLE)) as RscHandlerModule;
     log("RSC handler loaded");
   } catch (err) {
     log(
@@ -568,10 +577,12 @@ async function handleRscActionMessage(
   }
 }
 
-try {
-  unlinkSync(socketPath);
-} catch {
-  // File doesn't exist
+if (!isTcp) {
+  try {
+    unlinkSync(socketPath);
+  } catch {
+    // File doesn't exist
+  }
 }
 
 type SocketLike = { write(data: string | Uint8Array): number; flush(): void };
@@ -615,8 +626,23 @@ function writeFrame(socket: SocketLike, json: string): void {
 
 const MAX_FRAME_SIZE = parseInt(process.env.BUN_MAX_FRAME_SIZE || "1048576", 10); // 1MB default
 
+// Create the socket files owner-only. Without this, any local user could
+// connect to the predictable socket path and drive the bridge (invoke server
+// actions / php() callables) with no authenticated session. PHP-FPM must run
+// as the same user as this worker (already implied by sharing the socket).
+try { process.umask(0o077); } catch {}
+
+/** Restrict a bound Unix socket to owner read/write only. */
+function secureSocket(path: string): void {
+  try {
+    chmodSync(path, 0o600);
+  } catch (err) {
+    log("Failed to secure socket permissions:", err instanceof Error ? err.message : String(err));
+  }
+}
+
 const server = Bun.listen({
-  unix: socketPath,
+  ...(isTcp ? { hostname: tcpHost, port: mainPort } : { unix: socketPath }),
   socket: {
     async data(socket, rawData) {
       let buf = socketBuffers.get(socket);
@@ -687,7 +713,9 @@ const server = Bun.listen({
   },
 });
 
-log(`Listening on ${socketPath}`);
+if (!isTcp) secureSocket(socketPath);
+
+log(`Listening on ${isTcp ? `${tcpHost}:${mainPort}` : socketPath}`);
 log(`Discovered ${Object.keys(functions).length} functions: ${Object.keys(functions).join(", ")}`);
 
 // ─── Persistent Callback Server ─────────────────────────────────────────────
@@ -695,13 +723,14 @@ log(`Discovered ${Object.keys(functions).length} functions: ${Object.keys(functi
 // Each connection registers with a callbackId that matches the render request.
 
 const callbackSocketPath = socketPath + ".cb";
-try { unlinkSync(callbackSocketPath); } catch {}
+if (!isTcp) { try { unlinkSync(callbackSocketPath); } catch {} }
 
 const callbackConnections = new Map<string, SocketLike>();
 const cbSocketBuffers = new Map<unknown, Buffer>();
 const pendingPhpCallbacks = new Map<string, {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
+  socket: SocketLike;
 }>();
 
 function handleCbResponse(response: Record<string, unknown>): void {
@@ -729,7 +758,7 @@ function handleCbResponse(response: Record<string, unknown>): void {
 }
 
 const cbServer = Bun.listen({
-  unix: callbackSocketPath,
+  ...(isTcp ? { hostname: tcpHost, port: cbPort } : { unix: callbackSocketPath }),
   socket: {
     data(socket, rawData) {
       let buf = cbSocketBuffers.get(socket);
@@ -765,16 +794,29 @@ const cbServer = Bun.listen({
     open() {},
     close(socket) {
       for (const [id, s] of callbackConnections) {
-        if (s === socket) { callbackConnections.delete(id); break; }
+        if (s === socket) callbackConnections.delete(id);
       }
       cbSocketBuffers.delete(socket);
+
+      // Reject any php() callbacks still awaiting a response on this
+      // connection. Without this the awaiting render hangs forever and the
+      // pending map grows for the life of the worker (a slow whole-app leak
+      // when requests are aborted or the PHP side disconnects mid-render).
+      for (const [id, pending] of pendingPhpCallbacks) {
+        if (pending.socket === socket) {
+          pendingPhpCallbacks.delete(id);
+          pending.reject(new Error("Callback connection closed before php() responded"));
+        }
+      }
     },
     drain(socket) { drainSocket(socket); },
     error() {},
   },
 });
 
-log(`Callback listener on ${callbackSocketPath}`);
+if (!isTcp) secureSocket(callbackSocketPath);
+
+log(`Callback listener on ${isTcp ? `${tcpHost}:${cbPort}` : callbackSocketPath}`);
 
 let cbIdCounter = 0;
 
@@ -799,7 +841,7 @@ function createPhpFn(cbSocket: SocketLike): (fn: string, ...args: unknown[]) => 
     const id = `cb_${++cbIdCounter}`;
     writeFrame(cbSocket, JSON.stringify({ type: "callback", id, function: functionName, args }));
     return new Promise((resolve, reject) => {
-      pendingPhpCallbacks.set(id, { resolve, reject });
+      pendingPhpCallbacks.set(id, { resolve, reject, socket: cbSocket });
     });
   };
 }
@@ -808,8 +850,10 @@ function shutdown(signal: string): void {
   log(`Received ${signal}, shutting down`);
   server.stop();
   cbServer.stop();
-  try { unlinkSync(socketPath); } catch {}
-  try { unlinkSync(callbackSocketPath); } catch {}
+  if (!isTcp) {
+    try { unlinkSync(socketPath); } catch {}
+    try { unlinkSync(callbackSocketPath); } catch {}
+  }
   process.exit(0);
 }
 

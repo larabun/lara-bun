@@ -2,7 +2,7 @@
  * Core SPA navigation engine for RSC.
  *
  * Uses module-level state (singleton in the browser bundle).
- * The Flight deserializer is injected by createRscApp to avoid
+ * The Flight deserializer is injected by createViteRscApp to avoid
  * duplicate bundling of react-server-dom-webpack.
  */
 
@@ -135,7 +135,7 @@ export function renderTree(tree: ReactNode): void {
 
 export function getCallServer(): CallServerFn {
   if (!callServerFn) {
-    throw new Error("callServer not initialized. Ensure createRscApp() has been called.");
+    throw new Error("callServer not initialized. Ensure createViteRscApp() has been called.");
   }
   return callServerFn;
 }

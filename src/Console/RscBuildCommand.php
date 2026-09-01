@@ -4,8 +4,10 @@ namespace LaraBun\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Routing\Route;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use LaraBun\Rsc\PrerenderService;
+use LaraBun\Support\BunBinary;
 use Symfony\Component\Process\Process;
 
 class RscBuildCommand extends Command
@@ -27,7 +29,21 @@ class RscBuildCommand extends Command
             $this->info('Building RSC bundles...');
             $this->newLine();
 
-            $bundleProcess = new Process(['bun', $this->getBuildScript()], base_path());
+            $bun = BunBinary::resolve();
+
+            if ($bun === null) {
+                $this->error('Bun executable not found. Run: php artisan bun:install (or set BUN_BINARY to its path).');
+
+                return self::FAILURE;
+            }
+
+            $bundleProcess = new Process([$bun, $this->getBuildScript('build-rsc-vite.ts')], base_path(), [
+                'LARA_BUN_PROJECT_ROOT' => base_path(),
+                'BUN_RSC_SOURCE_DIR' => config('bun.rsc.source_dir'),
+                'BUN_RSC_OUT_DIR' => base_path('bootstrap/rsc/vite'),
+                'BUN_RSC_ASSETS_DIR' => config('bun.rsc.assets_dir'),
+                'BUN_RSC_ASSETS_URL' => config('bun.rsc.assets_url'),
+            ]);
             $bundleProcess->setTimeout(120);
             $bundleProcess->run(fn ($type, $buffer) => $this->output->write($buffer));
 
@@ -100,10 +116,10 @@ class RscBuildCommand extends Command
     }
 
     /**
-     * @param  \Illuminate\Support\Collection<int, Route>  $routes
+     * @param  Collection<int, Route>  $routes
      * @return list<array{url: string, uri: string, component: string, type: string, reason: string|null, generatedPaths: list<string>}>
      */
-    private function prerenderRoutes(\Illuminate\Support\Collection $routes, PrerenderService $prerender, string $outputPath): array
+    private function prerenderRoutes(Collection $routes, PrerenderService $prerender, string $outputPath): array
     {
         $results = [];
 
@@ -325,17 +341,17 @@ class RscBuildCommand extends Command
         $this->info(implode(', ', $parts));
     }
 
-    private function getBuildScript(): string
+    private function getBuildScript(string $file = 'build-rsc-vite.ts'): string
     {
         // In a consuming app, the build script is in the vendor directory
-        $vendorPath = base_path('vendor/larabun/lara-bun/resources/build-rsc.ts');
+        $vendorPath = base_path("vendor/larabun/lara-bun/resources/{$file}");
 
         if (file_exists($vendorPath)) {
             return $vendorPath;
         }
 
         // For local development within the package
-        $packagePath = dirname(__DIR__, 2).'/resources/build-rsc.ts';
+        $packagePath = dirname(__DIR__, 2)."/resources/{$file}";
 
         if (file_exists($packagePath)) {
             return $packagePath;

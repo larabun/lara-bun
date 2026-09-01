@@ -3,6 +3,8 @@
 namespace LaraBun\Console;
 
 use Illuminate\Console\Command;
+use LaraBun\Support\BunBinary;
+use Symfony\Component\Process\Process;
 
 class BunDevCommand extends Command
 {
@@ -10,10 +12,10 @@ class BunDevCommand extends Command
 
     protected $description = 'Start the build watcher and Bun worker for development';
 
-    /** @var \Symfony\Component\Process\Process|null */
+    /** @var Process|null */
     private $buildProcess = null;
 
-    /** @var \Symfony\Component\Process\Process|null */
+    /** @var Process|null */
     private $serveProcess = null;
 
     public function handle(): int
@@ -21,7 +23,7 @@ class BunDevCommand extends Command
         $bunPath = $this->findBun();
 
         if ($bunPath === null) {
-            $this->error('Bun executable not found. Install it via: curl -fsSL https://bun.sh/install | bash');
+            $this->error('Bun executable not found. Run: php artisan bun:install (or set BUN_BINARY to its path).');
 
             return self::FAILURE;
         }
@@ -40,10 +42,10 @@ class BunDevCommand extends Command
         $this->info('Running initial build...');
         $this->newLine();
 
-        $initialBuild = new \Symfony\Component\Process\Process(
+        $initialBuild = new Process(
             [$bunPath, $buildScript],
             base_path(),
-            ['NODE_ENV' => 'development'] + getenv(),
+            $this->viteBuildEnv(),
         );
         $initialBuild->setTimeout(120);
         $initialBuild->run(fn ($type, $buffer) => $this->output->write($buffer));
@@ -55,14 +57,12 @@ class BunDevCommand extends Command
             $this->newLine();
         }
 
-        // Step 2: Start build watcher in background
-        $watchScript = $this->getWatchScript();
-        $this->buildProcess = new \Symfony\Component\Process\Process(
-            [$bunPath, $watchScript],
+        // Step 2: Start the Vite build watcher in the background (rebuilds on
+        // source change; the worker restarts via bun:serve --watch).
+        $this->buildProcess = new Process(
+            [$bunPath, $buildScript],
             base_path(),
-            array_merge($_ENV, [
-                'BUN_RSC_ACTIONS_DIR' => config('bun.rsc.actions_dir', app_path('Rsc/Actions')),
-            ]),
+            $this->viteBuildEnv(['BUN_RSC_WATCH' => '1']),
         );
         $this->buildProcess->setTimeout(null);
         $this->buildProcess->start(fn ($type, $buffer) => $this->output->write($buffer));
@@ -75,7 +75,7 @@ class BunDevCommand extends Command
         $canServe = $buildSucceeded && file_exists($bundlePath);
 
         if ($canServe) {
-            $this->serveProcess = new \Symfony\Component\Process\Process(
+            $this->serveProcess = new Process(
                 ['php', 'artisan', 'bun:serve', '--watch', ...$socketOption],
                 base_path(),
             );
@@ -100,7 +100,7 @@ class BunDevCommand extends Command
             // If worker isn't running yet but the bundle now exists, start it
             if ($this->serveProcess === null && file_exists($bundlePath)) {
                 $this->info('Build succeeded — starting worker...');
-                $this->serveProcess = new \Symfony\Component\Process\Process(
+                $this->serveProcess = new Process(
                     ['php', 'artisan', 'bun:serve', '--watch', ...$socketOption],
                     base_path(),
                 );
@@ -158,15 +158,15 @@ class BunDevCommand extends Command
         pcntl_signal(SIGTERM, $handler);
     }
 
-    private function getWatchScript(): string
+    private function getBuildScript(): string
     {
-        $vendorPath = base_path('vendor/larabun/lara-bun/resources/watch-rsc.ts');
+        $vendorPath = base_path('vendor/larabun/lara-bun/resources/build-rsc-vite.ts');
 
         if (file_exists($vendorPath)) {
             return $vendorPath;
         }
 
-        $packagePath = dirname(__DIR__, 2).'/resources/watch-rsc.ts';
+        $packagePath = dirname(__DIR__, 2).'/resources/build-rsc-vite.ts';
 
         if (file_exists($packagePath)) {
             return $packagePath;
@@ -175,43 +175,25 @@ class BunDevCommand extends Command
         return $vendorPath;
     }
 
-    private function getBuildScript(): string
+    /**
+     * Environment for the Vite RSC build engine (build-rsc-vite.ts).
+     *
+     * @param  array<string, string>  $extra
+     * @return array<string, string>
+     */
+    private function viteBuildEnv(array $extra = []): array
     {
-        $vendorPath = base_path('vendor/larabun/lara-bun/resources/build-rsc.ts');
-
-        if (file_exists($vendorPath)) {
-            return $vendorPath;
-        }
-
-        $packagePath = dirname(__DIR__, 2).'/resources/build-rsc.ts';
-
-        if (file_exists($packagePath)) {
-            return $packagePath;
-        }
-
-        return $vendorPath;
+        return array_merge(getenv(), [
+            'LARA_BUN_PROJECT_ROOT' => base_path(),
+            'BUN_RSC_SOURCE_DIR' => config('bun.rsc.source_dir'),
+            'BUN_RSC_OUT_DIR' => base_path('bootstrap/rsc/vite'),
+            'BUN_RSC_ASSETS_DIR' => config('bun.rsc.assets_dir'),
+            'BUN_RSC_ASSETS_URL' => config('bun.rsc.assets_url'),
+        ], $extra);
     }
 
     private function findBun(): ?string
     {
-        $candidates = [
-            '/opt/homebrew/bin/bun',
-            '/usr/local/bin/bun',
-            ($_SERVER['HOME'] ?? '').'/.bun/bin/bun',
-        ];
-
-        foreach ($candidates as $path) {
-            if (is_executable($path)) {
-                return $path;
-            }
-        }
-
-        $which = trim((string) shell_exec('which bun 2>/dev/null'));
-
-        if ($which !== '' && is_executable($which)) {
-            return $which;
-        }
-
-        return null;
+        return BunBinary::resolve();
     }
 }

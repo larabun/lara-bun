@@ -23,23 +23,22 @@ LaraBun bridges Laravel (PHP) and Bun (JavaScript) via Unix sockets for React Se
 
 ## Testing
 
-- Run all tests: `vendor/bin/pest --compact` (from test app at `/Users/ramonmalcolm/Downloads/lara-bun`)
+- The package has a standalone Pest suite (orchestra/testbench). Run it from the package root:
+- Run all tests: `vendor/bin/pest --compact`
 - Run specific: `vendor/bin/pest tests/Feature/RouteInterceptionTest.php`
 - Tests use Mockery for BunBridge mocking
-- The test app (`/Users/ramonmalcolm/Downloads/lara-bun`) requires the package via path repository
 
 ## Development Setup
 
-- Package source: `/Users/ramonmalcolm/Herd/lara-bun` (git repo, branch: `feature/file-based-router`)
-- Test app: `/Users/ramonmalcolm/Downloads/lara-bun` (not a git repo, has vendor/bin/pint)
-- Docs app: `/Users/ramonmalcolm/Herd/larabun-docs` (git repo, branch: `main`)
+- Package source: `/Users/ramonmalcolm/Herd/lara-bun` (git repo, branch: `main`) — run the unit/feature suite here
+- Integration app: `/Users/ramonmalcolm/Herd/larabun-docs` (git repo, branch: `main`) — real consuming app for end-to-end/manual testing; requires the published `larabun/lara-bun` package and ships a Dockerfile
 - After package changes: `composer update larabun/lara-bun` in consuming apps
 - After TS changes: `php artisan rsc:build` to rebuild bundles
 
 ## Critical Patterns
 
 ### Socket Stream Order
-Stream-start frames MUST be read eagerly from the main socket BEFORE entering the callback select loop. This prevents slow `php()` callbacks from blocking HTTP header delivery. Tests in `BunBridgeStreamOrderTest.php` enforce this.
+The stream-start frame MUST be yielded before entering the main streaming loop, so HTTP headers flush before slow `php()` callbacks. But the wait for that frame must still service the callback socket (`BunBridge::readStartFrame()`) — the worker resolves page metadata (which may itself call `php()`) before emitting stream-start, so a bare blocking read here deadlocks both sides until the socket timeout. Do not revert to an eager blocking `readFrame()`. Tests in `BunBridgeStreamOrderTest.php` enforce the ordering.
 
 ### Callback Drain
 Before processing a `php()` callback (which may block), always non-blocking poll the main socket and yield pending stream chunks. This ensures Flight data reaches the browser immediately.

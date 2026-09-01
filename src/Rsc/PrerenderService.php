@@ -149,7 +149,6 @@ class PrerenderService
         return app()->call($action, $params);
     }
 
-
     public const PPR_PAYLOAD_MARKER = '<!--__RSC_PPR_PAYLOAD__-->';
 
     public const NONCE_PLACEHOLDER = '__RSC_CSP_NONCE__';
@@ -203,21 +202,13 @@ class PrerenderService
             app()->instance('csp-nonce', self::NONCE_PLACEHOLDER);
         }
 
-        $initialJson = json_encode([
-            'url' => self::PPR_PAYLOAD_MARKER,
-            'component' => $rscResponse->getComponent(),
-            'version' => $version,
-        ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
+        // The worker's PPR shell render is a complete HTML document.
+        $html = $shellBody;
+        $metaTags = $rscResponse->buildMetaTags();
 
-        $rootView = config('bun.rsc.root_view', 'lara-bun::rsc-app');
-
-        $html = view($rootView, [
-            ...$rscResponse->getViewData(),
-            'body' => $shellBody,
-            'initialJson' => $initialJson,
-            'scripts' => self::PPR_PAYLOAD_MARKER,
-            'cssLinks' => $rscResponse->resolveCssLinks(),
-        ])->render();
+        if ($metaTags !== '' && stripos($html, '</head>') !== false) {
+            $html = str_ireplace('</head>', $metaTags."\n</head>", $html);
+        }
 
         // Store under the URI pattern (e.g. posts/_id_)
         $path = trim(str_replace(['{', '}'], ['_', '_'], ltrim($uri, '/')), '/') ?: 'index';
@@ -269,21 +260,13 @@ class PrerenderService
 
         $version = $rscResponse->getVersion();
 
-        $initialJson = json_encode([
-            'url' => $url,
-            'component' => $rscResponse->getComponent(),
-            'version' => $version,
-        ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
+        // The worker's PPR shell render is a complete HTML document.
+        $html = $shellBody;
+        $metaTags = $rscResponse->buildMetaTags();
 
-        $rootView = config('bun.rsc.root_view', 'lara-bun::rsc-app');
-
-        $html = view($rootView, [
-            ...$rscResponse->getViewData(),
-            'body' => $shellBody,
-            'initialJson' => $initialJson,
-            'scripts' => self::PPR_PAYLOAD_MARKER,
-            'cssLinks' => $rscResponse->resolveCssLinks(),
-        ])->render();
+        if ($metaTags !== '' && stripos($html, '</head>') !== false) {
+            $html = str_ireplace('</head>', $metaTags."\n</head>", $html);
+        }
 
         $path = trim($url, '/') ?: 'index';
         File::ensureDirectoryExists(dirname("{$outputPath}/{$path}.html"));
@@ -308,7 +291,6 @@ class PrerenderService
         return ['type' => 'ppr', 'reason' => null];
     }
 
-
     /**
      * @param  array{body: string, rscPayload: string, clientChunks: string[]}  $result
      */
@@ -320,24 +302,10 @@ class PrerenderService
             app()->instance('csp-nonce', self::NONCE_PLACEHOLDER);
         }
 
-        $initialJson = json_encode([
-            'url' => $url,
-            'component' => $component,
-            'version' => $version,
-        ], JSON_THROW_ON_ERROR | JSON_HEX_TAG);
-
-        $scripts = BunServiceProvider::renderRscScripts($result['rscPayload'], $result['clientChunks']);
-        $rootView = config('bun.rsc.root_view', 'lara-bun::rsc-app');
-
-        $html = view($rootView, [
-            ...$rscResponse->getViewData(),
-            'body' => $result['body'],
-            'initialJson' => $initialJson,
-            'scripts' => $scripts,
-            'cssLinks' => $rscResponse->resolveCssLinks(),
-        ])->render();
-
-        // Inject metadata tags (title, og:*, icons) into <head>
+        // The worker returns a COMPLETE HTML document (the root layout renders
+        // <html> and @vitejs/plugin-rsc injects the client bootstrap + CSS).
+        // Inject page metadata tags (title, og:*, icons) into <head>.
+        $html = $result['body'];
         $metaTags = $rscResponse->buildMetaTags();
 
         if ($metaTags !== '' && stripos($html, '</head>') !== false) {

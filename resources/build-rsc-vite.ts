@@ -165,12 +165,16 @@ function buildElement(
   if (!Component) throw new Error('Unknown RSC component: ' + component)
 
   let element = createElement(Component, props)
-  if (head.length) element = createElement(Fragment, null, ...head, element)
 
   for (let i = loadings.length - 1; i >= 0; i--) {
     const Loading = components[loadings[i]]
     element = createElement(Suspense, { fallback: Loading ? createElement(Loading) : null }, element)
   }
+
+  // <title>/<meta> go OUTSIDE the Suspense boundaries so they reach the shell
+  // immediately — inside, they would be withheld until the page's data
+  // resolves, delaying the whole document on a slow page.
+  if (head.length) element = createElement(Fragment, null, ...head, element)
 
   const slotElements: Record<string, unknown> = {}
   for (const [slot, value] of Object.entries(parallelSlots)) {

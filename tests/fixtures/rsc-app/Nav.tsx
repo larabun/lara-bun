@@ -10,6 +10,8 @@ export function Nav() {
       <Link href="/" id="nav-home">Home</Link>
       {' | '}
       <Link href="/static" id="nav-static">Static</Link>
+      {' | '}
+      <Link href="/slow" id="nav-slow" prefetch="none">Slow</Link>
     </nav>
   )
 }

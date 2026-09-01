@@ -1,6 +1,6 @@
 <?php
 
-use LaravelRsc\Rsc\PageScanner;
+use LaravelRsc\PageScanner;
 
 beforeEach(function () {
     $this->appDir = sys_get_temp_dir().'/rsc-intercept-test-'.uniqid();

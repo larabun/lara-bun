@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc\Rsc;
+namespace LaravelRsc;
 
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -13,8 +13,8 @@ use Illuminate\Routing\Attributes\Controllers\Middleware;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
-use LaravelRsc\Rsc\Attributes\Authenticated;
-use LaravelRsc\Rsc\Attributes\Can;
+use LaravelRsc\Attributes\Authenticated;
+use LaravelRsc\Attributes\Can;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;

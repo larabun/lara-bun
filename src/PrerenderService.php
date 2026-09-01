@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc\Rsc;
+namespace LaravelRsc;
 
 use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;

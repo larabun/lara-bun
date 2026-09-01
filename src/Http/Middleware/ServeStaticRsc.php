@@ -5,9 +5,9 @@ namespace LaravelRsc\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use LaravelRsc\Header;
 use LaravelRsc\LaravelRscServiceProvider;
-use LaravelRsc\Rsc\Header;
-use LaravelRsc\Rsc\PrerenderService;
+use LaravelRsc\PrerenderService;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class ServeStaticRsc

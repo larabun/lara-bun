@@ -2,8 +2,8 @@
 
 use Illuminate\Support\Facades\Route;
 use LaravelRsc\BunBridge;
-use LaravelRsc\Rsc\Header;
-use LaravelRsc\Rsc\RscRedirectException;
+use LaravelRsc\Header;
+use LaravelRsc\RscRedirectException;
 
 beforeEach(function () {
     $this->bridgeMock = Mockery::mock(BunBridge::class);

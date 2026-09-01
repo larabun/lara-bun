@@ -6,7 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
-use LaravelRsc\Rsc\PrerenderService;
+use LaravelRsc\PrerenderService;
 use LaravelRsc\Support\BunBinary;
 use Symfony\Component\Process\Process;
 

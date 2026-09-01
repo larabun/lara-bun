@@ -1,6 +1,6 @@
 <?php
 
-use LaravelRsc\Rsc\Header;
+use LaravelRsc\Header;
 
 test('header constants have expected values', function () {
     expect(Header::X_RSC)->toBe('X-RSC')

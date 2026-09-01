@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc\Rsc;
+namespace LaravelRsc;
 
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\JsonResponse;

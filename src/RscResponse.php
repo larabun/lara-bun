@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc\Rsc;
+namespace LaravelRsc;
 
 use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Http\Request;

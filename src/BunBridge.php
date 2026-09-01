@@ -5,8 +5,6 @@ namespace LaravelRsc;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Validation\ValidationException;
-use LaravelRsc\Rsc\CallableRegistry;
-use LaravelRsc\Rsc\RscRedirectException;
 use RuntimeException;
 use Socket;
 

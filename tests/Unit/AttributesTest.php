@@ -1,8 +1,8 @@
 <?php
 
 use Illuminate\Routing\Attributes\Controllers\Middleware;
-use LaravelRsc\Rsc\Attributes\Authenticated;
-use LaravelRsc\Rsc\Attributes\Can;
+use LaravelRsc\Attributes\Authenticated;
+use LaravelRsc\Attributes\Can;
 
 test('Authenticated defaults to null guard', function () {
     $attr = new Authenticated;

@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc\Rsc;
+namespace LaravelRsc;
 
 use Illuminate\Routing\Router;
 use LaravelRsc\Http\Middleware\ServeStaticRsc;

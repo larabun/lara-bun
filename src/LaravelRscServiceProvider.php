@@ -12,11 +12,6 @@ use LaravelRsc\Console\RscActionManifestCommand;
 use LaravelRsc\Console\RscBuildCommand;
 use LaravelRsc\Console\RscPagesCommand;
 use LaravelRsc\Console\RscRouteManifestCommand;
-use LaravelRsc\Rsc\CallableRegistry;
-use LaravelRsc\Rsc\PageRouteRegistrar;
-use LaravelRsc\Rsc\PageScanner;
-use LaravelRsc\Rsc\RscActionController;
-use LaravelRsc\Rsc\RscMiddleware;
 
 class LaravelRscServiceProvider extends ServiceProvider
 {

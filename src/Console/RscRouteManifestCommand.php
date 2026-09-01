@@ -3,8 +3,8 @@
 namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\Rsc\PageRoute;
-use LaravelRsc\Rsc\PageScanner;
+use LaravelRsc\PageRoute;
+use LaravelRsc\PageScanner;
 
 class RscRouteManifestCommand extends Command
 {

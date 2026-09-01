@@ -1,6 +1,6 @@
 <?php
 
-use LaravelRsc\Rsc\PageRoute;
+use LaravelRsc\PageRoute;
 
 test('make creates a new instance', function () {
     $route = PageRoute::make();

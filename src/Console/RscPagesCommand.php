@@ -3,9 +3,9 @@
 namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\Rsc\PageDefinition;
-use LaravelRsc\Rsc\PageRoute;
-use LaravelRsc\Rsc\PageScanner;
+use LaravelRsc\PageDefinition;
+use LaravelRsc\PageRoute;
+use LaravelRsc\PageScanner;
 
 class RscPagesCommand extends Command
 {

@@ -1,6 +1,6 @@
 <?php
 
-use LaravelRsc\Rsc\PageDefinition;
+use LaravelRsc\PageDefinition;
 
 test('constructor sets all properties', function () {
     $page = new PageDefinition(

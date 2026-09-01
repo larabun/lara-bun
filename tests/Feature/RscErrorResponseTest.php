@@ -1,7 +1,7 @@
 <?php
 
 use LaravelRsc\BunBridge;
-use LaravelRsc\Rsc\Header;
+use LaravelRsc\Header;
 
 beforeEach(function () {
     $this->bridgeMock = Mockery::mock(BunBridge::class);

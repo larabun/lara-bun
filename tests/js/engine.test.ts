@@ -364,6 +364,29 @@ describe('loading.tsx validation', () => {
     expect(code).toBe(0)
   })
 
+  test('accepts a page that starts a host call without awaiting it', async () => {
+    // Starting the call and handing the promise to a client component, which
+    // unwraps it with use() inside its own boundary, lets the page paint at
+    // once — so no loading.tsx is required even though the default export is
+    // async and names rpc().
+    const { code } = await buildApp({
+      'app/layout.tsx': LAYOUT,
+      'app/deferred-promise/page.tsx':
+        `import { Suspense } from 'react'\n` +
+        `import Stats from './Stats'\n` +
+        `export default async function P() {\n` +
+        `  const promise: any = (globalThis as any).rpc('Stats.fetch')\n` +
+        `  return <Suspense fallback={<i>wait</i>}><Stats p={promise} /></Suspense>\n` +
+        `}\n`,
+      'app/deferred-promise/Stats.tsx':
+        `'use client'\n` +
+        `import { use } from 'react'\n` +
+        `export default function Stats({ p }: any) { return <p>{String(use(p))}</p> }\n`,
+    })
+
+    expect(code).toBe(0)
+  })
+
   test('accepts a page whose slow work sits in a child behind its own Suspense', async () => {
     // The page itself is synchronous, so it paints a shell immediately — no
     // loading.tsx required even though the file calls rpc().

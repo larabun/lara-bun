@@ -547,16 +547,29 @@ function defaultExportBody(source: string): string | null {
   return null
 }
 
-/** Does the page component's own render await the host callable? */
+/**
+ * Does the page component's own render block on the host callable?
+ *
+ * Only an awaited call blocks. Starting a call and handing the promise to a
+ * child — for a client component to unwrap with use() inside its own Suspense
+ * boundary — lets the page paint immediately and needs no loading.tsx.
+ *
+ * The check is deliberately syntactic: a call awaited indirectly, through a
+ * variable, is not caught. That errs toward letting a build through rather than
+ * rejecting a page that is actually fine.
+ */
 function pageBlocksOnHostCall(source: string): boolean {
   const isAsyncDefault = /export\s+default\s+async\s+function/.test(source)
   if (!isAsyncDefault) return false
 
   const body = defaultExportBody(source)
 
-  const call = new RegExp(`\\b${hostGlobal}\\s*[<(]|\\bawait\\s+${hostGlobal}\\b`)
+  // Matches `await rpc(`, and the explicitly-qualified forms a typed codebase
+  // may use: `await globalThis.rpc(` / `await (globalThis as any).rpc(`.
+  const qualifier = '(?:\\(\\s*globalThis[^)]*\\)\\s*\\.\\s*|globalThis\\s*\\.\\s*)?'
+  const awaited = new RegExp(`\\bawait\\s+${qualifier}${hostGlobal}\\s*[<(]`)
 
-  return body !== null && call.test(body)
+  return body !== null && awaited.test(body)
 }
 
 /** Walk up from the page directory to app/ looking for a loading file. */

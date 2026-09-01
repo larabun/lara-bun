@@ -5,11 +5,13 @@
 // otherwise a minimal generated config that just uses the plugin. Either way
 // Vite runs that config directly — nothing is merged on top of it.
 
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { isBun } from './runtime.ts'
 
-const projectRoot = resolve(process.env.LARA_BUN_PROJECT_ROOT || process.cwd())
-const outDir = resolve(process.env.BUN_RSC_OUT_DIR || join(projectRoot, 'bootstrap/rsc/vite'))
+const projectRoot = resolve(process.env.RSC_PROJECT_ROOT || process.cwd())
+const outDir = resolve(process.env.RSC_OUT_DIR || join(projectRoot, 'bootstrap/rsc/vite'))
 const genDir = join(outDir, '.gen')
 
 function log(...args: unknown[]): void {
@@ -31,7 +33,7 @@ export const USER_CONFIG_NAMES = [
  * app should use and detects nothing.
  */
 export function findUserViteConfig(root: string): string | null {
-  const explicit = process.env.BUN_RSC_VITE_CONFIG
+  const explicit = process.env.RSC_VITE_CONFIG
 
   if (explicit) {
     const path = resolve(explicit)
@@ -68,6 +70,11 @@ export default defineConfig({ plugins: [rscRoutes()] })
   return target
 }
 
+/** This file's directory — import.meta.dir is Bun-only. */
+function packageDir(): string {
+  return resolve(new URL('.', import.meta.url).pathname)
+}
+
 function main(): void {
   const userConfig = findUserViteConfig(projectRoot)
   let configPath: string
@@ -76,36 +83,42 @@ function main(): void {
     log(`Using app Vite config: ${userConfig}`)
     configPath = userConfig
   } else {
-    configPath = writeDefaultConfig(join(import.meta.dir, 'vite.ts'), join(genDir, 'vite.config.mjs'))
+    configPath = writeDefaultConfig(join(packageDir(), 'vite.ts'), join(genDir, 'vite.config.mjs'))
   }
 
-  const watch = process.env.BUN_RSC_WATCH === '1'
-  const viteArgs = [process.execPath, 'x', '--bun', 'vite', 'build', '--config', configPath]
+  const watch = process.env.RSC_WATCH === '1'
+  const viteArgs = ['build', '--config', configPath]
   if (watch) viteArgs.push('--watch')
+
+  // Under Bun, `bun x --bun vite` keeps Vite itself on the Bun runtime. Under
+  // Node there is no such wrapper, so invoke the locally installed binary.
+  const [command, args] = isBun
+    ? [process.execPath, ['x', '--bun', 'vite', ...viteArgs]]
+    : [join(projectRoot, 'node_modules/.bin/vite'), viteArgs]
 
   log(`Running vite build${watch ? ' --watch' : ''}...`)
 
-  const proc = Bun.spawnSync(viteArgs, {
+  const proc = spawnSync(command, args, {
     cwd: projectRoot,
     env: {
       ...process.env,
       NODE_ENV: watch ? 'development' : 'production',
       // Vite stages the config through node_modules/.vite-temp, so the plugin
       // cannot locate this package from its own import.meta. Pass it through.
-      LARA_BUN_PACKAGE_DIR: import.meta.dir,
+      RSC_PACKAGE_DIR: packageDir(),
     },
-    stdout: 'inherit',
-    stderr: 'inherit',
+    stdio: 'inherit',
   })
 
-  if (proc.exitCode !== 0) {
+  if (proc.status !== 0) {
     log('vite build failed')
-    process.exit(proc.exitCode ?? 1)
+    process.exit(proc.status ?? 1)
   }
 
   log(`Build complete → ${join(outDir, 'dist')}`)
 }
 
-if (import.meta.main) {
+// Run only when invoked directly, not when imported for its helpers.
+if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname)) {
   main()
 }

@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Artisan;
 beforeEach(function () {
     $this->sourceDir = sys_get_temp_dir().'/rsc-manifest-'.uniqid();
     mkdir($this->sourceDir.'/app', 0755, true);
-    config()->set('bun.rsc.source_dir', $this->sourceDir);
+    config()->set('rsc.source_dir', $this->sourceDir);
 });
 
 afterEach(function () {
@@ -43,7 +43,7 @@ function manifest(): array
 }
 
 test('returns an empty manifest when there is no app directory', function () {
-    config()->set('bun.rsc.source_dir', $this->sourceDir.'/missing');
+    config()->set('rsc.source_dir', $this->sourceDir.'/missing');
 
     expect(manifest())->toBe([]);
 });

@@ -3,7 +3,7 @@
 namespace LaravelRsc\Facades;
 
 use Illuminate\Support\Facades\Facade;
-use LaravelRsc\BunBridge;
+use LaravelRsc\RuntimeBridge;
 
 /**
  * @method static mixed call(string $function, array $args = [])
@@ -11,12 +11,12 @@ use LaravelRsc\BunBridge;
  * @method static bool ping()
  * @method static void disconnect()
  *
- * @see BunBridge
+ * @see RuntimeBridge
  */
-class Bun extends Facade
+class Rsc extends Facade
 {
     protected static function getFacadeAccessor(): string
     {
-        return BunBridge::class;
+        return RuntimeBridge::class;
     }
 }

@@ -54,7 +54,7 @@
                 "LaravelRsc\\LaravelRscServiceProvider"
             ],
             "aliases": {
-                "Bun": "LaravelRsc\\Facades\\Bun"
+                "Rsc": "LaravelRsc\\Facades\\Rsc"
             }
         }
     },

@@ -5,8 +5,6 @@ namespace LaravelRsc;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
-use LaravelRsc\BunBridge;
-use LaravelRsc\LaravelRscServiceProvider;
 use Symfony\Component\Process\Process;
 
 class PrerenderService
@@ -79,7 +77,7 @@ class PrerenderService
         // Step 1: Classify using PPR shell render (fast, never hangs).
         // Mock php() returns never-resolving Promises — if the page uses
         // php(), it's detected as dynamic. If not, it's static.
-        $shell = app(BunBridge::class)->rscPprShell(
+        $shell = app(RuntimeBridge::class)->rscPprShell(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
@@ -95,7 +93,7 @@ class PrerenderService
         }
 
         // Static page — full render to get HTML + Flight payload
-        $result = app(BunBridge::class)->rscWithoutCallbacks(
+        $result = app(RuntimeBridge::class)->rscWithoutCallbacks(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
@@ -189,7 +187,7 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
-        $result = app(BunBridge::class)->rscPprShell(
+        $result = app(RuntimeBridge::class)->rscPprShell(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
@@ -252,7 +250,7 @@ class PrerenderService
             return ['type' => 'skipped', 'reason' => 'not an RscResponse'];
         }
 
-        $result = app(BunBridge::class)->rscPprShell(
+        $result = app(RuntimeBridge::class)->rscPprShell(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
@@ -388,20 +386,20 @@ class PrerenderService
      */
     public function ensureBunWorker(bool $forceRestart = false): Process|null|false
     {
-        $socketPath = config('bun.socket_path', '/tmp/bun-bridge.sock');
+        $socketPath = config('rsc.socket_path', '/tmp/bun-bridge.sock');
 
         if (file_exists($socketPath)) {
             if ($forceRestart) {
                 // Kill existing worker so we start fresh with new bundles
                 try {
-                    app(BunBridge::class)->disconnect();
+                    app(RuntimeBridge::class)->disconnect();
                 } catch (\Throwable) {
                 }
 
                 @unlink($socketPath);
             } else {
                 try {
-                    app(BunBridge::class)->ping();
+                    app(RuntimeBridge::class)->ping();
 
                     return null;
                 } catch (\Throwable) {
@@ -410,7 +408,7 @@ class PrerenderService
             }
         }
 
-        $process = new Process([PHP_BINARY, base_path('artisan'), 'bun:serve']);
+        $process = new Process([PHP_BINARY, base_path('artisan'), 'rsc:serve']);
         $process->setTimeout(null);
         $process->start(function ($type, $buffer): void {
             // Forward worker output to stderr so the user can see startup errors
@@ -427,8 +425,8 @@ class PrerenderService
             if (file_exists($socketPath)) {
                 try {
                     // Reset the singleton so it connects to the fresh socket
-                    app()->forgetInstance(BunBridge::class);
-                    app(BunBridge::class)->ping();
+                    app()->forgetInstance(RuntimeBridge::class);
+                    app(RuntimeBridge::class)->ping();
 
                     return $process;
                 } catch (\Throwable) {

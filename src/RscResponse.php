@@ -4,8 +4,6 @@ namespace LaravelRsc;
 
 use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Http\Request;
-use LaravelRsc\BunBridge;
-use LaravelRsc\LaravelRscServiceProvider;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -190,7 +188,7 @@ class RscResponse implements Responsable
      */
     protected function toStreamedRscResponse(string $version): StreamedResponse
     {
-        $bridge = app(BunBridge::class);
+        $bridge = app(RuntimeBridge::class);
         $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides);
 
         // First yield is the stream-start frame — read it eagerly so headers
@@ -231,7 +229,7 @@ class RscResponse implements Responsable
      */
     protected function toStreamedHtmlResponse(string $version, Request $request): StreamedResponse
     {
-        $bridge = app(BunBridge::class);
+        $bridge = app(RuntimeBridge::class);
         $nonce = LaravelRscServiceProvider::cspNonce();
         $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $nonce);
 
@@ -513,7 +511,7 @@ class RscResponse implements Responsable
      */
     protected function resolveVersion(): string
     {
-        $buildDir = config('bun.rsc.assets_dir', public_path('build/rsc-vite'));
+        $buildDir = config('rsc.assets_dir', public_path('build/rsc-vite'));
 
         if (! is_dir($buildDir)) {
             return '';

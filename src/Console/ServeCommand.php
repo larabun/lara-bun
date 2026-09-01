@@ -3,12 +3,12 @@
 namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\BunBridge;
-use LaravelRsc\Support\BunBinary;
+use LaravelRsc\RuntimeBridge;
+use LaravelRsc\Support\RuntimeBinary;
 
-class BunServeCommand extends Command
+class ServeCommand extends Command
 {
-    protected $signature = 'bun:serve {--socket= : Path to the Unix socket} {--watch : Auto-restart workers when RSC build output changes}';
+    protected $signature = 'rsc:serve {--socket= : Path to the Unix socket} {--watch : Auto-restart workers when RSC build output changes}';
 
     protected $description = 'Start the Bun bridge server';
 
@@ -34,15 +34,15 @@ class BunServeCommand extends Command
 
     public function handle(): int
     {
-        $baseSocketPath = $this->option('socket') ?? config('bun.socket_path', '/tmp/bun-bridge.sock');
-        $functionsDir = config('bun.functions_dir', resource_path('bun'));
-        $workerCount = max(1, (int) config('bun.workers', 1));
+        $baseSocketPath = $this->option('socket') ?? config('rsc.socket_path', '/tmp/bun-bridge.sock');
+        $functionsDir = config('rsc.functions_dir', resource_path('rsc-functions'));
+        $workerCount = max(1, (int) config('rsc.workers', 1));
         $workerPath = realpath(__DIR__.'/../../resources/worker.ts');
 
         $this->workerCount = $workerCount;
-        $this->transport = config('bun.transport', 'unix') === 'tcp' ? 'tcp' : 'unix';
-        $this->host = (string) config('bun.host', '127.0.0.1');
-        $this->basePort = (int) config('bun.port', 7940);
+        $this->transport = config('rsc.transport', 'unix') === 'tcp' ? 'tcp' : 'unix';
+        $this->host = (string) config('rsc.host', '127.0.0.1');
+        $this->basePort = (int) config('rsc.port', 7940);
 
         if ($workerPath === false) {
             $this->error('Worker not found in package resources');
@@ -52,37 +52,37 @@ class BunServeCommand extends Command
 
         $hasFunctionsDir = is_dir($functionsDir);
 
-        $bunPath = $this->findBun();
+        $runtimePath = $this->findBun();
 
-        if ($bunPath === null) {
-            $this->error('Bun executable not found. Run: php artisan bun:install (or set BUN_BINARY to its path).');
+        if ($runtimePath === null) {
+            $this->error(RuntimeBinary::runtime().' executable not found. Run: php artisan rsc:install (or set RSC_RUNTIME_BINARY to its path).');
 
             return self::FAILURE;
         }
 
-        $rscBundle = config('bun.rsc.enabled')
+        $rscBundle = config('rsc.enabled')
             ? $this->detectRscBundle()
             : null;
 
-        $entryPoints = collect(config('bun.entry_points', []))
+        $entryPoints = collect(config('rsc.entry_points', []))
             ->filter()
             ->unique()
             ->implode(',');
 
         if (! $hasFunctionsDir && $entryPoints === '' && $rscBundle === null) {
             $this->error('Nothing to serve. Create a functions directory at: '.$functionsDir);
-            $this->error('Or enable RSC via BUN_RSC_ENABLED=true and run: bun run build:rsc');
+            $this->error('Or enable RSC via RSC_ENABLED=true and run: bun run build:rsc');
 
             return self::FAILURE;
         }
 
         if ($workerCount === 1) {
-            return $this->serveSingle($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath, $rscBundle);
+            return $this->serveSingle($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $runtimePath, $rscBundle);
         }
 
         $this->lastBuildTime = $this->getBuildTime();
 
-        return $this->serveMultiple($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath, $workerCount, $rscBundle);
+        return $this->serveMultiple($baseSocketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $runtimePath, $workerCount, $rscBundle);
     }
 
     private function serveSingle(
@@ -91,23 +91,23 @@ class BunServeCommand extends Command
         bool $hasFunctionsDir,
         string $entryPoints,
         string $workerPath,
-        string $bunPath,
+        string $runtimePath,
         ?string $rscBundle = null,
     ): int {
         $this->socketPaths[0] = $this->transport === 'tcp'
-            ? $this->host.':'.BunBridge::tcpPorts($this->basePort, $this->workerCount, 0)['main']
+            ? $this->host.':'.RuntimeBridge::tcpPorts($this->basePort, $this->workerCount, 0)['main']
             : $socketPath;
 
         $this->info("Starting Bun bridge on {$this->socketPaths[0]}");
-        $this->outputConfig($functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath);
+        $this->outputConfig($functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $runtimePath);
 
         $this->lastBuildTime = $this->getBuildTime();
         $this->trapSignals();
 
-        $process = $this->spawnWorker($bunPath, $workerPath, 0, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+        $process = $this->spawnWorker($runtimePath, $workerPath, 0, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
         if ($process === null) {
-            $this->error('Failed to start Bun process');
+            $this->error('Failed to start the RSC worker process');
 
             return self::FAILURE;
         }
@@ -119,11 +119,11 @@ class BunServeCommand extends Command
         }
 
         // Supervise the worker in every mode (not just --watch): a crashed
-        // worker is auto-restarted with backoff so a bare `bun:serve` is
+        // worker is auto-restarted with backoff so a bare `rsc:serve` is
         // production-safe without an external process manager. This is process
         // liveness supervision (a cheap proc_get_status poll off the request
         // path) — filesystem watching for rebuilds only happens under --watch.
-        return $this->monitorProcesses($bunPath, $workerPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+        return $this->monitorProcesses($runtimePath, $workerPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
     }
 
     private function serveMultiple(
@@ -132,7 +132,7 @@ class BunServeCommand extends Command
         bool $hasFunctionsDir,
         string $entryPoints,
         string $workerPath,
-        string $bunPath,
+        string $runtimePath,
         int $workerCount,
         ?string $rscBundle = null,
     ): int {
@@ -140,12 +140,12 @@ class BunServeCommand extends Command
 
         for ($i = 0; $i < $workerCount; $i++) {
             $this->socketPaths[$i] = $this->transport === 'tcp'
-                ? $this->host.':'.BunBridge::tcpPorts($this->basePort, $workerCount, $i)['main']
+                ? $this->host.':'.RuntimeBridge::tcpPorts($this->basePort, $workerCount, $i)['main']
                 : "{$base}-{$i}.sock";
         }
 
-        $this->info("Starting Bun bridge with {$workerCount} workers");
-        $this->outputConfig($functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $bunPath);
+        $this->info("Starting RSC workers: {$workerCount} workers");
+        $this->outputConfig($functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $runtimePath);
 
         foreach ($this->socketPaths as $i => $socketPath) {
             $this->line("  Worker {$i}: {$socketPath}");
@@ -156,7 +156,7 @@ class BunServeCommand extends Command
         $this->trapSignals();
 
         for ($i = 0; $i < $workerCount; $i++) {
-            $process = $this->spawnWorker($bunPath, $workerPath, $i, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+            $process = $this->spawnWorker($runtimePath, $workerPath, $i, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
             if ($process === null) {
                 $this->error("Failed to start worker {$i}");
@@ -168,14 +168,14 @@ class BunServeCommand extends Command
             $this->processes[$i] = $process;
         }
 
-        return $this->monitorProcesses($bunPath, $workerPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+        return $this->monitorProcesses($runtimePath, $workerPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
     }
 
     /**
      * @return resource|null
      */
     private function spawnWorker(
-        string $bunPath,
+        string $runtimePath,
         string $workerPath,
         int $index,
         string $socketPath,
@@ -187,7 +187,7 @@ class BunServeCommand extends Command
         $env = $this->buildWorkerEnv($index, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
         $process = proc_open(
-            [$bunPath, 'run', $workerPath],
+            [$runtimePath, 'run', $workerPath],
             [
                 0 => ['pipe', 'r'],
                 1 => STDERR,
@@ -208,7 +208,7 @@ class BunServeCommand extends Command
     }
 
     private function monitorProcesses(
-        string $bunPath,
+        string $runtimePath,
         string $workerPath,
         string $functionsDir,
         bool $hasFunctionsDir,
@@ -240,7 +240,7 @@ class BunServeCommand extends Command
                     usleep(500_000);
 
                     foreach ($this->socketPaths as $i => $socketPath) {
-                        $process = $this->spawnWorker($bunPath, $workerPath, $i, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+                        $process = $this->spawnWorker($runtimePath, $workerPath, $i, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
                         if ($process === null) {
                             $this->error("Failed to restart worker {$i}, shutting down");
@@ -272,7 +272,7 @@ class BunServeCommand extends Command
 
                     if ($this->consecutiveFailures >= self::MAX_CONSECUTIVE_FAILURES) {
                         $this->error("Workers crashed {$this->consecutiveFailures} times consecutively. Stopping.");
-                        $this->error('Fix the error above and restart with: php artisan bun:serve');
+                        $this->error('Fix the error above and restart with: php artisan rsc:serve');
                         $this->shutdownAll();
 
                         return self::FAILURE;
@@ -282,7 +282,7 @@ class BunServeCommand extends Command
 
                     usleep(1_000_000 * $this->consecutiveFailures);
 
-                    $newProcess = $this->spawnWorker($bunPath, $workerPath, $i, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+                    $newProcess = $this->spawnWorker($runtimePath, $workerPath, $i, $this->socketPaths[$i], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
                     if ($newProcess === null) {
                         $this->error("Failed to restart worker {$i}, shutting down");
@@ -339,7 +339,7 @@ class BunServeCommand extends Command
         }
     }
 
-    private function outputConfig(string $functionsDir, bool $hasFunctionsDir, string $entryPoints, string $workerPath, string $bunPath): void
+    private function outputConfig(string $functionsDir, bool $hasFunctionsDir, string $entryPoints, string $workerPath, string $runtimePath): void
     {
         if ($hasFunctionsDir) {
             $this->line("Functions: {$functionsDir}");
@@ -352,7 +352,7 @@ class BunServeCommand extends Command
         }
 
         $this->line("Worker: {$workerPath}");
-        $this->line("Using: {$bunPath}");
+        $this->line("Using: {$runtimePath}");
 
         $this->warnIfPostMaxSizeTooLow();
 
@@ -361,13 +361,13 @@ class BunServeCommand extends Command
 
     private function warnIfPostMaxSizeTooLow(): void
     {
-        $bodySizeLimit = BunBridge::parseSize(config('bun.rsc.body_size_limit', '1mb'));
+        $bodySizeLimit = RuntimeBridge::parseSize(config('rsc.body_size_limit', '1mb'));
         $postMaxSize = self::phpIniBytes('post_max_size');
 
         if ($postMaxSize > 0 && $postMaxSize < $bodySizeLimit) {
             $this->warn(
                 "PHP's post_max_size (".ini_get('post_max_size').') is lower than body_size_limit ('
-                .config('bun.rsc.body_size_limit', '25mb').'). '
+                .config('rsc.body_size_limit', '25mb').'). '
                 .'PHP will silently reject server action payloads above '.ini_get('post_max_size').'.'
             );
         }
@@ -402,37 +402,37 @@ class BunServeCommand extends Command
         $env = getenv();
 
         if ($this->transport === 'tcp') {
-            $ports = BunBridge::tcpPorts($this->basePort, $this->workerCount, $index);
-            $env['BUN_TRANSPORT'] = 'tcp';
-            $env['BUN_HOST'] = $this->host;
-            $env['BUN_MAIN_PORT'] = (string) $ports['main'];
-            $env['BUN_CB_PORT'] = (string) $ports['cb'];
+            $ports = RuntimeBridge::tcpPorts($this->basePort, $this->workerCount, $index);
+            $env['RSC_TRANSPORT'] = 'tcp';
+            $env['RSC_HOST'] = $this->host;
+            $env['RSC_MAIN_PORT'] = (string) $ports['main'];
+            $env['RSC_CB_PORT'] = (string) $ports['cb'];
         } else {
-            $env['BUN_BRIDGE_SOCKET'] = $socketPath;
+            $env['RSC_SOCKET'] = $socketPath;
         }
 
         $env['NODE_ENV'] = $this->option('watch') ? 'development' : 'production';
 
         if ($hasFunctionsDir) {
-            $env['BUN_BRIDGE_FUNCTIONS_DIR'] = $functionsDir;
+            $env['RSC_FUNCTIONS_DIR'] = $functionsDir;
         }
 
         if ($entryPoints !== '') {
-            $env['BUN_BRIDGE_ENTRY_POINTS'] = $entryPoints;
+            $env['RSC_ENTRY_POINTS'] = $entryPoints;
         }
 
         if ($rscBundle !== null) {
-            $env['BUN_RSC_BUNDLE'] = $rscBundle;
+            $env['RSC_BUNDLE'] = $rscBundle;
         }
 
         $packageDir = realpath(__DIR__.'/../../');
 
         if ($packageDir !== false) {
-            $env['LARA_BUN_PACKAGE_DIR'] = $packageDir;
+            $env['RSC_PACKAGE_DIR'] = $packageDir;
         }
 
-        $env['BUN_MAX_FRAME_SIZE'] = (string) BunBridge::parseSize(
-            config('bun.rsc.body_size_limit', '1mb')
+        $env['RSC_MAX_FRAME_SIZE'] = (string) RuntimeBridge::parseSize(
+            config('rsc.body_size_limit', '1mb')
         );
 
         return $env;
@@ -440,7 +440,7 @@ class BunServeCommand extends Command
 
     private function detectRscBundle(): ?string
     {
-        $configured = config('bun.rsc.bundle');
+        $configured = config('rsc.bundle');
 
         if ($configured && file_exists($configured)) {
             return $configured;
@@ -471,6 +471,6 @@ class BunServeCommand extends Command
 
     private function findBun(): ?string
     {
-        return BunBinary::resolve();
+        return RuntimeBinary::resolve();
     }
 }

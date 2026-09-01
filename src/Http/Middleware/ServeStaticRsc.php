@@ -15,7 +15,7 @@ class ServeStaticRsc
     public function handle(Request $request, Closure $next): SymfonyResponse
     {
         $path = trim($request->getPathInfo(), '/') ?: 'index';
-        $basePath = config('bun.rsc.static_path', storage_path('framework/rsc-static'));
+        $basePath = config('rsc.static_path', storage_path('framework/rsc-static'));
 
         if ($request->hasHeader(Header::X_RSC)) {
             $flightFile = "{$basePath}/{$path}.flight";
@@ -107,8 +107,8 @@ class ServeStaticRsc
             return 'private, no-store';
         }
 
-        $ttl = (int) config('bun.rsc.shell_ttl', 3600);
-        $swr = (int) config('bun.rsc.shell_stale_while_revalidate', 86400);
+        $ttl = (int) config('rsc.shell_ttl', 3600);
+        $swr = (int) config('rsc.shell_stale_while_revalidate', 86400);
 
         return "public, max-age=0, s-maxage={$ttl}, stale-while-revalidate={$swr}";
     }

@@ -10,11 +10,11 @@
  * before any callback processing can delay it.
  */
 
-use LaravelRsc\BunBridge;
 use LaravelRsc\Header;
+use LaravelRsc\RuntimeBridge;
 
 test('rscStream yields stream-start before stream chunks', function () {
-    $bridge = Mockery::mock(BunBridge::class)->makePartial();
+    $bridge = Mockery::mock(RuntimeBridge::class)->makePartial();
 
     // Simulate the generator that rscStream returns — stream-start must be first
     $bridge->shouldReceive('rscStream')
@@ -37,7 +37,7 @@ test('rscStream yields stream-start before stream chunks', function () {
 });
 
 test('rscHtmlStream yields html-start before html chunks', function () {
-    $bridge = Mockery::mock(BunBridge::class)->makePartial();
+    $bridge = Mockery::mock(RuntimeBridge::class)->makePartial();
 
     $bridge->shouldReceive('rscHtmlStream')
         ->once()
@@ -60,8 +60,8 @@ test('rscHtmlStream yields html-start before html chunks', function () {
 });
 
 test('rsc SPA response sends headers without waiting for stream body', function () {
-    $bridgeMock = Mockery::mock(BunBridge::class);
-    app()->instance(BunBridge::class, $bridgeMock);
+    $bridgeMock = Mockery::mock(RuntimeBridge::class);
+    app()->instance(RuntimeBridge::class, $bridgeMock);
 
     // Track timing: the generator yields stream-start immediately,
     // then delays 100ms before yielding the first chunk.
@@ -93,8 +93,8 @@ test('rsc SPA response sends headers without waiting for stream body', function 
 });
 
 test('rsc SPA response carries no asset or metadata headers', function () {
-    $bridgeMock = Mockery::mock(BunBridge::class);
-    app()->instance(BunBridge::class, $bridgeMock);
+    $bridgeMock = Mockery::mock(RuntimeBridge::class);
+    app()->instance(RuntimeBridge::class, $bridgeMock);
 
     $bridgeMock
         ->shouldReceive('rscStream')

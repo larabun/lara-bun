@@ -5,13 +5,13 @@ use Illuminate\Auth\AuthenticationException;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
 use Illuminate\Validation\ValidationException;
-use LaravelRsc\BunBridge;
 use LaravelRsc\Header;
 use LaravelRsc\RscRedirectException;
+use LaravelRsc\RuntimeBridge;
 
 beforeEach(function () {
-    $this->bridgeMock = Mockery::mock(BunBridge::class);
-    $this->app->instance(BunBridge::class, $this->bridgeMock);
+    $this->bridgeMock = Mockery::mock(RuntimeBridge::class);
+    $this->app->instance(RuntimeBridge::class, $this->bridgeMock);
 });
 
 function defineLoginRoute(): void
@@ -178,7 +178,7 @@ test('streams successful action response', function () {
 
 test('forwards a binary request body to the action unchanged', function () {
     // Multipart uploads arrive as raw bytes. The controller must hand them to
-    // the bridge verbatim — BunBridge base64-encodes for the socket hop, so
+    // the bridge verbatim — RuntimeBridge base64-encodes for the socket hop, so
     // anything mangled here is mangled by the time the action sees it.
     $binary = "\x00\x01\x02\xFF\xFEPNG\r\n\x1A\n".random_bytes(64);
     $seen = null;

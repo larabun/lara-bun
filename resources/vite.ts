@@ -19,7 +19,7 @@ import rsc from '@vitejs/plugin-rsc'
 import type { Plugin, ResolvedConfig } from 'vite'
 
 export interface RscRoutesOptions {
-  /** App root. Defaults to LARA_BUN_PROJECT_ROOT, then cwd. */
+  /** App root. Defaults to RSC_PROJECT_ROOT, then cwd. */
   projectRoot?: string
   /** Directory holding the app/ route tree. Defaults to resources/js/rsc. */
   sourceDir?: string
@@ -33,7 +33,7 @@ export interface RscRoutesOptions {
    * This package's `resources/` directory, holding the client runtime the
    * browser entry imports. Vite stages configs through node_modules/.vite-temp,
    * so import.meta.dir is not this file's real location by the time the plugin
-   * runs — the CLI passes the real path through LARA_BUN_PACKAGE_DIR.
+   * runs — the CLI passes the real path through RSC_PACKAGE_DIR.
    */
   packageDir?: string
   /**
@@ -65,9 +65,9 @@ let hostGlobal: string
 let routeConfig: { file: string; dynamicPattern: RegExp }
 
 function resolvePaths(options: RscRoutesOptions): void {
-  projectRoot = resolve(options.projectRoot || process.env.LARA_BUN_PROJECT_ROOT || process.cwd())
-  sourceDir = resolve(options.sourceDir || process.env.BUN_RSC_SOURCE_DIR || join(projectRoot, 'resources/js/rsc'))
-  outDir = resolve(options.outDir || process.env.BUN_RSC_OUT_DIR || join(projectRoot, 'bootstrap/rsc/vite'))
+  projectRoot = resolve(options.projectRoot || process.env.RSC_PROJECT_ROOT || process.cwd())
+  sourceDir = resolve(options.sourceDir || process.env.RSC_SOURCE_DIR || join(projectRoot, 'resources/js/rsc'))
+  outDir = resolve(options.outDir || process.env.RSC_OUT_DIR || join(projectRoot, 'bootstrap/rsc/vite'))
   appDir = join(sourceDir, 'app')
 
   // Generated entries live under the (in-project) out dir so module resolution
@@ -76,9 +76,9 @@ function resolvePaths(options: RscRoutesOptions): void {
 
   // The CLIENT bundle is browser-facing and must be web-served from public/; the
   // rsc/ssr bundles are SERVER code and stay under outDir (never public).
-  publicAssetsDir = resolve(options.assetsDir || process.env.BUN_RSC_ASSETS_DIR || join(projectRoot, 'public/build/rsc-vite'))
-  assetsBaseUrl = options.assetsUrl || process.env.BUN_RSC_ASSETS_URL || '/build/rsc-vite/'
-  packageDir = resolve(options.packageDir || process.env.LARA_BUN_PACKAGE_DIR || import.meta.dir)
+  publicAssetsDir = resolve(options.assetsDir || process.env.RSC_ASSETS_DIR || join(projectRoot, 'public/build/rsc-vite'))
+  assetsBaseUrl = options.assetsUrl || process.env.RSC_ASSETS_URL || '/build/rsc-vite/'
+  packageDir = resolve(options.packageDir || process.env.RSC_PACKAGE_DIR || import.meta.dir)
   hostGlobal = options.hostGlobal || 'rpc'
   routeConfig = options.routeConfig ?? {
     file: 'route.php',
@@ -408,7 +408,7 @@ export async function handleRsc(
 //   timedOut        — the render never finished, i.e. it is still waiting on
 //                     data, so only the shell is safe to cache
 // A page that sets neither is genuinely static and can be prerendered fully.
-const PPR_SHELL_TIMEOUT_MS = Number(process.env.BUN_RSC_PPR_TIMEOUT_MS || 2000)
+const PPR_SHELL_TIMEOUT_MS = Number(process.env.RSC_PPR_TIMEOUT_MS || 2000)
 
 export async function handleRscPprShell(
   component: string,

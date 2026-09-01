@@ -9,7 +9,7 @@ use LaravelRsc\PrerenderService;
 beforeEach(function () {
     $this->staticDir = sys_get_temp_dir().'/rsc-static-test-'.uniqid();
     mkdir($this->staticDir, 0755, true);
-    Config::set('bun.rsc.static_path', $this->staticDir);
+    Config::set('rsc.static_path', $this->staticDir);
 
     Route::get('/test-page', fn () => 'dynamic content')
         ->middleware(ServeStaticRsc::class);
@@ -155,8 +155,8 @@ test('serves the ppr shell when there is no fully static page', function () {
 
 test('marks the ppr shell cacheable by a CDN', function () {
     file_put_contents($this->staticDir.'/test-page.ppr.html', '<html><body>shell</body></html>');
-    Config::set('bun.rsc.shell_ttl', 600);
-    Config::set('bun.rsc.shell_stale_while_revalidate', 1200);
+    Config::set('rsc.shell_ttl', 600);
+    Config::set('rsc.shell_stale_while_revalidate', 1200);
 
     $cacheControl = $this->get('/test-page')->headers->get('Cache-Control');
 

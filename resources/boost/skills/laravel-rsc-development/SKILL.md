@@ -185,7 +185,7 @@ export default function Layout({ children, modal }) {
 ### SPA Navigation
 1. Browser `fetch()` with `X-RSC: true` header
 2. PHP `PageController` → `RscResponse::toStreamedRscResponse()`
-3. PHP `BunBridge::rscStream()` → socket message to Bun worker
+3. PHP `RuntimeBridge::rscStream()` → socket message to Bun worker
 4. Bun worker → the generated entry's `handleRscStream()` → Flight stream
 5. PHP yields chunks → browser `createFromReadableStream()` → React renders
 
@@ -229,7 +229,7 @@ The `stream-start` frame MUST be read eagerly from the main socket before enteri
 ### Extending the build
 
 The build is a Vite plugin the app composes. Create `vite.rsc.config.ts` at the
-project root (or point `BUN_RSC_VITE_CONFIG` anywhere):
+project root (or point `RSC_VITE_CONFIG` anywhere):
 
 ```ts
 // vite.rsc.config.ts
@@ -291,7 +291,7 @@ browser → CDN: cached shell (instant paint, Suspense fallback showing)
 browser → origin: Flight payload with real data → fills the hole
 ```
 
-Tunable with `BUN_RSC_SHELL_TTL` and `BUN_RSC_SHELL_SWR`. Two caveats:
+Tunable with `RSC_SHELL_TTL` and `RSC_SHELL_SWR`. Two caveats:
 
 - Shells go stale on redeploy. Purge the CDN on deploy, or keep the TTL short.
 - If a CSP nonce is active the shell is served `private, no-store`, since one
@@ -303,15 +303,26 @@ Shells are tagged `laravel-rsc-shell` via `Cache-Tag` (Cloudflare) and
 `Surrogate-Key` (Fastly/Varnish), so a deploy hook can purge every shell at
 once instead of waiting out the TTL. **Purge on deploy** — a shell references
 hashed asset URLs, and once those 404 the client never boots to fill the hole.
-Short of a purge hook, keep `BUN_RSC_SHELL_TTL` low.
+Short of a purge hook, keep `RSC_SHELL_TTL` low.
 
 The client adopts the build version from the first response carrying
 `X-RSC-Version`, so a redeploy mid-session is caught on the next navigation and
 answered with a 409 plus a full reload.
 
+## Runtime
+
+The worker and the build both run on **Bun or Node** — `RSC_RUNTIME=bun`
+(default) or `node`, with `RSC_RUNTIME_BINARY` to point at a specific
+executable. Nothing in the render path is runtime-specific: the socket server,
+the event-loop yield and the directory walk live behind `resources/runtime.ts`,
+and everything above it is plain web APIs.
+
+Bun is the default because it starts faster and `rsc:install` can vendor a
+static binary onto hosts that have no JavaScript runtime at all.
+
 ## Deployment
 
-`bun:serve` is a long-running supervisor that spawns the Bun workers; PHP talks
+`rsc:serve` is a long-running supervisor that spawns the Bun workers; PHP talks
 to them over a Unix socket. Any host that can run a persistent process
 alongside PHP works — the two only need to share a filesystem.
 
@@ -321,28 +332,28 @@ Runs on any plan, including Starter and Growth. No enterprise plan and no TCP
 transport are required.
 
 1. **Build commands** — install Bun before building, since Cloud's PHP image
-   has none. `bun:install` writes a static binary to `bin/bun` inside the
+   has none. `rsc:install` writes a static binary to `bin/bun` inside the
    project, so it persists into the deployed image:
 
    ```bash
-   php artisan bun:install && php artisan rsc:build
+   php artisan rsc:install && php artisan rsc:build
    ```
 
 2. **App cluster → Background processes → Custom worker** — command
-   `php artisan bun:serve`, 1 instance. Cloud restarts it if it exits.
+   `php artisan rsc:serve`, 1 instance. Cloud restarts it if it exits.
 
    Use the **App** cluster, not a worker cluster. Background processes there run
    in the same pod that serves web traffic, so the Unix socket works. Worker
    clusters are separate compute that does not serve web traffic, so PHP could
    not reach a worker running on one.
 
-3. **Set `BUN_WORKERS`** — Cloud spawns your custom process once *per replica*,
-   and each Bun worker loads the RSC bundle into its own heap. `BUN_WORKERS=1`
+3. **Set `RSC_WORKERS`** — Cloud spawns your custom process once *per replica*,
+   and each Bun worker loads the RSC bundle into its own heap. `RSC_WORKERS=1`
    is right for small instances. Left unset, the default is bounded by the
    cgroup CPU quota and the container memory limit, but setting it explicitly is
    clearer.
 
-Keep `BUN_TRANSPORT=unix` (the default).
+Keep `RSC_TRANSPORT=unix` (the default).
 
 **Scale to Zero** stops the App cluster on its sleep timeout, taking the Bun
 workers with it; they restart when the environment wakes. PHP retries the socket

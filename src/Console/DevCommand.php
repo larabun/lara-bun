@@ -3,12 +3,12 @@
 namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\Support\BunBinary;
+use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
-class BunDevCommand extends Command
+class DevCommand extends Command
 {
-    protected $signature = 'bun:dev {--socket= : Path to the Unix socket}';
+    protected $signature = 'rsc:dev {--socket= : Path to the Unix socket}';
 
     protected $description = 'Start the build watcher and Bun worker for development';
 
@@ -20,10 +20,10 @@ class BunDevCommand extends Command
 
     public function handle(): int
     {
-        $bunPath = $this->findBun();
+        $runtimePath = $this->findBun();
 
-        if ($bunPath === null) {
-            $this->error('Bun executable not found. Run: php artisan bun:install (or set BUN_BINARY to its path).');
+        if ($runtimePath === null) {
+            $this->error(RuntimeBinary::runtime().' executable not found. Run: php artisan rsc:install (or set RSC_RUNTIME_BINARY to its path).');
 
             return self::FAILURE;
         }
@@ -43,7 +43,7 @@ class BunDevCommand extends Command
         $this->newLine();
 
         $initialBuild = new Process(
-            [$bunPath, $buildScript],
+            [$runtimePath, $buildScript],
             base_path(),
             $this->viteBuildEnv(),
         );
@@ -58,25 +58,25 @@ class BunDevCommand extends Command
         }
 
         // Step 2: Start the Vite build watcher in the background (rebuilds on
-        // source change; the worker restarts via bun:serve --watch).
+        // source change; the worker restarts via rsc:serve --watch).
         $this->buildProcess = new Process(
-            [$bunPath, $buildScript],
+            [$runtimePath, $buildScript],
             base_path(),
-            $this->viteBuildEnv(['BUN_RSC_WATCH' => '1']),
+            $this->viteBuildEnv(['RSC_WATCH' => '1']),
         );
         $this->buildProcess->setTimeout(null);
         $this->buildProcess->start(fn ($type, $buffer) => $this->output->write($buffer));
 
         $this->info('Build watcher started.');
 
-        // Step 3: Start bun:serve --watch (skip if no bundle yet — watcher will trigger it)
+        // Step 3: Start rsc:serve --watch (skip if no bundle yet — watcher will trigger it)
         $socketOption = $this->option('socket') ? ['--socket='.$this->option('socket')] : [];
-        $bundlePath = config('bun.rsc.bundle', base_path('bootstrap/rsc/entry.rsc.js'));
+        $bundlePath = config('rsc.bundle', base_path('bootstrap/rsc/entry.rsc.js'));
         $canServe = $buildSucceeded && file_exists($bundlePath);
 
         if ($canServe) {
             $this->serveProcess = new Process(
-                ['php', 'artisan', 'bun:serve', '--watch', ...$socketOption],
+                ['php', 'artisan', 'rsc:serve', '--watch', ...$socketOption],
                 base_path(),
             );
             $this->serveProcess->setTimeout(null);
@@ -101,7 +101,7 @@ class BunDevCommand extends Command
             if ($this->serveProcess === null && file_exists($bundlePath)) {
                 $this->info('Build succeeded — starting worker...');
                 $this->serveProcess = new Process(
-                    ['php', 'artisan', 'bun:serve', '--watch', ...$socketOption],
+                    ['php', 'artisan', 'rsc:serve', '--watch', ...$socketOption],
                     base_path(),
                 );
                 $this->serveProcess->setTimeout(null);
@@ -184,16 +184,16 @@ class BunDevCommand extends Command
     private function viteBuildEnv(array $extra = []): array
     {
         return array_merge(getenv(), [
-            'LARA_BUN_PROJECT_ROOT' => base_path(),
-            'BUN_RSC_SOURCE_DIR' => config('bun.rsc.source_dir'),
-            'BUN_RSC_OUT_DIR' => base_path('bootstrap/rsc/vite'),
-            'BUN_RSC_ASSETS_DIR' => config('bun.rsc.assets_dir'),
-            'BUN_RSC_ASSETS_URL' => config('bun.rsc.assets_url'),
+            'RSC_PROJECT_ROOT' => base_path(),
+            'RSC_SOURCE_DIR' => config('rsc.source_dir'),
+            'RSC_OUT_DIR' => base_path('bootstrap/rsc/vite'),
+            'RSC_ASSETS_DIR' => config('rsc.assets_dir'),
+            'RSC_ASSETS_URL' => config('rsc.assets_url'),
         ], $extra);
     }
 
     private function findBun(): ?string
     {
-        return BunBinary::resolve();
+        return RuntimeBinary::resolve();
     }
 }

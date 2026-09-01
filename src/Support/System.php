@@ -190,16 +190,16 @@ class System
     }
 
     /**
-     * Default Bun worker count when BUN_WORKERS is not set.
+     * Default Bun worker count when RSC_WORKERS is not set.
      *
      * One worker per core saturates the machine, but each worker loads the RSC
      * bundle into its own memory, so the auto value is bounded three ways: the
      * cap, the CPU allowance, and — where a container memory limit is
      * detectable — what that memory can actually hold. Without the memory bound
      * a small instance (a Laravel Cloud App cluster running PHP alongside
-     * `bun:serve`, say) would spawn workers it cannot afford and OOM.
+     * `rsc:serve`, say) would spawn workers it cannot afford and OOM.
      *
-     * Operators can always override with BUN_WORKERS.
+     * Operators can always override with RSC_WORKERS.
      */
     public static function defaultWorkerCount(int $cap = 4): int
     {

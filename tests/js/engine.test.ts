@@ -1,6 +1,6 @@
 // Engine-level tests for the vite RSC bundle.
 //
-// The Pest suite covers the PHP layer with BunBridge mocked, so it never
+// The Pest suite covers the PHP layer with RuntimeBridge mocked, so it never
 // exercises the thing the worker actually loads. These build the fixture app
 // with build-rsc-vite.ts and assert on what the generated entry renders:
 // composition (layouts, parallel slots, intercept overrides), Suspense
@@ -75,10 +75,10 @@ beforeAll(async () => {
       env: {
         ...process.env,
         NODE_ENV: 'production',
-        LARA_BUN_PROJECT_ROOT: packageRoot,
-        BUN_RSC_SOURCE_DIR: fixtureDir,
-        BUN_RSC_OUT_DIR: outDir,
-        BUN_RSC_ASSETS_DIR: join(outDir, 'public'),
+        RSC_PROJECT_ROOT: packageRoot,
+        RSC_SOURCE_DIR: fixtureDir,
+        RSC_OUT_DIR: outDir,
+        RSC_ASSETS_DIR: join(outDir, 'public'),
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -319,10 +319,10 @@ describe('loading.tsx validation', () => {
       cwd: packageRoot,
       env: {
         ...process.env,
-        LARA_BUN_PROJECT_ROOT: packageRoot,
-        BUN_RSC_SOURCE_DIR: dir,
-        BUN_RSC_OUT_DIR: buildDir,
-        BUN_RSC_ASSETS_DIR: join(buildDir, 'public'),
+        RSC_PROJECT_ROOT: packageRoot,
+        RSC_SOURCE_DIR: dir,
+        RSC_OUT_DIR: buildDir,
+        RSC_ASSETS_DIR: join(buildDir, 'public'),
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -464,11 +464,11 @@ export default {
       cwd: packageRoot,
       env: {
         ...process.env,
-        LARA_BUN_PROJECT_ROOT: packageRoot,
-        BUN_RSC_SOURCE_DIR: app,
-        BUN_RSC_OUT_DIR: buildDir,
-        BUN_RSC_ASSETS_DIR: join(buildDir, 'public'),
-        BUN_RSC_VITE_CONFIG: configPath,
+        RSC_PROJECT_ROOT: packageRoot,
+        RSC_SOURCE_DIR: app,
+        RSC_OUT_DIR: buildDir,
+        RSC_ASSETS_DIR: join(buildDir, 'public'),
+        RSC_VITE_CONFIG: configPath,
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -487,7 +487,7 @@ export default {
   test('applies the app plugins during the build', async () => {
     // Proves the merge actually reaches the build rather than just resolving a
     // path: a plugin that only the app config supplies must transform output.
-    const marker = 'LARABUN_USER_PLUGIN_RAN'
+    const marker = 'RSC_USER_PLUGIN_RAN'
     const app = mkdtempSync(join(tmpdir(), 'larabun-cfgapp-'))
     const buildDir = mkdtempSync(join(packageRoot, 'bootstrap/rsc/cfg-'))
     const configPath = join(buildDir, 'vite.rsc.config.mjs')
@@ -524,11 +524,11 @@ export default {
       cwd: packageRoot,
       env: {
         ...process.env,
-        LARA_BUN_PROJECT_ROOT: packageRoot,
-        BUN_RSC_SOURCE_DIR: app,
-        BUN_RSC_OUT_DIR: buildDir,
-        BUN_RSC_ASSETS_DIR: join(buildDir, 'public'),
-        BUN_RSC_VITE_CONFIG: configPath,
+        RSC_PROJECT_ROOT: packageRoot,
+        RSC_SOURCE_DIR: app,
+        RSC_OUT_DIR: buildDir,
+        RSC_ASSETS_DIR: join(buildDir, 'public'),
+        RSC_VITE_CONFIG: configPath,
       },
       stdout: 'pipe',
       stderr: 'pipe',

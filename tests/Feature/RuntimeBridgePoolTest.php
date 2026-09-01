@@ -6,17 +6,17 @@
  *  - socketHasPendingData detects EOF/desync so stale pooled sockets are
  *    discarded at checkout instead of surfacing as 500s (audit #5)
  *
- * These drive the real (unmocked) BunBridge against in-process socket pairs.
+ * These drive the real (unmocked) RuntimeBridge against in-process socket pairs.
  */
 
-use LaravelRsc\BunBridge;
+use LaravelRsc\RuntimeBridge;
 
 function bridgeFrame(string $json): string
 {
     return pack('N', strlen($json)).$json;
 }
 
-function invokeBridge(BunBridge $bridge, string $method, array $args): mixed
+function invokeBridge(RuntimeBridge $bridge, string $method, array $args): mixed
 {
     $ref = new ReflectionMethod($bridge, $method);
     $ref->setAccessible(true);
@@ -24,7 +24,7 @@ function invokeBridge(BunBridge $bridge, string $method, array $args): mixed
     return $ref->invokeArgs($bridge, $args);
 }
 
-function setBridgeProperty(BunBridge $bridge, string $property, mixed $value): void
+function setBridgeProperty(RuntimeBridge $bridge, string $property, mixed $value): void
 {
     $ref = new ReflectionProperty($bridge, $property);
     $ref->setAccessible(true);
@@ -41,7 +41,7 @@ function socketPair(): array
 }
 
 test('readFrame reads a single frame back into an array', function () {
-    $bridge = new BunBridge;
+    $bridge = new RuntimeBridge;
     [$reader, $writer] = socketPair();
 
     socket_write($writer, bridgeFrame('{"type":"pong"}'));
@@ -50,7 +50,7 @@ test('readFrame reads a single frame back into an array', function () {
 });
 
 test('readFrame does not over-read across frame boundaries', function () {
-    $bridge = new BunBridge;
+    $bridge = new RuntimeBridge;
     [$reader, $writer] = socketPair();
 
     // Two frames written back-to-back into the same buffer.
@@ -63,7 +63,7 @@ test('readFrame does not over-read across frame boundaries', function () {
 });
 
 test('socketHasPendingData is false for an idle socket and true after the peer closes', function () {
-    $bridge = new BunBridge;
+    $bridge = new RuntimeBridge;
     [$a, $b] = socketPair();
 
     expect(invokeBridge($bridge, 'socketHasPendingData', [$a]))->toBeFalse();
@@ -74,7 +74,7 @@ test('socketHasPendingData is false for an idle socket and true after the peer c
 });
 
 test('checkout discards a dead pooled socket and returns a healthy one', function () {
-    $bridge = new BunBridge;
+    $bridge = new RuntimeBridge;
 
     [$aliveA, $aliveB] = socketPair(); // keep $aliveB open so $aliveA stays healthy
     [$deadA, $deadB] = socketPair();

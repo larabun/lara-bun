@@ -1,10 +1,10 @@
 <?php
 
-use LaravelRsc\BunBridge;
+use LaravelRsc\RuntimeBridge;
 
 beforeEach(function () {
-    $this->bridgeMock = Mockery::mock(BunBridge::class);
-    $this->app->instance(BunBridge::class, $this->bridgeMock);
+    $this->bridgeMock = Mockery::mock(RuntimeBridge::class);
+    $this->app->instance(RuntimeBridge::class, $this->bridgeMock);
 });
 
 // NOTE: these streamed responses flush all output buffers (the streaming
@@ -15,7 +15,7 @@ beforeEach(function () {
 // render tests.
 
 test('vite engine renders initial load via rscHtmlStream and returns streaming HTML', function () {
-    config()->set('bun.rsc.engine', 'vite');
+    config()->set('rsc.engine', 'vite');
 
     $this->bridgeMock
         ->shouldReceive('rscHtmlStream')
@@ -37,7 +37,7 @@ test('vite engine renders initial load via rscHtmlStream and returns streaming H
 });
 
 test('bun engine still renders through the blade shell path (unchanged default)', function () {
-    config()->set('bun.rsc.engine', 'bun');
+    config()->set('rsc.engine', 'bun');
 
     $this->bridgeMock
         ->shouldReceive('rscHtmlStream')

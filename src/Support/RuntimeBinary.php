@@ -4,17 +4,29 @@ namespace LaravelRsc\Support;
 
 use RuntimeException;
 
-class BunBinary
+class RuntimeBinary
 {
-    /**
-     * Resolve the Bun executable path.
-     *
-     * Honors the configured `bun.binary` (BUN_BINARY) first — absolute, or
-     * relative to the app base path — then common install locations and PATH.
-     */
-    public static function resolve(): ?string
+    /** Runtimes the worker and build can run on. */
+    public const RUNTIMES = ['bun', 'node'];
+
+    /** The configured runtime, falling back to bun. */
+    public static function runtime(): string
     {
-        $configured = config('bun.binary');
+        $runtime = (string) config('rsc.runtime', 'bun');
+
+        return in_array($runtime, self::RUNTIMES, true) ? $runtime : 'bun';
+    }
+
+    /**
+     * Resolve the executable for the configured runtime.
+     *
+     * Honors `rsc.binary` (RSC_RUNTIME_BINARY) first — absolute, or relative to
+     * the app base path — then common install locations, then PATH.
+     */
+    public static function resolve(?string $runtime = null): ?string
+    {
+        $runtime ??= self::runtime();
+        $configured = config('rsc.binary');
 
         if (is_string($configured) && $configured !== '') {
             $path = self::absolutePath($configured);
@@ -24,13 +36,13 @@ class BunBinary
             }
         }
 
-        foreach (self::candidates() as $path) {
+        foreach (self::candidates($runtime) as $path) {
             if (is_executable($path)) {
                 return $path;
             }
         }
 
-        $which = trim((string) shell_exec('which bun 2>/dev/null'));
+        $which = trim((string) shell_exec('which '.escapeshellarg($runtime).' 2>/dev/null'));
 
         if ($which !== '' && is_executable($which)) {
             return $which;
@@ -40,16 +52,27 @@ class BunBinary
     }
 
     /**
-     * Common Bun install locations to probe when BUN_BINARY is not set.
+     * Common install locations to probe when RSC_RUNTIME_BINARY is not set.
      *
      * @return string[]
      */
-    public static function candidates(): array
+    public static function candidates(?string $runtime = null): array
     {
+        $runtime ??= self::runtime();
+        $home = $_SERVER['HOME'] ?? '';
+
+        if ($runtime === 'node') {
+            return [
+                '/opt/homebrew/bin/node',
+                '/usr/local/bin/node',
+                '/usr/bin/node',
+            ];
+        }
+
         return [
             '/opt/homebrew/bin/bun',
             '/usr/local/bin/bun',
-            ($_SERVER['HOME'] ?? '').'/.bun/bin/bun',
+            $home.'/.bun/bin/bun',
         ];
     }
 

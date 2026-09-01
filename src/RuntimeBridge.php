@@ -8,7 +8,7 @@ use Illuminate\Validation\ValidationException;
 use RuntimeException;
 use Socket;
 
-class BunBridge
+class RuntimeBridge
 {
     /** @var string[] */
     private array $socketPaths = [];
@@ -51,14 +51,14 @@ class BunBridge
             throw new RuntimeException('The sockets extension is required. Enable it in php.ini.');
         }
 
-        $this->workerCount = max(1, (int) config('bun.workers', 1));
+        $this->workerCount = max(1, (int) config('rsc.workers', 1));
         $this->currentWorker = $this->workerCount > 1 ? random_int(0, $this->workerCount - 1) : 0;
-        $this->maxFrameSize = self::parseSize(config('bun.rsc.body_size_limit', '1mb'));
-        $this->transport = config('bun.transport', 'unix') === 'tcp' ? 'tcp' : 'unix';
+        $this->maxFrameSize = self::parseSize(config('rsc.body_size_limit', '1mb'));
+        $this->transport = config('rsc.transport', 'unix') === 'tcp' ? 'tcp' : 'unix';
 
         if ($this->transport === 'tcp') {
-            $this->host = (string) config('bun.host', '127.0.0.1');
-            $basePort = (int) config('bun.port', 7940);
+            $this->host = (string) config('rsc.host', '127.0.0.1');
+            $basePort = (int) config('rsc.port', 7940);
 
             for ($i = 0; $i < $this->workerCount; $i++) {
                 $ports = self::tcpPorts($basePort, $this->workerCount, $i);
@@ -69,7 +69,7 @@ class BunBridge
             return;
         }
 
-        $basePath = config('bun.socket_path', '/tmp/bun-bridge.sock');
+        $basePath = config('rsc.socket_path', '/tmp/bun-bridge.sock');
 
         if ($this->workerCount === 1) {
             $this->socketPaths = [$basePath];
@@ -195,7 +195,7 @@ class BunBridge
 
                 $write = [];
                 $except = [];
-                $timeout = (int) config('bun.rsc.callback_timeout', 5);
+                $timeout = (int) config('rsc.callback_timeout', 5);
                 $changed = socket_select($read, $write, $except, $timeout);
 
                 if ($changed === false) {
@@ -1021,7 +1021,7 @@ class BunBridge
      */
     private function streamIdleTimeout(): int
     {
-        return max(1, (int) config('bun.rsc.stream_timeout', 30));
+        return max(1, (int) config('rsc.stream_timeout', 30));
     }
 
     /**
@@ -1085,7 +1085,7 @@ class BunBridge
 
             if (! file_exists($path)) {
                 throw new RuntimeException(
-                    "Bun callback socket not found at {$path}. Ensure bun:serve is running."
+                    "Bun callback socket not found at {$path}. Ensure rsc:serve is running."
                 );
             }
 
@@ -1137,7 +1137,7 @@ class BunBridge
 
         if (! file_exists($path)) {
             throw new RuntimeException(
-                "Bun socket not found at {$path}. Run: php artisan bun:serve"
+                "Bun socket not found at {$path}. Run: php artisan rsc:serve"
             );
         }
     }

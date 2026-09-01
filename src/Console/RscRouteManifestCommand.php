@@ -14,7 +14,7 @@ class RscRouteManifestCommand extends Command
 
     public function handle(): int
     {
-        $appDir = config('bun.rsc.source_dir').'/app';
+        $appDir = config('rsc.source_dir').'/app';
 
         if (! is_dir($appDir)) {
             $this->line(json_encode([], JSON_THROW_ON_ERROR));

@@ -1,6 +1,7 @@
 import { chmodSync, unlinkSync } from "node:fs";
+import { listen, runtimeName, scanScripts, yieldToEventLoop, type SocketLike } from "./runtime.ts";
 import { join, resolve } from "node:path";
-import { ServerAuthenticationError, ServerAuthorizationError, ServerRedirectError, ServerValidationError } from "./errors";
+import { ServerAuthenticationError, ServerAuthorizationError, ServerRedirectError, ServerValidationError } from "./errors.ts";
 
 type MessageHandler = (args: Record<string, unknown>) => unknown;
 
@@ -36,13 +37,13 @@ interface IncomingMessage {
 }
 
 function log(...args: unknown[]): void {
-  console.error("[bun-bridge]", ...args);
+  console.error(`[rsc-worker:${runtimeName}]`, ...args);
 }
 
 async function discoverFunctions(dir: string): Promise<void> {
-  const glob = new Bun.Glob("**/*.{ts,js}");
+  const scripts = scanScripts(dir);
 
-  for await (const path of glob.scan(dir)) {
+  for (const path of scripts) {
     const mod = await import(join(dir, path));
 
     for (const [name, fn] of Object.entries(mod)) {
@@ -59,7 +60,7 @@ async function discoverFunctions(dir: string): Promise<void> {
 }
 
 async function loadEntryPoints(): Promise<void> {
-  const raw = process.env.BUN_BRIDGE_ENTRY_POINTS ?? "";
+  const raw = process.env.RSC_ENTRY_POINTS ?? "";
   const paths = raw.split(",").map((p) => p.trim()).filter(Boolean);
 
   for (const entryPath of paths) {
@@ -119,7 +120,7 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
 
     case "rsc": {
       if (!rscHandler) {
-        return '{"error":"RSC not enabled. Set BUN_RSC_ENABLED=true and run: bun run build:rsc"}';
+        return '{"error":"RSC not enabled. Set RSC_ENABLED=true and run: bun run build:rsc"}';
       }
       if (!message.component) {
         return '{"error":"Missing component in RSC message"}';
@@ -158,7 +159,7 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
 
     case "rsc-ppr-shell": {
       if (!rscHandler) {
-        return '{"error":"RSC not enabled. Set BUN_RSC_ENABLED=true and run: bun run build:rsc"}';
+        return '{"error":"RSC not enabled. Set RSC_ENABLED=true and run: bun run build:rsc"}';
       }
       if (!message.component) {
         return '{"error":"Missing component in RSC message"}';
@@ -185,15 +186,15 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
   }
 }
 
-const functionsDir = process.env.BUN_BRIDGE_FUNCTIONS_DIR;
-const socketPath = process.env.BUN_BRIDGE_SOCKET ?? "/tmp/bun-bridge.sock";
+const functionsDir = process.env.RSC_FUNCTIONS_DIR;
+const socketPath = process.env.RSC_SOCKET ?? "/tmp/bun-bridge.sock";
 
 // Transport: 'unix' (default) listens on socketPath; 'tcp' listens on
-// BUN_HOST:BUN_MAIN_PORT (main) and BUN_HOST:BUN_CB_PORT (callbacks).
-const isTcp = process.env.BUN_TRANSPORT === "tcp";
-const tcpHost = process.env.BUN_HOST ?? "127.0.0.1";
-const mainPort = parseInt(process.env.BUN_MAIN_PORT ?? "0", 10);
-const cbPort = parseInt(process.env.BUN_CB_PORT ?? "0", 10);
+// RSC_HOST:RSC_MAIN_PORT (main) and RSC_HOST:RSC_CB_PORT (callbacks).
+const isTcp = process.env.RSC_TRANSPORT === "tcp";
+const tcpHost = process.env.RSC_HOST ?? "127.0.0.1";
+const mainPort = parseInt(process.env.RSC_MAIN_PORT ?? "0", 10);
+const cbPort = parseInt(process.env.RSC_CB_PORT ?? "0", 10);
 
 if (functionsDir) {
   await discoverFunctions(functionsDir);
@@ -248,11 +249,11 @@ type RscHandlerModule = {
 
 let rscHandler: RscHandlerModule | null = null;
 
-if (process.env.BUN_RSC_BUNDLE) {
+if (process.env.RSC_BUNDLE) {
   try {
     // The built @vitejs/plugin-rsc entry IS the handler — it exports the
     // installHostFn / handleRsc* / handleAction / resolveMetadata contract.
-    rscHandler = (await import(process.env.BUN_RSC_BUNDLE)) as RscHandlerModule;
+    rscHandler = (await import(process.env.RSC_BUNDLE)) as RscHandlerModule;
     log("RSC handler loaded");
   } catch (err) {
     log(
@@ -270,8 +271,8 @@ if (Object.keys(functions).length === 0 && !rscHandler) {
 /**
  * Handles rsc-stream messages.
  *
- * Writes Flight data frames back on the main Bun.listen handler socket
- * (same path as SSR responses). The drain handler on Bun.listen handles
+ * Writes Flight data frames back on the main listener's socket (same path as
+ * SSR responses). The listener's drain handler handles
  * backpressure for large payloads. Runs via setTimeout so writes are not
  * corked by the data handler's async callback buffering.
  */
@@ -313,7 +314,7 @@ async function handleRscStreamMessage(
     const decoder = new TextDecoder();
 
     // Write stream-start and immediately read the first chunk WITHOUT
-    // yielding the event loop (no Bun.sleep). This ensures the Flight
+    // yielding the event loop (no sleep). This ensures the Flight
     // root model (row 0) reaches PHP on the main socket BEFORE any
     // php() callback request can be processed — making SPA navigation
     // resolve instantly even when slow callbacks are pending.
@@ -329,7 +330,7 @@ async function handleRscStreamMessage(
 
     if (!first.done) {
       while (true) {
-        await Bun.sleep(0);
+        await yieldToEventLoop();
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -357,8 +358,8 @@ async function handleRscStreamMessage(
 /**
  * Handles rsc-html-stream messages for initial page loads with Suspense.
  *
- * Writes HTML + Flight payload frames back on the main Bun.listen handler
- * socket (same path as SSR responses). The drain handler on Bun.listen
+ * Writes HTML + Flight payload frames back on the main listener's socket
+ * (same path as SSR responses). The drain handler
  * handles backpressure for large payloads.
  */
 async function handleRscHtmlStreamMessage(
@@ -450,7 +451,7 @@ async function handleRscHtmlStreamMessage(
 
     if (!first.done) {
       while (true) {
-        await Bun.sleep(0);
+        await yieldToEventLoop();
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -523,7 +524,7 @@ async function handleRscActionMessage(
     );
 
     writeFrame(mainSocket, '{"type":"action-start"}');
-    await Bun.sleep(0);
+    await yieldToEventLoop();
 
     const reader = stream.getReader();
     const decoder = new TextDecoder();
@@ -536,7 +537,7 @@ async function handleRscActionMessage(
         ? value
         : decoder.decode(value, { stream: true });
       writeFrame(mainSocket, JSON.stringify({ type: "action-chunk", data: text }));
-      await Bun.sleep(0);
+      await yieldToEventLoop();
     }
 
     writeFrame(mainSocket, '{"type":"action-end"}');
@@ -585,8 +586,6 @@ if (!isTcp) {
   }
 }
 
-type SocketLike = { write(data: string | Uint8Array): number; flush(): void };
-
 const pendingWriteBuffers = new Map<unknown, Buffer>();
 const socketBuffers = new Map<unknown, Buffer>();
 
@@ -624,7 +623,7 @@ function writeFrame(socket: SocketLike, json: string): void {
   }
 }
 
-const MAX_FRAME_SIZE = parseInt(process.env.BUN_MAX_FRAME_SIZE || "1048576", 10); // 1MB default
+const MAX_FRAME_SIZE = parseInt(process.env.RSC_MAX_FRAME_SIZE || "1048576", 10); // 1MB default
 
 // Create the socket files owner-only. Without this, any local user could
 // connect to the predictable socket path and drive the bridge (invoke server
@@ -641,9 +640,9 @@ function secureSocket(path: string): void {
   }
 }
 
-const server = Bun.listen({
-  ...(isTcp ? { hostname: tcpHost, port: mainPort } : { unix: socketPath }),
-  socket: {
+const server = listen(
+  isTcp ? { hostname: tcpHost, port: mainPort } : { unix: socketPath },
+  {
     async data(socket, rawData) {
       let buf = socketBuffers.get(socket);
       buf = buf ? Buffer.concat([buf, Buffer.from(rawData)]) : Buffer.from(rawData);
@@ -711,7 +710,7 @@ const server = Bun.listen({
       log("Socket error:", err.message);
     },
   },
-});
+);
 
 if (!isTcp) secureSocket(socketPath);
 
@@ -757,9 +756,9 @@ function handleCbResponse(response: Record<string, unknown>): void {
   }
 }
 
-const cbServer = Bun.listen({
-  ...(isTcp ? { hostname: tcpHost, port: cbPort } : { unix: callbackSocketPath }),
-  socket: {
+const cbServer = listen(
+  isTcp ? { hostname: tcpHost, port: cbPort } : { unix: callbackSocketPath },
+  {
     data(socket, rawData) {
       let buf = cbSocketBuffers.get(socket);
       buf = buf ? Buffer.concat([buf, Buffer.from(rawData)]) : Buffer.from(rawData);
@@ -812,7 +811,7 @@ const cbServer = Bun.listen({
     drain(socket) { drainSocket(socket); },
     error() {},
   },
-});
+);
 
 if (!isTcp) secureSocket(callbackSocketPath);
 

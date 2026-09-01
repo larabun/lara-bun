@@ -15,7 +15,7 @@ class RscPagesCommand extends Command
 
     public function handle(): int
     {
-        $appDir = config('bun.rsc.source_dir').'/app';
+        $appDir = config('rsc.source_dir').'/app';
 
         if (! is_dir($appDir)) {
             $this->warn("No app/ directory found at: {$appDir}");

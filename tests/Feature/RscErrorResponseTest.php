@@ -1,11 +1,11 @@
 <?php
 
-use LaravelRsc\BunBridge;
 use LaravelRsc\Header;
+use LaravelRsc\RuntimeBridge;
 
 beforeEach(function () {
-    $this->bridgeMock = Mockery::mock(BunBridge::class);
-    $this->app->instance(BunBridge::class, $this->bridgeMock);
+    $this->bridgeMock = Mockery::mock(RuntimeBridge::class);
+    $this->app->instance(RuntimeBridge::class, $this->bridgeMock);
 });
 
 test('error response renders with correct HTTP status code on initial load', function (int $statusCode) {

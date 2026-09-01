@@ -7,7 +7,7 @@ use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use LaravelRsc\PrerenderService;
-use LaravelRsc\Support\BunBinary;
+use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
 class RscBuildCommand extends Command
@@ -18,8 +18,8 @@ class RscBuildCommand extends Command
 
     public function handle(PrerenderService $prerender): int
     {
-        if (! config('bun.rsc.enabled')) {
-            $this->error('RSC is not enabled. Set BUN_RSC_ENABLED=true in your .env.');
+        if (! config('rsc.enabled')) {
+            $this->error('RSC is not enabled. Set RSC_ENABLED=true in your .env.');
 
             return self::FAILURE;
         }
@@ -29,20 +29,20 @@ class RscBuildCommand extends Command
             $this->info('Building RSC bundles...');
             $this->newLine();
 
-            $bun = BunBinary::resolve();
+            $runtime = RuntimeBinary::resolve();
 
-            if ($bun === null) {
-                $this->error('Bun executable not found. Run: php artisan bun:install (or set BUN_BINARY to its path).');
+            if ($runtime === null) {
+                $this->error(RuntimeBinary::runtime().' executable not found. Run: php artisan rsc:install (or set RSC_RUNTIME_BINARY to its path).');
 
                 return self::FAILURE;
             }
 
-            $bundleProcess = new Process([$bun, $this->getBuildScript('build-rsc-vite.ts')], base_path(), [
-                'LARA_BUN_PROJECT_ROOT' => base_path(),
-                'BUN_RSC_SOURCE_DIR' => config('bun.rsc.source_dir'),
-                'BUN_RSC_OUT_DIR' => base_path('bootstrap/rsc/vite'),
-                'BUN_RSC_ASSETS_DIR' => config('bun.rsc.assets_dir'),
-                'BUN_RSC_ASSETS_URL' => config('bun.rsc.assets_url'),
+            $bundleProcess = new Process([$runtime, $this->getBuildScript('build-rsc-vite.ts')], base_path(), [
+                'RSC_PROJECT_ROOT' => base_path(),
+                'RSC_SOURCE_DIR' => config('rsc.source_dir'),
+                'RSC_OUT_DIR' => base_path('bootstrap/rsc/vite'),
+                'RSC_ASSETS_DIR' => config('rsc.assets_dir'),
+                'RSC_ASSETS_URL' => config('rsc.assets_url'),
             ]);
             $bundleProcess->setTimeout(120);
             $bundleProcess->run(fn ($type, $buffer) => $this->output->write($buffer));
@@ -63,7 +63,7 @@ class RscBuildCommand extends Command
         }
 
         // Step 2: Clean static files if requested
-        $outputPath = config('bun.rsc.static_path', storage_path('framework/rsc-static'));
+        $outputPath = config('rsc.static_path', storage_path('framework/rsc-static'));
 
         if ($this->option('clean') && is_dir($outputPath)) {
             File::deleteDirectory($outputPath);

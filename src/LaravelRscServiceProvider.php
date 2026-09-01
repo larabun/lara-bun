@@ -5,13 +5,13 @@ namespace LaravelRsc;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\ServiceProvider;
-use LaravelRsc\Console\BunDevCommand;
-use LaravelRsc\Console\BunInstallCommand;
-use LaravelRsc\Console\BunServeCommand;
+use LaravelRsc\Console\DevCommand;
+use LaravelRsc\Console\InstallRuntimeCommand;
 use LaravelRsc\Console\RscActionManifestCommand;
 use LaravelRsc\Console\RscBuildCommand;
 use LaravelRsc\Console\RscPagesCommand;
 use LaravelRsc\Console\RscRouteManifestCommand;
+use LaravelRsc\Console\ServeCommand;
 
 class LaravelRscServiceProvider extends ServiceProvider
 {
@@ -37,9 +37,9 @@ class LaravelRscServiceProvider extends ServiceProvider
 
     public function register(): void
     {
-        $this->mergeConfigFrom(__DIR__.'/../config/bun.php', 'bun');
+        $this->mergeConfigFrom(__DIR__.'/../config/rsc.php', 'rsc');
 
-        $this->app->singleton(BunBridge::class);
+        $this->app->singleton(RuntimeBridge::class);
 
         $this->app->singleton(CallableRegistry::class, function ($app) {
             $registry = new CallableRegistry($app);
@@ -62,7 +62,7 @@ class LaravelRscServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        if (config('bun.rsc.enabled')) {
+        if (config('rsc.enabled')) {
             // Auto-register RscMiddleware in the web middleware group
             // so it runs on all RSC page routes (sets Vary, Cache-Control).
             $this->app['router']->pushMiddlewareToGroup('web', RscMiddleware::class);
@@ -70,7 +70,7 @@ class LaravelRscServiceProvider extends ServiceProvider
             Route::post('/_rsc/action', RscActionController::class)
                 ->middleware('web');
 
-            $appDir = config('bun.rsc.source_dir').'/app';
+            $appDir = config('rsc.source_dir').'/app';
 
             if (is_dir($appDir)) {
                 $scanner = new PageScanner($appDir);
@@ -84,17 +84,17 @@ class LaravelRscServiceProvider extends ServiceProvider
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
-                __DIR__.'/../config/bun.php' => config_path('bun.php'),
-            ], 'lara-bun-config');
+                __DIR__.'/../config/rsc.php' => config_path('rsc.php'),
+            ], 'rsc-config');
 
             $this->publishes([
                 __DIR__.'/../resources/views' => resource_path('views/vendor/lara-bun'),
             ], 'lara-bun-views');
 
             $this->commands([
-                BunDevCommand::class,
-                BunInstallCommand::class,
-                BunServeCommand::class,
+                DevCommand::class,
+                InstallRuntimeCommand::class,
+                ServeCommand::class,
                 RscActionManifestCommand::class,
                 RscBuildCommand::class,
                 RscPagesCommand::class,

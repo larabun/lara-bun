@@ -20,7 +20,7 @@ Activate this skill when:
 ## Test Structure
 
 - `tests/Unit/` — Pure unit tests (no Laravel app boot)
-- `tests/Feature/` — Feature tests (full Laravel app, Mockery for BunBridge)
+- `tests/Feature/` — Feature tests (full Laravel app, Mockery for RuntimeBridge)
 
 ## Running Tests
 
@@ -33,14 +33,14 @@ vendor/bin/pest --filter="intercept"                # by name
 
 ## Key Patterns
 
-### Mocking BunBridge
+### Mocking RuntimeBridge
 
-Feature tests mock BunBridge to avoid needing a running Bun worker:
+Feature tests mock RuntimeBridge to avoid needing a running Bun worker:
 
 ```php
 beforeEach(function () {
-    $this->bridgeMock = Mockery::mock(BunBridge::class);
-    $this->app->instance(BunBridge::class, $this->bridgeMock);
+    $this->bridgeMock = Mockery::mock(RuntimeBridge::class);
+    $this->app->instance(RuntimeBridge::class, $this->bridgeMock);
 });
 
 test('example', function () {

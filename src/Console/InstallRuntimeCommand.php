@@ -3,13 +3,13 @@
 namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\Support\BunBinary;
+use LaravelRsc\Support\RuntimeBinary;
 use RuntimeException;
 use ZipArchive;
 
-class BunInstallCommand extends Command
+class InstallRuntimeCommand extends Command
 {
-    protected $signature = 'bun:install
+    protected $signature = 'rsc:install
         {--release=latest : Bun version to install (e.g. 1.1.30) or "latest"}
         {--path= : Destination path for the binary (default: base_path("bin/bun"))}
         {--musl : Download the musl (Alpine) Linux build}
@@ -20,7 +20,7 @@ class BunInstallCommand extends Command
     public function handle(): int
     {
         try {
-            ['asset' => $asset, 'binary' => $binaryName] = BunBinary::releaseAsset(
+            ['asset' => $asset, 'binary' => $binaryName] = RuntimeBinary::releaseAsset(
                 PHP_OS_FAMILY,
                 php_uname('m'),
                 (bool) $this->option('musl'),
@@ -87,7 +87,7 @@ class BunInstallCommand extends Command
         $this->info("Bun {$version} installed at {$target}");
         $this->newLine();
         $this->line('Point Laravel RSC at it by setting in your .env:');
-        $this->line('  BUN_BINARY='.$this->envValue($target));
+        $this->line('  RSC_RUNTIME_BINARY='.$this->envValue($target));
 
         return self::SUCCESS;
     }
@@ -97,7 +97,7 @@ class BunInstallCommand extends Command
         $path = $this->option('path');
 
         if (is_string($path) && $path !== '') {
-            return BunBinary::absolutePath($path);
+            return RuntimeBinary::absolutePath($path);
         }
 
         return base_path('bin/'.$binaryName);

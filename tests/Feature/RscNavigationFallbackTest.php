@@ -1,13 +1,13 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use LaravelRsc\BunBridge;
 use LaravelRsc\Header;
 use LaravelRsc\RscRedirectException;
+use LaravelRsc\RuntimeBridge;
 
 beforeEach(function () {
-    $this->bridgeMock = Mockery::mock(BunBridge::class);
-    $this->app->instance(BunBridge::class, $this->bridgeMock);
+    $this->bridgeMock = Mockery::mock(RuntimeBridge::class);
+    $this->app->instance(RuntimeBridge::class, $this->bridgeMock);
 });
 
 test('non-RSC route does not return text/x-component content type on SPA navigation', function () {

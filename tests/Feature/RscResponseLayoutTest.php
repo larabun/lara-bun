@@ -1,15 +1,15 @@
 <?php
 
-use LaravelRsc\BunBridge;
 use LaravelRsc\Header;
 use LaravelRsc\RscResponse;
+use LaravelRsc\RuntimeBridge;
 
 beforeEach(function () {
-    $this->bridgeMock = Mockery::mock(BunBridge::class);
-    $this->app->instance(BunBridge::class, $this->bridgeMock);
+    $this->bridgeMock = Mockery::mock(RuntimeBridge::class);
+    $this->app->instance(RuntimeBridge::class, $this->bridgeMock);
 });
 
-test('rsc response passes layouts to BunBridge rscHtmlStream on initial load', function () {
+test('rsc response passes layouts to RuntimeBridge rscHtmlStream on initial load', function () {
     $this->bridgeMock
         ->shouldReceive('rscHtmlStream')
         ->once()
@@ -34,7 +34,7 @@ test('rsc response passes layouts to BunBridge rscHtmlStream on initial load', f
     $this->get('/test-layout')->assertStatus(200);
 });
 
-test('rsc response passes nested layouts to BunBridge rscHtmlStream', function () {
+test('rsc response passes nested layouts to RuntimeBridge rscHtmlStream', function () {
     $this->bridgeMock
         ->shouldReceive('rscHtmlStream')
         ->once()
@@ -60,7 +60,7 @@ test('rsc response passes nested layouts to BunBridge rscHtmlStream', function (
     $this->get('/test-nested-layout')->assertStatus(200);
 });
 
-test('rsc response passes layouts to BunBridge rscStream on SPA navigation', function () {
+test('rsc response passes layouts to RuntimeBridge rscStream on SPA navigation', function () {
     $this->bridgeMock
         ->shouldReceive('rscStream')
         ->once()
@@ -119,7 +119,7 @@ test('rsc helper returns response that supports layout chaining', function () {
         ->and($layouts[1]['component'])->toBe('DashboardLayout');
 });
 
-test('duplicate layouts are deduplicated when passed to BunBridge', function () {
+test('duplicate layouts are deduplicated when passed to RuntimeBridge', function () {
     $this->bridgeMock
         ->shouldReceive('rscHtmlStream')
         ->once()

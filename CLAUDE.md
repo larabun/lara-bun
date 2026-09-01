@@ -8,7 +8,7 @@ The package is `larabun/laravel-rsc` (namespace `LaravelRsc\`). The routing laye
 
 ## Architecture
 
-- `src/` — PHP package code (Laravel service provider, BunBridge, RSC pipeline)
+- `src/` — PHP package code (Laravel service provider, RuntimeBridge, RSC pipeline)
 - `resources/` — TypeScript/JS (Bun worker, RSC handler, build script, client components)
 - `resources/js/` — Client-side components (Link, navigate, createRscApp)
 - `resources/views/` — Blade templates (rsc-app shell)
@@ -27,7 +27,7 @@ The package is `larabun/laravel-rsc` (namespace `LaravelRsc\`). The routing laye
 
 Two suites, both run from the package root:
 
-- **PHP (Pest + orchestra/testbench)** — the Laravel layer, with BunBridge mocked.
+- **PHP (Pest + orchestra/testbench)** — the Laravel layer, with RuntimeBridge mocked.
   - All: `vendor/bin/pest --compact`
   - One file: `vendor/bin/pest tests/Feature/RouteInterceptionTest.php`
 - **JS (bun:test)** — the vite RSC engine and the client hooks, which the PHP suite never loads.
@@ -39,7 +39,7 @@ Two suites, both run from the package root:
     `NODE_ENV=production` process-wide in a test file — React only exports
     `act()` from its development build, and the suites share a process.
 
-Add engine-behaviour tests to the JS suite — mocking BunBridge in Pest cannot
+Add engine-behaviour tests to the JS suite — mocking RuntimeBridge in Pest cannot
 catch a rendering regression.
 
 ## Development Setup
@@ -48,11 +48,12 @@ catch a rendering regression.
 - Integration app: `/Users/ramonmalcolm/Herd/larabun-docs` (git repo, branch: `main`) — real consuming app for end-to-end/manual testing; requires the published `larabun/laravel-rsc` package and ships a Dockerfile
 - After package changes: `composer update larabun/laravel-rsc` in consuming apps
 - After TS changes: `php artisan rsc:build` to rebuild bundles
+- Runtime is `RSC_RUNTIME=bun|node`; the worker and build run on either
 
 ## Critical Patterns
 
 ### Socket Stream Order
-The stream-start frame MUST be yielded before entering the main streaming loop, so HTTP headers flush before slow `php()` callbacks. But the wait for that frame must still service the callback socket (`BunBridge::readStartFrame()`) — the worker resolves page metadata (which may itself call `php()`) before emitting stream-start, so a bare blocking read here deadlocks both sides until the socket timeout. Do not revert to an eager blocking `readFrame()`. Tests in `BunBridgeStreamOrderTest.php` enforce the ordering.
+The stream-start frame MUST be yielded before entering the main streaming loop, so HTTP headers flush before slow `php()` callbacks. But the wait for that frame must still service the callback socket (`RuntimeBridge::readStartFrame()`) — the worker resolves page metadata (which may itself call `php()`) before emitting stream-start, so a bare blocking read here deadlocks both sides until the socket timeout. Do not revert to an eager blocking `readFrame()`. Tests in `BunBridgeStreamOrderTest.php` enforce the ordering.
 
 ### Callback Drain
 Before processing a `php()` callback (which may block), always non-blocking poll the main socket and yield pending stream chunks. This ensures Flight data reaches the browser immediately.

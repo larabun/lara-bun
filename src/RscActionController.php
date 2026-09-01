@@ -7,7 +7,6 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
-use LaravelRsc\BunBridge;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class RscActionController
@@ -22,7 +21,7 @@ class RscActionController
 
         $body = $request->getContent();
         $contentType = $request->header(Header::X_RSC_CONTENT_TYPE, 'text/plain');
-        $bridge = app(BunBridge::class);
+        $bridge = app(RuntimeBridge::class);
         $generator = $bridge->rscAction($actionId, $body, $contentType);
 
         try {

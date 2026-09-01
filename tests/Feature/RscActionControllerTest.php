@@ -3,6 +3,7 @@
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Testing\TestResponse;
 use Illuminate\Validation\ValidationException;
 use LaraBun\BunBridge;
 use LaraBun\Rsc\Header;
@@ -19,7 +20,7 @@ function defineLoginRoute(): void
     app('router')->getRoutes()->refreshNameLookups();
 }
 
-function postAction(mixed $test, string $actionId = 'myAction', string $body = ''): \Illuminate\Testing\TestResponse
+function postAction(mixed $test, string $actionId = 'myAction', string $body = ''): TestResponse
 {
     return $test->post('/_rsc/action', [], [
         Header::X_RSC_ACTION => $actionId,
@@ -171,4 +172,58 @@ test('streams successful action response', function () {
 
     $response->assertStatus(200)
         ->assertHeader('Content-Type', 'text/x-component; charset=utf-8');
+});
+
+// ─── File uploads ────────────────────────────────────────────────────────────
+
+test('forwards a binary request body to the action unchanged', function () {
+    // Multipart uploads arrive as raw bytes. The controller must hand them to
+    // the bridge verbatim — BunBridge base64-encodes for the socket hop, so
+    // anything mangled here is mangled by the time the action sees it.
+    $binary = "\x00\x01\x02\xFF\xFEPNG\r\n\x1A\n".random_bytes(64);
+    $seen = null;
+
+    $this->bridgeMock
+        ->shouldReceive('rscAction')
+        ->once()
+        ->andReturnUsing(function (string $actionId, string $body, string $contentType) use (&$seen) {
+            $seen = $body;
+
+            return (function () {
+                yield '0:{"ok":true}';
+            })();
+        });
+
+    $this->call('POST', '/_rsc/action', [], [], [], [
+        'HTTP_'.str_replace('-', '_', strtoupper(Header::X_RSC_ACTION)) => 'uploadAvatar',
+        'HTTP_'.str_replace('-', '_', strtoupper(Header::X_RSC_CONTENT_TYPE)) => 'multipart/form-data; boundary=xyz',
+        'CONTENT_TYPE' => 'application/octet-stream',
+    ], $binary);
+
+    expect($seen)->toBe($binary);
+});
+
+test('passes the real content type through the opaque header', function () {
+    // The browser sends an opaque Content-Type so PHP does not consume
+    // php://input; the true type travels in X-RSC-Content-Type.
+    $seen = null;
+
+    $this->bridgeMock
+        ->shouldReceive('rscAction')
+        ->once()
+        ->andReturnUsing(function (string $actionId, string $body, string $contentType) use (&$seen) {
+            $seen = $contentType;
+
+            return (function () {
+                yield '0:{}';
+            })();
+        });
+
+    $this->call('POST', '/_rsc/action', [], [], [], [
+        'HTTP_'.str_replace('-', '_', strtoupper(Header::X_RSC_ACTION)) => 'uploadAvatar',
+        'HTTP_'.str_replace('-', '_', strtoupper(Header::X_RSC_CONTENT_TYPE)) => 'multipart/form-data; boundary=xyz',
+        'CONTENT_TYPE' => 'application/octet-stream',
+    ], 'body');
+
+    expect($seen)->toBe('multipart/form-data; boundary=xyz');
 });

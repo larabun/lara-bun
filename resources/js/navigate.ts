@@ -108,6 +108,15 @@ function fetchRscPayload(url: string, signal?: AbortSignal, interceptSlot?: stri
   }
 
   return fetch(url, { headers, signal }).then(async (response) => {
+    // Adopt the server's build version from the first response that carries
+    // one. Until we know it we send an empty version, which the middleware
+    // treats as "no opinion"; afterwards a redeploy mid-session answers 409.
+    const served = response.headers.get("X-RSC-Version");
+
+    if (served && version === "") {
+      version = served;
+    }
+
     if (response.status === 409) {
       const location = response.headers.get("X-RSC-Location");
       window.location.href = location ?? url;

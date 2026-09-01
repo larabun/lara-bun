@@ -48,6 +48,25 @@ async function timeline(stream: ReadableStream, markers: string[]) {
   return seen
 }
 
+/**
+ * The plugin keys server references by a content hash, so the id changes
+ * whenever actions.ts does. Recover it from the built module rather than
+ * pinning a value that any edit to the fixture would invalidate.
+ */
+function serverActionId(exportName: string): string {
+  const assets = join(outDir, 'dist/rsc/assets')
+
+  for (const file of readdirSync(assets)) {
+    const source = readFileSync(join(assets, file), 'utf-8')
+    const match = source.match(
+      new RegExp(`registerServerReference\\([^,]+,\\s*"([^"]+)",\\s*"${exportName}"\\)`),
+    )
+    if (match) return `${match[1]}#${exportName}`
+  }
+
+  throw new Error(`no registered server action named "${exportName}" in ${assets}`)
+}
+
 beforeAll(async () => {
   const proc = Bun.spawn(
     ['bun', join(packageRoot, 'resources/build-rsc-vite.ts')],
@@ -270,25 +289,6 @@ describe('metadata', () => {
 })
 
 describe('server actions', () => {
-  /**
-   * The plugin keys server references by a content hash, so the id changes
-   * whenever actions.ts does. Recover it from the built module rather than
-   * pinning a value that any edit to the fixture would invalidate.
-   */
-  function serverActionId(exportName: string): string {
-    const assets = join(outDir, 'dist/rsc/assets')
-
-    for (const file of readdirSync(assets)) {
-      const source = readFileSync(join(assets, file), 'utf-8')
-      const match = source.match(
-        new RegExp(`registerServerReference\\([^,]+,\\s*"([^"]+)",\\s*"${exportName}"\\)`),
-      )
-      if (match) return `${match[1]}#${exportName}`
-    }
-
-    throw new Error(`no registered server action named "${exportName}" in ${assets}`)
-  }
-
   test('runs the action and streams its result', async () => {
     const { stream } = await engine.handleAction(serverActionId('greet'), JSON.stringify(['ramon']))
     const payload = await text(stream)
@@ -402,5 +402,168 @@ describe('loading.tsx validation', () => {
     })
 
     expect(code).toBe(0)
+  })
+})
+
+describe('react compiler detection', () => {
+  /** Build a fake app root containing only the given node_modules packages. */
+  function rootWith(packages: string[]): string {
+    const dir = mkdtempSync(join(tmpdir(), 'larabun-compiler-'))
+
+    for (const pkg of packages) {
+      mkdirSync(join(dir, 'node_modules', pkg), { recursive: true })
+    }
+
+    return dir
+  }
+
+  test('enables the compiler only when all three packages are installed', async () => {
+    const { detectReactCompiler, REACT_COMPILER_PACKAGES } = await import(
+      join(packageRoot, 'resources/build-rsc-vite.ts')
+    )
+    const dir = rootWith([...REACT_COMPILER_PACKAGES])
+
+    expect(detectReactCompiler(dir).enabled).toBe(true)
+    expect(detectReactCompiler(dir).missing).toEqual([])
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('stays off and names what is missing when only the babel plugin is present', async () => {
+    const { detectReactCompiler } = await import(join(packageRoot, 'resources/build-rsc-vite.ts'))
+    const dir = rootWith(['babel-plugin-react-compiler'])
+    const result = detectReactCompiler(dir)
+
+    // The Babel plugin alone does nothing: it hooks into the react() layer,
+    // and rsc() on its own has no such layer.
+    expect(result.enabled).toBe(false)
+    expect(result.missing).toContain('@vitejs/plugin-react')
+    expect(result.missing).toContain('@rolldown/plugin-babel')
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('stays off for an app with none of them', async () => {
+    const { detectReactCompiler, REACT_COMPILER_PACKAGES } = await import(
+      join(packageRoot, 'resources/build-rsc-vite.ts')
+    )
+    const dir = rootWith([])
+    const result = detectReactCompiler(dir)
+
+    expect(result.enabled).toBe(false)
+    expect(result.missing).toHaveLength(REACT_COMPILER_PACKAGES.length)
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('form data serialization', () => {
+  /**
+   * buildFormData is the contract between useForm and a server action, and the
+   * client half of native file uploads. The hook itself needs a React renderer,
+   * but this is where the encoding decisions live.
+   */
+  async function build(data: Record<string, unknown>) {
+    const { buildFormData } = await import(join(packageRoot, 'resources/js/useForm.ts'))
+
+    return buildFormData(data) as FormData
+  }
+
+  test('encodes booleans as 1 and 0 so PHP sees something truthy', async () => {
+    const fd = await build({ remember: true, subscribed: false })
+
+    expect(fd.get('remember')).toBe('1')
+    expect(fd.get('subscribed')).toBe('0')
+  })
+
+  test('repeats array values under a bracketed key', async () => {
+    const fd = await build({ tags: ['a', 'b'] })
+
+    expect(fd.getAll('tags[]')).toEqual(['a', 'b'])
+  })
+
+  test('drops null and undefined rather than sending them as strings', async () => {
+    const fd = await build({ name: 'ramon', middle: null, nickname: undefined })
+
+    expect(fd.get('name')).toBe('ramon')
+    expect(fd.has('middle')).toBe(false)
+    expect(fd.has('nickname')).toBe(false)
+  })
+
+  test('passes a File through untouched for native uploads', async () => {
+    const file = new File([new Uint8Array([1, 2, 3])], 'avatar.png', { type: 'image/png' })
+    const fd = await build({ avatar: file, name: 'ramon' })
+    const sent = fd.get('avatar') as File
+
+    // Not stringified — the binary reaches the action intact.
+    expect(sent).toBeInstanceOf(File)
+    expect(sent.name).toBe('avatar.png')
+    expect(sent.type).toBe('image/png')
+    expect(await sent.arrayBuffer()).toHaveLength(3)
+  })
+
+  test('stringifies numbers and leaves strings alone', async () => {
+    const fd = await build({ age: 41, name: 'ramon' })
+
+    expect(fd.get('age')).toBe('41')
+    expect(fd.get('name')).toBe('ramon')
+  })
+})
+
+describe('file uploads through a server action', () => {
+  /**
+   * The full client→PHP→worker shape for an upload: encodeReply produces
+   * FormData, the client serializes it to bytes under an opaque content-type,
+   * PHP base64s those bytes over the socket, and the worker hands back a
+   * latin1 string that handleAction must turn into FormData again.
+   */
+  async function latin1MultipartBody(form: FormData) {
+    const serialized = new Response(form)
+    const contentType = serialized.headers.get('content-type')!
+    const bytes = new Uint8Array(await serialized.arrayBuffer())
+
+    // PHP transports raw bytes; the worker decodes base64 to a latin1 string.
+    let latin1 = ''
+    for (const byte of bytes) latin1 += String.fromCharCode(byte)
+
+    return { body: latin1, contentType }
+  }
+
+  test('reconstructs a File from a multipart body', async () => {
+    const { encodeReply } = await import('react-server-dom-webpack/client.edge')
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff])
+    const file = new File([png], 'avatar.png', { type: 'image/png' })
+
+    const encoded = await encodeReply([file, 'profile picture'])
+    expect(encoded).toBeInstanceOf(FormData)
+
+    const { body, contentType } = await latin1MultipartBody(encoded as FormData)
+    const { stream } = await engine.handleAction(serverActionId('upload'), body, contentType)
+    const payload = await text(stream)
+
+    expect(payload).toContain('avatar.png')
+    expect(payload).toContain('image/png')
+    expect(payload).toContain('profile picture')
+  })
+
+  test('preserves the exact bytes, including non-UTF8 ones', async () => {
+    const { encodeReply } = await import('react-server-dom-webpack/client.edge')
+    // 0x89 and 0xFF are invalid UTF-8 on their own — a text round-trip mangles
+    // them, which is what the latin1 transport exists to prevent.
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff])
+    const encoded = await encodeReply([new File([png], 'a.png', { type: 'image/png' }), 'x'])
+
+    const { body, contentType } = await latin1MultipartBody(encoded as FormData)
+    const { stream } = await engine.handleAction(serverActionId('upload'), body, contentType)
+    const payload = await text(stream)
+
+    expect(payload).toContain('"size":10')
+    expect(payload).toContain('[137,80,78,71]')
+  })
+
+  test('still handles a plain non-multipart action body', async () => {
+    const { stream } = await engine.handleAction(serverActionId('greet'), JSON.stringify(['ramon']))
+
+    expect(await text(stream)).toContain('Hi ramon from a server action')
   })
 })

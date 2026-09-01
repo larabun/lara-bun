@@ -25,7 +25,15 @@ export interface UseFormReturn<T extends Record<string, unknown>> {
   submit: (action: (formData: FormData) => Promise<unknown>, optimistic?: () => void) => Promise<void>;
 }
 
-function buildFormData(data: Record<string, unknown>): FormData {
+/**
+ * Serialize form state into FormData for a server action.
+ *
+ * Exported for testing: this is the contract between useForm and the action —
+ * booleans become "1"/"0" so PHP sees something truthy, arrays repeat under
+ * `key[]`, Files pass through untouched for native uploads, and null/undefined
+ * are dropped rather than sent as the string "null".
+ */
+export function buildFormData(data: Record<string, unknown>): FormData {
   const formData = new FormData();
 
   for (const [key, val] of Object.entries(data)) {

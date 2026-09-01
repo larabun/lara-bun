@@ -12,21 +12,42 @@ import {
   setCallServer,
   setDeserializer,
   setNavigateHandler,
+  setVersion,
 } from "./navigate";
 
 export async function createViteRscApp(container: Document | Element = document): Promise<void> {
   async function callServer(id: string, args: unknown[]): Promise<unknown> {
     const encoded = await encodeReply(args);
 
-    const headers: Record<string, string> = { "X-RSC-Action": id };
-    // Opaque content-type so PHP doesn't consume php://input; the real one
-    // travels in X-RSC-Content-Type (matches the bun engine's action route).
-    if (typeof encoded === "string") {
-      headers["X-RSC-Content-Type"] = "text/plain";
-      headers["Content-Type"] = "application/octet-stream";
+    // encodeReply returns FormData as soon as an argument contains a File.
+    // Sending that as multipart would make PHP consume php://input while
+    // parsing it, leaving the action with an empty body — so serialize it to
+    // raw bytes under an opaque content-type and send the real one in
+    // X-RSC-Content-Type for the worker to rebuild FormData from.
+    let body: BodyInit;
+    let realContentType: string;
+
+    if (encoded instanceof FormData) {
+      const serialized = new Response(encoded);
+      body = await serialized.arrayBuffer();
+      realContentType = serialized.headers.get("content-type") ?? "multipart/form-data";
+    } else {
+      body = encoded as BodyInit;
+      realContentType = "text/plain;charset=UTF-8";
     }
 
-    const res = await fetch("/_rsc/action", { method: "POST", headers, body: encoded as BodyInit });
+    const res = await fetch("/_rsc/action", {
+      method: "POST",
+      headers: {
+        "X-RSC-Action": id,
+        "X-RSC-Content-Type": realContentType,
+        "Content-Type": "application/octet-stream",
+        "X-XSRF-TOKEN": decodeURIComponent(
+          document.cookie.match(/XSRF-TOKEN=([^;]+)/)?.[1] ?? "",
+        ),
+      },
+      body,
+    });
 
     return createFromReadableStream(res.body!, { callServer });
   }
@@ -44,6 +65,15 @@ export async function createViteRscApp(container: Document | Element = document)
 
   // Hydrate from LaraBun's RSC endpoint (same url + X-RSC, no version header).
   const res = await fetch(window.location.href, { headers: { "X-RSC": "1" } });
+
+  // Seed the SPA engine with the build this page was served from, so a
+  // redeploy mid-session is caught on the next navigation. This matters most
+  // behind a CDN, where the shell may be cached from an older build.
+  const servedVersion = res.headers.get("X-RSC-Version");
+
+  if (servedVersion) {
+    setVersion(servedVersion);
+  }
   const tree = await createFromReadableStream(res.body!, { callServer });
   const root = hydrateRoot(container, tree as ReactNode, {
     onRecoverableError(error: unknown, errorInfo: unknown) {

@@ -264,6 +264,18 @@ Tunable with `BUN_RSC_SHELL_TTL` and `BUN_RSC_SHELL_SWR`. Two caveats:
 - If a CSP nonce is active the shell is served `private, no-store`, since one
   cached copy would hand every visitor the same nonce.
 
+### Cache invalidation
+
+Shells are tagged `larabun-shell` via `Cache-Tag` (Cloudflare) and
+`Surrogate-Key` (Fastly/Varnish), so a deploy hook can purge every shell at
+once instead of waiting out the TTL. **Purge on deploy** — a shell references
+hashed asset URLs, and once those 404 the client never boots to fill the hole.
+Short of a purge hook, keep `BUN_RSC_SHELL_TTL` low.
+
+The client adopts the build version from the first response carrying
+`X-RSC-Version`, so a redeploy mid-session is caught on the next navigation and
+answered with a 409 plus a full reload.
+
 ## Deployment
 
 `bun:serve` is a long-running supervisor that spawns the Bun workers; PHP talks

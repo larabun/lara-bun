@@ -32,10 +32,28 @@ const assetsBaseUrl = process.env.BUN_RSC_ASSETS_URL || '/build/rsc-vite/'
 // React Compiler is opt-in BY INSTALLATION — no config flag. If the toolchain
 // is present in the app's node_modules it is wired automatically; otherwise it
 // is omitted. (React 19 needs no react-compiler-runtime.)
-const reactCompilerEnabled =
-  existsSync(join(projectRoot, 'node_modules/babel-plugin-react-compiler')) &&
-  existsSync(join(projectRoot, 'node_modules/@vitejs/plugin-react')) &&
-  existsSync(join(projectRoot, 'node_modules/@rolldown/plugin-babel'))
+export const REACT_COMPILER_PACKAGES = [
+  'babel-plugin-react-compiler',
+  '@vitejs/plugin-react',
+  '@rolldown/plugin-babel',
+] as const
+
+/**
+ * Which of the React Compiler packages the app has installed. The compiler
+ * runs only with all three: the Babel plugin does the work, but it hooks into
+ * the react() layer via @rolldown/plugin-babel, and rsc() alone has no such
+ * layer.
+ */
+export function detectReactCompiler(root: string): { enabled: boolean; missing: string[] } {
+  const missing = REACT_COMPILER_PACKAGES.filter(
+    (pkg) => !existsSync(join(root, 'node_modules', pkg)),
+  )
+
+  return { enabled: missing.length === 0, missing }
+}
+
+const reactCompiler = detectReactCompiler(projectRoot)
+const reactCompilerEnabled = reactCompiler.enabled
 
 interface Component {
   name: string // route-relative key, e.g. "app/page", "app/layout"
@@ -269,9 +287,22 @@ export async function handleRscHtmlStream(
 export async function handleAction(
   actionId: string,
   body: string | FormData,
+  contentType = 'text/plain',
 ): Promise<{ stream: ReadableStream }> {
   applyPhp()
-  const args = (await decodeReply(body)) as unknown[]
+
+  let decodable: string | FormData = body
+
+  // A multipart body reaches us as a latin1 string — PHP base64s the raw bytes
+  // over the socket and the worker decodes them byte-for-byte. Rebuild the
+  // bytes so FormData parses, or any File argument is lost.
+  if (typeof body === 'string' && contentType.includes('multipart/form-data')) {
+    const bytes = new Uint8Array(body.length)
+    for (let i = 0; i < body.length; i++) bytes[i] = body.charCodeAt(i)
+    decodable = await new Response(bytes, { headers: { 'Content-Type': contentType } }).formData()
+  }
+
+  const args = (await decodeReply(decodable)) as unknown[]
   const action = await loadServerAction(actionId)
   const result = await (action as (...a: unknown[]) => unknown)(...args)
   return { stream: renderToReadableStream(result) }
@@ -574,57 +605,68 @@ function validateLoadingBoundaries(): string[] {
 
 // ── Run ────────────────────────────────────────────────────────────────────
 
-if (!existsSync(appDir)) {
-  log(`No app directory at ${appDir} — nothing to build.`)
-  process.exit(1)
+/**
+ * Build entrypoint. Guarded so this module can be imported (by tests, or by
+ * tooling that only wants the exported helpers) without running a build.
+ */
+function main(): void {
+  if (!existsSync(appDir)) {
+    log(`No app directory at ${appDir} — nothing to build.`)
+    process.exit(1)
+  }
+
+  discover(appDir)
+  log(`Discovered ${components.size} route components:`, [...components.keys()].join(', '))
+
+  if (reactCompilerEnabled) {
+    log('React Compiler: enabled')
+  } else if (reactCompiler.missing.length < REACT_COMPILER_PACKAGES.length) {
+    // Partially installed — say what is missing rather than silently skipping.
+    log('React Compiler not enabled — also install: ' + reactCompiler.missing.join(', '))
+  }
+
+  const loadingErrors = validateLoadingBoundaries()
+
+  if (loadingErrors.length) {
+    log('')
+    log('Error: a page that blocks before it can paint needs a loading.tsx boundary.')
+    log('')
+    for (const e of loadingErrors) log(e)
+    log('')
+    log('Add loading.tsx in the page directory (or a parent), or move the slow work')
+    log('into a child component wrapped in its own <Suspense> so the page can paint.')
+    process.exit(1)
+  }
+
+  if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true })
+  mkdirSync(genDir, { recursive: true })
+
+  writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc())
+  writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr())
+  writeFileSync(join(genDir, 'entry.browser.tsx'), generateEntryBrowser())
+  writeFileSync(join(genDir, 'vite.config.mjs'), generateViteConfig())
+
+  const watch = process.env.BUN_RSC_WATCH === '1'
+  const viteArgs = [process.execPath, 'x', '--bun', 'vite', 'build', '--config', join(genDir, 'vite.config.mjs')]
+  if (watch) viteArgs.push('--watch')
+
+  log(`Generated entries; running vite build${watch ? ' --watch' : ''}...`)
+
+  const proc = Bun.spawnSync(viteArgs, {
+    cwd: projectRoot,
+    env: { ...process.env, NODE_ENV: watch ? 'development' : 'production' },
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+
+  if (proc.exitCode !== 0) {
+    log('vite build failed')
+    process.exit(proc.exitCode ?? 1)
+  }
+
+  log(`Build complete → ${join(outDir, 'dist')}`)
 }
 
-discover(appDir)
-log(`Discovered ${components.size} route components:`, [...components.keys()].join(', '))
-
-if (reactCompilerEnabled) {
-  log('React Compiler: enabled')
-} else if (existsSync(join(projectRoot, 'node_modules/babel-plugin-react-compiler'))) {
-  log('React Compiler found but not enabled — also install @vitejs/plugin-react and @rolldown/plugin-babel to run it.')
+if (import.meta.main) {
+  main()
 }
-
-const loadingErrors = validateLoadingBoundaries()
-
-if (loadingErrors.length) {
-  log('')
-  log('Error: a page that blocks before it can paint needs a loading.tsx boundary.')
-  log('')
-  for (const e of loadingErrors) log(e)
-  log('')
-  log('Add loading.tsx in the page directory (or a parent), or move the slow work')
-  log('into a child component wrapped in its own <Suspense> so the page can paint.')
-  process.exit(1)
-}
-
-if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true })
-mkdirSync(genDir, { recursive: true })
-
-writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc())
-writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr())
-writeFileSync(join(genDir, 'entry.browser.tsx'), generateEntryBrowser())
-writeFileSync(join(genDir, 'vite.config.mjs'), generateViteConfig())
-
-const watch = process.env.BUN_RSC_WATCH === '1'
-const viteArgs = [process.execPath, 'x', '--bun', 'vite', 'build', '--config', join(genDir, 'vite.config.mjs')]
-if (watch) viteArgs.push('--watch')
-
-log(`Generated entries; running vite build${watch ? ' --watch' : ''}...`)
-
-const proc = Bun.spawnSync(viteArgs, {
-  cwd: projectRoot,
-  env: { ...process.env, NODE_ENV: watch ? 'development' : 'production' },
-  stdout: 'inherit',
-  stderr: 'inherit',
-})
-
-if (proc.exitCode !== 0) {
-  log('vite build failed')
-  process.exit(proc.exitCode ?? 1)
-}
-
-log(`Build complete → ${join(outDir, 'dist')}`)

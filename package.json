@@ -18,7 +18,7 @@
         }
     },
     "devDependencies": {
-        "@vitejs/plugin-rsc": "^0.5.28",
+        "@vitejs/plugin-rsc": "^0.5.34",
         "react": "^19.2.7",
         "react-dom": "^19.2.7",
         "react-server-dom-webpack": "^19.2.7",

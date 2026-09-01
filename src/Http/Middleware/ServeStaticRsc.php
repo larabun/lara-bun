@@ -78,6 +78,13 @@ class ServeStaticRsc
 
         if ($isShell) {
             $headers['Cache-Control'] = $this->shellCacheControl($nonce !== null);
+
+            // Tag the shell so a deploy hook can purge every shell at once
+            // rather than waiting out the TTL. Cloudflare reads Cache-Tag,
+            // Fastly and Varnish read Surrogate-Key.
+            $tags = 'larabun-shell';
+            $headers['Cache-Tag'] = $tags;
+            $headers['Surrogate-Key'] = $tags;
         }
 
         $response = new Response($html, 200, $headers);

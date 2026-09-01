@@ -44,6 +44,13 @@ return [
         'assets_dir' => env('BUN_RSC_ASSETS_DIR', public_path('build/rsc-vite')),
         'assets_url' => env('BUN_RSC_ASSETS_URL', '/build/rsc-vite/'),
 
+        // How long a CDN may serve a prerendered PPR shell. The shell holds no
+        // request-specific data — the dynamic parts arrive via the Flight
+        // request the client bootstrap makes, which is never cached. Shells go
+        // stale on redeploy, so purge the CDN on deploy or keep the TTL short.
+        'shell_ttl' => (int) env('BUN_RSC_SHELL_TTL', 3600),
+        'shell_stale_while_revalidate' => (int) env('BUN_RSC_SHELL_SWR', 86400),
+
         'callback_timeout' => 5,
         'stream_timeout' => (int) env('BUN_RSC_STREAM_TIMEOUT', 30),
         'static_path' => env('BUN_RSC_STATIC_PATH', storage_path('framework/rsc-static')),

@@ -45,7 +45,21 @@ export async function createViteRscApp(container: Document | Element = document)
   // Hydrate from LaraBun's RSC endpoint (same url + X-RSC, no version header).
   const res = await fetch(window.location.href, { headers: { "X-RSC": "1" } });
   const tree = await createFromReadableStream(res.body!, { callServer });
-  const root = hydrateRoot(container, tree as ReactNode);
+  const root = hydrateRoot(container, tree as ReactNode, {
+    onRecoverableError(error: unknown, errorInfo: unknown) {
+      // A PPR shell is served with its Suspense boundaries deliberately
+      // unfinished — the build aborts the render once the static part is out.
+      // React reports that as #419 and client-renders the boundary from the
+      // Flight payload, which is the intended path, not a fault to report.
+      const message = String((error as { message?: string })?.message ?? error);
+
+      if (message.includes("419") || message.includes("did not finish this Suspense boundary")) {
+        return;
+      }
+
+      console.error(error, errorInfo);
+    },
+  });
 
   setNavigateHandler((newTree: ReactNode) => root.render(newTree));
 

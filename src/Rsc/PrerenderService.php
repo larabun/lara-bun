@@ -151,6 +151,9 @@ class PrerenderService
 
     public const PPR_PAYLOAD_MARKER = '<!--__RSC_PPR_PAYLOAD__-->';
 
+    /** Shown only when a shell render flushed nothing before being aborted. */
+    private const FALLBACK_SKELETON = '<div style="padding:40px"><div style="height:32px;width:280px;background:rgba(255,255,255,0.06);border-radius:8px;margin-bottom:16px;animation:pulse 1.5s ease-in-out infinite"></div><div style="height:200px;background:rgba(255,255,255,0.03);border-radius:12px;border:1px solid rgba(255,255,255,0.06);animation:pulse 1.5s ease-in-out infinite"></div><style>@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.8}}</style></div>';
+
     public const NONCE_PLACEHOLDER = '__RSC_CSP_NONCE__';
 
     /**
@@ -192,9 +195,14 @@ class PrerenderService
             $rscResponse->getLayouts(),
         );
 
-        $shellBody = $result['timedOut']
-            ? '<div style="padding:40px"><div style="height:32px;width:280px;background:rgba(255,255,255,0.06);border-radius:8px;margin-bottom:16px;animation:pulse 1.5s ease-in-out infinite"></div><div style="height:200px;background:rgba(255,255,255,0.03);border-radius:12px;border:1px solid rgba(255,255,255,0.06);animation:pulse 1.5s ease-in-out infinite"></div><style>@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.8}}</style></div>'
-            : $result['shellHtml'];
+        // A timeout is the normal path for a PPR page: the shell render is
+        // aborted deliberately once React has flushed everything that does not
+        // depend on request data, so the captured markup IS the shell — layouts,
+        // static content and Suspense fallbacks. Only fall back to a neutral
+        // skeleton when the render produced nothing at all.
+        $shellBody = trim((string) ($result['shellHtml'] ?? '')) !== ''
+            ? $result['shellHtml']
+            : self::FALLBACK_SKELETON;
 
         $version = $rscResponse->getVersion();
 
@@ -202,13 +210,9 @@ class PrerenderService
             app()->instance('csp-nonce', self::NONCE_PLACEHOLDER);
         }
 
-        // The worker's PPR shell render is a complete HTML document.
-        $html = $shellBody;
-        $metaTags = $rscResponse->buildMetaTags();
-
-        if ($metaTags !== '' && stripos($html, '</head>') !== false) {
-            $html = str_ireplace('</head>', $metaTags."\n</head>", $html);
-        }
+        // Aborting mid-render leaves the document unclosed.
+        $html = $this->closeDocument($shellBody);
+        $html = $this->injectMissingMetaTags($html, $rscResponse->buildMetaTags());
 
         // Store under the URI pattern (e.g. posts/_id_)
         $path = trim(str_replace(['{', '}'], ['_', '_'], ltrim($uri, '/')), '/') ?: 'index';
@@ -254,19 +258,20 @@ class PrerenderService
             $rscResponse->getLayouts(),
         );
 
-        $shellBody = $result['timedOut']
-            ? '<div style="padding:40px"><div style="height:32px;width:280px;background:rgba(255,255,255,0.06);border-radius:8px;margin-bottom:16px;animation:pulse 1.5s ease-in-out infinite"></div><div style="height:200px;background:rgba(255,255,255,0.03);border-radius:12px;border:1px solid rgba(255,255,255,0.06);animation:pulse 1.5s ease-in-out infinite"></div><style>@keyframes pulse{0%,100%{opacity:.4}50%{opacity:.8}}</style></div>'
-            : $result['shellHtml'];
+        // A timeout is the normal path for a PPR page: the shell render is
+        // aborted deliberately once React has flushed everything that does not
+        // depend on request data, so the captured markup IS the shell — layouts,
+        // static content and Suspense fallbacks. Only fall back to a neutral
+        // skeleton when the render produced nothing at all.
+        $shellBody = trim((string) ($result['shellHtml'] ?? '')) !== ''
+            ? $result['shellHtml']
+            : self::FALLBACK_SKELETON;
 
         $version = $rscResponse->getVersion();
 
-        // The worker's PPR shell render is a complete HTML document.
-        $html = $shellBody;
-        $metaTags = $rscResponse->buildMetaTags();
-
-        if ($metaTags !== '' && stripos($html, '</head>') !== false) {
-            $html = str_ireplace('</head>', $metaTags."\n</head>", $html);
-        }
+        // Aborting mid-render leaves the document unclosed.
+        $html = $this->closeDocument($shellBody);
+        $html = $this->injectMissingMetaTags($html, $rscResponse->buildMetaTags());
 
         $path = trim($url, '/') ?: 'index';
         File::ensureDirectoryExists(dirname("{$outputPath}/{$path}.html"));
@@ -292,6 +297,74 @@ class PrerenderService
     }
 
     /**
+     * Close a document left unterminated by an aborted shell render.
+     */
+    protected function closeDocument(string $html): string
+    {
+        if (stripos($html, '</body>') === false && stripos($html, '<body') !== false) {
+            $html .= '</body>';
+        }
+
+        if (stripos($html, '</html>') === false && stripos($html, '<html') !== false) {
+            $html .= '</html>';
+        }
+
+        return $html;
+    }
+
+    /**
+     * Inject only the metadata tags the rendered document does not already have.
+     *
+     * React 19 hoists <title>/<meta> rendered inside the tree into <head>, so a
+     * page's `metadata` export is already in the markup. Appending buildMetaTags()
+     * wholesale would leave every prerendered page with two <title> tags; this
+     * adds back just the keys that came from route.php viewData, which React
+     * never saw.
+     */
+    protected function injectMissingMetaTags(string $html, string $metaTags): string
+    {
+        if (trim($metaTags) === '' || stripos($html, '</head>') === false) {
+            return $html;
+        }
+
+        $head = substr($html, 0, stripos($html, '</head>'));
+        $keep = [];
+
+        foreach (preg_split('/\R/', $metaTags) ?: [] as $tag) {
+            if (trim($tag) === '' || $this->headAlreadyHas($head, $tag)) {
+                continue;
+            }
+
+            $keep[] = $tag;
+        }
+
+        if ($keep === []) {
+            return $html;
+        }
+
+        return str_ireplace('</head>', implode("\n", $keep)."\n</head>", $html);
+    }
+
+    /**
+     * Is this tag's identity — <title>, or a meta name/property, or a link rel —
+     * already present in the rendered <head>?
+     */
+    protected function headAlreadyHas(string $head, string $tag): bool
+    {
+        if (stripos($tag, '<title') !== false) {
+            return stripos($head, '<title') !== false;
+        }
+
+        foreach (['name', 'property', 'rel'] as $attribute) {
+            if (preg_match('/'.$attribute.'="([^"]+)"/i', $tag, $m)) {
+                return stripos($head, $attribute.'="'.$m[1].'"') !== false;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * @param  array{body: string, rscPayload: string, clientChunks: string[]}  $result
      */
     public function buildHtmlPage(string $url, string $component, string $version, array $result, RscResponse $rscResponse): string
@@ -305,14 +378,7 @@ class PrerenderService
         // The worker returns a COMPLETE HTML document (the root layout renders
         // <html> and @vitejs/plugin-rsc injects the client bootstrap + CSS).
         // Inject page metadata tags (title, og:*, icons) into <head>.
-        $html = $result['body'];
-        $metaTags = $rscResponse->buildMetaTags();
-
-        if ($metaTags !== '' && stripos($html, '</head>') !== false) {
-            $html = str_ireplace('</head>', $metaTags."\n</head>", $html);
-        }
-
-        return $html;
+        return $this->injectMissingMetaTags($result['body'], $rscResponse->buildMetaTags());
     }
 
     /**

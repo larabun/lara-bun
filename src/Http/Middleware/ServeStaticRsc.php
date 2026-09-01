@@ -37,24 +37,72 @@ class ServeStaticRsc
             $htmlFile = "{$basePath}/{$path}.html";
 
             if (file_exists($htmlFile)) {
-                $html = file_get_contents($htmlFile);
+                return $this->serveHtml($request, file_get_contents($htmlFile), false);
+            }
 
-                // Replace the build-time nonce placeholder with the real
-                // per-request CSP nonce so inline scripts pass CSP checks.
-                $nonce = BunServiceProvider::cspNonce();
+            // PPR: the shell is the part of the page that does not depend on
+            // request data. Serving it immediately gives the browser a painted
+            // page and the client bootstrap; the Suspense holes fill from the
+            // Flight request the bootstrap makes, which is never cached.
+            $shellFile = "{$basePath}/{$path}.ppr.html";
 
-                if ($nonce) {
-                    $html = str_replace(PrerenderService::NONCE_PLACEHOLDER, $nonce, $html);
-                }
-
-                return new Response($html, 200, [
-                    'Content-Type' => 'text/html; charset=UTF-8',
-                ]);
+            if (file_exists($shellFile)) {
+                return $this->serveHtml($request, file_get_contents($shellFile), true);
             }
         }
 
-        // PPR pages and non-cached pages fall through to the normal
-        // rendering path which handles Suspense streaming natively.
+        // Pages with no prerendered artifact fall through to the normal
+        // rendering path, which handles Suspense streaming natively.
         return $next($request);
+    }
+
+    /**
+     * Serve prerendered HTML, with an ETag so a CDN or browser can revalidate
+     * cheaply. A PPR shell is request-independent by construction, so it may be
+     * cached publicly; a fully prerendered page is served as-is.
+     */
+    protected function serveHtml(Request $request, string $html, bool $isShell): Response
+    {
+        // Replace the build-time nonce placeholder with the real per-request
+        // CSP nonce so inline scripts pass CSP checks.
+        $nonce = BunServiceProvider::cspNonce();
+
+        if ($nonce) {
+            $html = str_replace(PrerenderService::NONCE_PLACEHOLDER, $nonce, $html);
+        }
+
+        $headers = [
+            'Content-Type' => 'text/html; charset=UTF-8',
+            'ETag' => '"'.md5($html).'"',
+        ];
+
+        if ($isShell) {
+            $headers['Cache-Control'] = $this->shellCacheControl($nonce !== null);
+        }
+
+        $response = new Response($html, 200, $headers);
+
+        if ($request->headers->get('If-None-Match') === $headers['ETag']) {
+            $response->setNotModified();
+        }
+
+        return $response;
+    }
+
+    /**
+     * A per-request CSP nonce is baked into the body, so a shared cache would
+     * hand every visitor the same nonce and defeat the policy. Those responses
+     * stay private; otherwise the shell is CDN-cacheable.
+     */
+    protected function shellCacheControl(bool $hasNonce): string
+    {
+        if ($hasNonce) {
+            return 'private, no-store';
+        }
+
+        $ttl = (int) config('bun.rsc.shell_ttl', 3600);
+        $swr = (int) config('bun.rsc.shell_stale_while_revalidate', 86400);
+
+        return "public, max-age=0, s-maxage={$ttl}, stale-while-revalidate={$swr}";
     }
 }

@@ -239,6 +239,31 @@ Slow work in a child wrapped in its own `<Suspense>` needs nothing, because the
 page still paints a shell immediately. `viewData()` is Blade-only and never
 blocks React, so it is ignored.
 
+### Partial prerendering (PPR)
+
+A page whose slow work sits in a child behind `<Suspense>` gets a **shell**:
+the static markup with a hole where the request data goes. `rsc:build` writes
+it to `.ppr.html`, and `ServeStaticRsc` serves it with `Cache-Control:
+public, s-maxage=…` plus an `ETag`, so any CDN caches it with no worker and no
+special runtime.
+
+The shell already contains the client bootstrap, so the browser paints it
+immediately, boots, and fills the hole from the Flight request — which is
+`no-store` and always hits the origin. No request-specific data is ever in a
+cached shell: the build renders it with `php()` replaced by a probe that never
+resolves.
+
+```
+browser → CDN: cached shell (instant paint, Suspense fallback showing)
+browser → origin: Flight payload with real data → fills the hole
+```
+
+Tunable with `BUN_RSC_SHELL_TTL` and `BUN_RSC_SHELL_SWR`. Two caveats:
+
+- Shells go stale on redeploy. Purge the CDN on deploy, or keep the TTL short.
+- If a CSP nonce is active the shell is served `private, no-store`, since one
+  cached copy would hand every visitor the same nonce.
+
 ## Deployment
 
 `bun:serve` is a long-running supervisor that spawns the Bun workers; PHP talks

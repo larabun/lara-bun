@@ -96,7 +96,7 @@ class ServeCommand extends Command
     ): int {
         $this->socketPaths[0] = $this->transport === 'tcp'
             ? $this->host.':'.RuntimeBridge::tcpPorts($this->basePort, $this->workerCount, 0)['main']
-            : $socketPath;
+            : RuntimeBridge::unixSocketPath($socketPath, 0);
 
         $this->info("Starting Bun bridge on {$this->socketPaths[0]}");
         $this->outputConfig($functionsDir, $hasFunctionsDir, $entryPoints, $workerPath, $runtimePath);
@@ -136,12 +136,10 @@ class ServeCommand extends Command
         int $workerCount,
         ?string $rscBundle = null,
     ): int {
-        $base = preg_replace('/\.sock$/', '', $baseSocketPath);
-
         for ($i = 0; $i < $workerCount; $i++) {
             $this->socketPaths[$i] = $this->transport === 'tcp'
                 ? $this->host.':'.RuntimeBridge::tcpPorts($this->basePort, $workerCount, $i)['main']
-                : "{$base}-{$i}.sock";
+                : RuntimeBridge::unixSocketPath($baseSocketPath, $i);
         }
 
         $this->info("Starting RSC workers: {$workerCount} workers");

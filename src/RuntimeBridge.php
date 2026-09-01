@@ -69,19 +69,27 @@ class RuntimeBridge
             return;
         }
 
-        $basePath = config('rsc.socket_path', '/tmp/bun-bridge.sock');
+        $basePath = (string) config('rsc.socket_path', '/tmp/laravel-rsc.sock');
 
-        if ($this->workerCount === 1) {
-            $this->socketPaths = [$basePath];
-            $this->cbSocketPaths = ["{$basePath}.cb"];
-        } else {
-            $base = preg_replace('/\.sock$/', '', $basePath);
-
-            for ($i = 0; $i < $this->workerCount; $i++) {
-                $this->socketPaths[] = "{$base}-{$i}.sock";
-                $this->cbSocketPaths[] = "{$base}-{$i}.sock.cb";
-            }
+        for ($i = 0; $i < $this->workerCount; $i++) {
+            $this->socketPaths[] = self::unixSocketPath($basePath, $i);
+            $this->cbSocketPaths[] = self::unixSocketPath($basePath, $i).'.cb';
         }
+    }
+
+    /**
+     * Socket path for one worker, shared by PHP and the serve command so both
+     * sides agree.
+     *
+     * Always indexed, including for a single worker. The count is derived from
+     * CPU/memory detection that can legitimately differ between the CLI and
+     * PHP-FPM, so it must not decide the *naming* — otherwise the two processes
+     * look for different files and every request fails with a socket-not-found
+     * telling you to start a worker that is already running.
+     */
+    public static function unixSocketPath(string $basePath, int $index): string
+    {
+        return preg_replace('/\.sock$/', '', $basePath)."-{$index}.sock";
     }
 
     /**
@@ -924,8 +932,34 @@ class RuntimeBridge
      * as a fresh reconnect rather than a 500 on the next request. Creates a
      * new connection when none are idle.
      */
+    /**
+     * Fall back to a worker that is actually listening.
+     *
+     * The worker count comes from CPU/memory detection, which can read
+     * differently in PHP-FPM than in the CLI that started the workers. When
+     * this side guesses high, connecting to the missing index would fail the
+     * request outright; using a worker that exists costs some spread across the
+     * pool instead, which is the better failure.
+     */
+    private function availableWorker(int $index): int
+    {
+        if ($this->transport === 'tcp' || file_exists($this->socketPaths[$index] ?? '')) {
+            return $index;
+        }
+
+        foreach (array_keys($this->socketPaths) as $candidate) {
+            if (file_exists($this->socketPaths[$candidate])) {
+                return $candidate;
+            }
+        }
+
+        return $index;
+    }
+
     private function checkout(int $index): Socket
     {
+        $index = $this->availableWorker($index);
+
         while (! empty($this->pool[$index])) {
             $socket = array_pop($this->pool[$index]);
 

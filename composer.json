@@ -1,6 +1,7 @@
 {
     "name": "larabun/laravel-rsc",
     "description": "React Server Components for Laravel, rendered by a JavaScript runtime over a local socket",
+    "version": "0.9.0",
     "type": "library",
     "keywords": [
         "laravel",

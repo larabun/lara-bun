@@ -24,21 +24,14 @@ class ServeStaticRsc
             if (file_exists($flightFile) && file_exists($metaFile)) {
                 $meta = json_decode(file_get_contents($metaFile), true);
 
-                $clientChunks = $meta['clientChunks'] ?? [];
-                $sharedChunks = isset($clientChunks['shared']) ? $clientChunks['shared'] : $clientChunks;
-
-                $headers = [
+                // Like the live SPA response, the prerendered Flight payload is
+                // self-describing — client references, stylesheet <link>s and
+                // <title>/<meta> all travel inside it.
+                return new Response(file_get_contents($flightFile), 200, [
                     'Content-Type' => 'text/x-component',
-                    Header::X_RSC_CHUNKS => json_encode($sharedChunks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
                     Header::X_RSC_VERSION => $meta['version'] ?? '',
                     'X-Accel-Buffering' => 'no',
-                ];
-
-                if (isset($meta['title'])) {
-                    $headers[Header::X_RSC_TITLE] = rawurlencode($meta['title']);
-                }
-
-                return new Response(file_get_contents($flightFile), 200, $headers);
+                ]);
             }
         } else {
             $htmlFile = "{$basePath}/{$path}.html";

@@ -89,13 +89,10 @@ test('rsc SPA response sends headers without waiting for stream body', function 
     // Headers are derived from the first yield (stream-start), not the body
     $response->assertStatus(200);
     $response->assertHeader('Content-Type', 'text/x-component; charset=utf-8');
-    $response->assertHeader(Header::X_RSC_CHUNKS);
-
-    $chunks = json_decode($response->headers->get(Header::X_RSC_CHUNKS), true);
-    expect($chunks)->toBe(['/build/rsc/test.js']);
+    $response->assertHeader(Header::X_RSC_VERSION);
 });
 
-test('rsc SPA response includes metadata from stream-start in headers', function () {
+test('rsc SPA response carries no asset or metadata headers', function () {
     $bridgeMock = Mockery::mock(BunBridge::class);
     app()->instance(BunBridge::class, $bridgeMock);
 
@@ -119,10 +116,12 @@ test('rsc SPA response includes metadata from stream-start in headers', function
         'Accept' => '*/*',
     ]);
 
+    // Client references, stylesheet links and <title>/<meta> all travel inside
+    // the Flight payload under @vitejs/plugin-rsc, so the response emits none
+    // of the old bun-engine sidecar headers.
     $response->assertStatus(200);
-    $response->assertHeader(Header::X_RSC_TITLE, rawurlencode('My Page'));
 
-    $meta = json_decode($response->headers->get(Header::X_RSC_META), true);
-    expect($meta['title'])->toBe('My Page')
-        ->and($meta['description'])->toBe('A test page');
+    foreach (['X-RSC-Chunks', 'X-RSC-CSS', 'X-RSC-Title', 'X-RSC-Meta'] as $header) {
+        expect($response->headers->has($header))->toBeFalse("unexpected {$header} header");
+    }
 });

@@ -1,5 +1,6 @@
 import './app.css'
 import type { ReactNode } from 'react'
+import { Nav } from '../Nav'
 
 export const metadata = { title: { template: '%s · LaraBun', default: 'LaraBun Docs' }, description: 'default description' }
 
@@ -9,7 +10,10 @@ export default function Layout({ children }: { children: ReactNode }) {
       <head>
         <meta charSet="utf-8" />
       </head>
-      <body>{children}</body>
+      <body>
+        <Nav />
+        {children}
+      </body>
     </html>
   )
 }

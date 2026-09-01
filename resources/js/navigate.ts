@@ -10,16 +10,8 @@ type ReactNode = unknown;
 type Deserializer = (stream: ReadableStream, options: Record<string, unknown>) => Promise<ReactNode>;
 type CallServerFn = (id: string, args: unknown[]) => Promise<unknown>;
 
-interface PageMeta {
-  title?: string;
-  description?: string;
-  [key: string]: string | undefined;
-}
-
 interface CacheEntry {
   tree: Promise<ReactNode>;
-  title: string | null;
-  meta: PageMeta | null;
   expiresAt: number;
 }
 
@@ -37,45 +29,6 @@ const cache = new Map<string, CacheEntry>();
 let interceptManifest: InterceptEntry[] = [];
 
 const DEFAULT_PREFETCH_TTL = 30_000;
-
-function applyMeta(meta: PageMeta): void {
-  if (meta.title) {
-    document.title = meta.title;
-  }
-
-  for (const [key, value] of Object.entries(meta)) {
-    if (key === "title" || !value) continue;
-
-    const isOg = key.startsWith("og:");
-    const selector = isOg
-      ? `meta[property="${key}"]`
-      : `meta[name="${key}"]`;
-
-    let el = document.head.querySelector(selector);
-
-    if (!el) {
-      el = document.createElement("meta");
-      if (isOg) {
-        el.setAttribute("property", key);
-      } else {
-        el.setAttribute("name", key);
-      }
-      document.head.appendChild(el);
-    }
-
-    el.setAttribute("content", value);
-  }
-}
-
-function parseMetaHeader(response: Response): PageMeta | null {
-  const raw = response.headers.get("X-RSC-Meta");
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as PageMeta;
-  } catch {
-    return null;
-  }
-}
 
 export function setVersion(v: string): void {
   version = v;
@@ -165,89 +118,15 @@ function fetchRscPayload(url: string, signal?: AbortSignal, interceptSlot?: stri
   });
 }
 
+/**
+ * Deserialize a Flight response into a React tree.
+ *
+ * Client modules, CSS <link>s and <title>/<meta> all travel inside the Flight
+ * payload — @vitejs/plugin-rsc emits stylesheet links as tree elements and
+ * resolves client references through its own browser runtime, and React 19
+ * hoists document metadata into <head>. Nothing needs injecting from headers.
+ */
 function deserializeResponse(response: Response): Promise<ReactNode> {
-  const chunksHeader = response.headers.get("X-RSC-Chunks");
-
-  if (chunksHeader) {
-    try {
-      const chunks: string[] = JSON.parse(chunksHeader);
-      const existingScripts = new Set(
-        Array.from(document.querySelectorAll<HTMLScriptElement>("script[src]"))
-          .map((s) => s.src)
-      );
-
-      for (const chunk of chunks) {
-        const absoluteUrl = new URL(chunk, window.location.origin).href;
-        if (!existingScripts.has(absoluteUrl)) {
-          const script = document.createElement("script");
-          script.type = "module";
-          script.src = chunk;
-          document.head.appendChild(script);
-        }
-      }
-    } catch {
-      // Ignore malformed chunks header
-    }
-  }
-
-  // Load page-specific CSS — add new links, remove old page CSS
-  const cssHeader = response.headers.get("X-RSC-CSS");
-
-  if (cssHeader) {
-    try {
-      const cssUrls: string[] = JSON.parse(cssHeader);
-      const existingLinks = new Set(
-        Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][data-rsc-css]'))
-          .map((l) => l.href)
-      );
-
-      const newAbsoluteUrls = new Set(
-        cssUrls.map((u) => new URL(u, window.location.origin).href)
-      );
-
-      // Add new CSS links first and wait for them to load before removing old ones.
-      // This prevents a flash of unstyled content when CSS hashes change (e.g. HMR rebuild).
-      const loadPromises: Promise<void>[] = [];
-
-      for (const cssUrl of cssUrls) {
-        const absoluteUrl = new URL(cssUrl, window.location.origin).href;
-        if (!existingLinks.has(absoluteUrl)) {
-          const link = document.createElement("link");
-          link.rel = "stylesheet";
-          link.href = cssUrl;
-          link.setAttribute("data-rsc-css", "");
-          loadPromises.push(new Promise<void>((resolve) => {
-            link.onload = () => resolve();
-            link.onerror = () => resolve();
-          }));
-          document.head.appendChild(link);
-        }
-      }
-
-      // Once new CSS is loaded, remove old links that are no longer needed
-      if (loadPromises.length > 0) {
-        Promise.all(loadPromises).then(() => {
-          document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][data-rsc-css]')
-            .forEach((link) => {
-              if (!newAbsoluteUrls.has(link.href)) {
-                link.remove();
-              }
-            });
-        });
-      } else {
-        // No new links to load — remove stale ones immediately
-        document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][data-rsc-css]')
-          .forEach((link) => {
-            if (!newAbsoluteUrls.has(link.href)) {
-              link.remove();
-            }
-          });
-      }
-    } catch {
-      // Ignore malformed CSS header
-    }
-  }
-
   return flightDeserializer!(response.body!, {
     callServer: callServerFn ?? (async () => {
       throw new Error("Server actions not initialized");
@@ -306,11 +185,6 @@ export async function navigate(
 
     if (cached && cached.expiresAt > Date.now()) {
       treePromise = cached.tree;
-      if (cached.meta) {
-        applyMeta(cached.meta);
-      } else if (cached.title) {
-        document.title = cached.title;
-      }
       cache.delete(cacheKey);
     } else {
       cache.delete(cacheKey);
@@ -322,15 +196,6 @@ export async function navigate(
         return;
       }
 
-      const meta = parseMetaHeader(response);
-      if (meta) {
-        applyMeta(meta);
-      } else {
-        const rawTitle = response.headers.get("X-RSC-Title");
-        if (rawTitle) {
-          document.title = decodeURIComponent(rawTitle);
-        }
-      }
       treePromise = deserializeResponse(response);
     }
 
@@ -396,24 +261,14 @@ function prefetchUrl(
 
   cache.delete(cacheKey);
 
-  let cachedTitle: string | null = null;
-  let cachedMeta: PageMeta | null = null;
-
-  const tree = fetchRscPayload(url, undefined, interceptSlot, refererUrl).then((response) => {
-    cachedMeta = parseMetaHeader(response);
-    if (!cachedMeta) {
-      const rawTitle = response.headers.get("X-RSC-Title");
-      cachedTitle = rawTitle ? decodeURIComponent(rawTitle) : null;
-    }
-    return deserializeResponse(response);
-  }).catch(() => {
-    cache.delete(cacheKey);
-    return null;
-  });
+  const tree = fetchRscPayload(url, undefined, interceptSlot, refererUrl)
+    .then((response) => deserializeResponse(response))
+    .catch(() => {
+      cache.delete(cacheKey);
+      return null;
+    });
 
   cache.set(cacheKey, {
-    get title() { return cachedTitle; },
-    get meta() { return cachedMeta; },
     tree,
     expiresAt: Date.now() + ttl,
   });

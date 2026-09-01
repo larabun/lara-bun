@@ -181,46 +181,30 @@ class RscResponse implements Responsable
      * Stream the raw Flight payload for SPA navigation.
      * Uses chunked transfer encoding so React can progressively render
      * as Flight bytes arrive via createFromReadableStream(response.body).
+     *
+     * The payload is self-describing: @vitejs/plugin-rsc encodes client
+     * references and stylesheet <link>s into the Flight stream itself, and
+     * <title>/<meta> are rendered inside the tree for React 19 to hoist. So
+     * the response carries no asset or metadata headers — only the version,
+     * which RscMiddleware uses to force a reload after a redeploy.
      */
     protected function toStreamedRscResponse(string $version): StreamedResponse
     {
         $bridge = app(BunBridge::class);
         $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides);
 
-        // First yield is always {clientChunks, metadata} — read it eagerly
-        // so we can set proper headers on the StreamedResponse object.
+        // First yield is the stream-start frame — read it eagerly so headers
+        // are settled before the body starts streaming. Page metadata lands in
+        // viewData as defaults (route.php viewData takes precedence) for
+        // prerendered HTML, which builds its own <head>.
         $meta = $generator->current();
-        $clientChunks = $meta['clientChunks'] ?? [];
-
-        // Apply page metadata as viewData defaults (route.php viewData takes precedence)
         $this->applyMetadataDefaults($meta['metadata'] ?? null);
-
-        // Send only shared chunks in the header — component chunks are loaded
-        // on demand by Flight via __webpack_chunk_load__.
-        $sharedChunks = isset($clientChunks['shared']) ? $clientChunks['shared'] : $clientChunks;
 
         $headers = [
             'Content-Type' => 'text/x-component',
-            Header::X_RSC_CHUNKS => json_encode($sharedChunks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
             Header::X_RSC_VERSION => $version,
             'X-Accel-Buffering' => 'no',
         ];
-
-        if (isset($this->viewData['title'])) {
-            $headers[Header::X_RSC_TITLE] = rawurlencode($this->viewData['title']);
-        }
-
-        $metaData = $this->extractMetadata();
-
-        if ($metaData !== []) {
-            $headers[Header::X_RSC_META] = json_encode($metaData, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        }
-
-        $cssLinks = $this->resolveCssLinks();
-
-        if ($cssLinks !== []) {
-            $headers[Header::X_RSC_CSS] = json_encode($cssLinks, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        }
 
         return new StreamedResponse(function () use ($generator): void {
             while (ob_get_level() > 0) {
@@ -521,82 +505,15 @@ class RscResponse implements Responsable
     }
 
     /**
-     * Extract metadata keys from viewData for the X-RSC-Meta header.
+     * Hash the client build so a redeploy invalidates in-flight SPA sessions.
      *
-     * @return array<string, string>
+     * Must stay in step with RscMiddleware::version() — that compares the
+     * client's X-RSC-Version against its own reading of the same directory,
+     * so a divergence here 409s every navigation.
      */
-    protected function extractMetadata(): array
-    {
-        $metadata = [];
-        $metaKeys = ['title', 'description', 'author', 'robots'];
-
-        foreach ($metaKeys as $key) {
-            if (isset($this->viewData[$key]) && is_string($this->viewData[$key])) {
-                $metadata[$key] = $this->viewData[$key];
-            }
-        }
-
-        if (isset($this->viewData['keywords'])) {
-            $metadata['keywords'] = is_array($this->viewData['keywords'])
-                ? implode(', ', $this->viewData['keywords'])
-                : $this->viewData['keywords'];
-        }
-
-        foreach ($this->viewData as $key => $value) {
-            if (! is_string($value)) {
-                continue;
-            }
-
-            if (str_starts_with($key, 'og:') || str_starts_with($key, 'twitter:')) {
-                $metadata[$key] = $value;
-            }
-        }
-
-        return $metadata;
-    }
-
-    /**
-     * Resolve CSS links for this page from the CSS manifest.
-     * Collects CSS from the page component + all layouts in its chain.
-     *
-     * @return list<string>
-     */
-    public function resolveCssLinks(): array
-    {
-        $manifestPath = base_path('bootstrap/rsc/css-manifest.json');
-
-        if (! file_exists($manifestPath)) {
-            return [];
-        }
-
-        /** @var array<string, list<string>> $manifest */
-        $manifest = json_decode(file_get_contents($manifestPath), true) ?? [];
-        $links = [];
-
-        // Collect CSS from layouts (outermost first)
-        foreach ($this->layouts as $layout) {
-            $component = $layout['component'];
-
-            if (isset($manifest[$component])) {
-                foreach ($manifest[$component] as $url) {
-                    $links[] = $url;
-                }
-            }
-        }
-
-        // Collect CSS from the page component
-        if (isset($manifest[$this->component])) {
-            foreach ($manifest[$this->component] as $url) {
-                $links[] = $url;
-            }
-        }
-
-        return array_values(array_unique($links));
-    }
-
     protected function resolveVersion(): string
     {
-        $buildDir = public_path('build/rsc');
+        $buildDir = config('bun.rsc.assets_dir', public_path('build/rsc-vite'));
 
         if (! is_dir($buildDir)) {
             return '';

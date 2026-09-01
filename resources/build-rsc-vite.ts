@@ -317,7 +317,9 @@ export async function handleRsc(
   parallelSlots: Record<string, string> = {},
 ): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean }> {
   applyPhp()
-  const flight = renderToReadableStream(buildElement(component, props, layouts, loadings, parallelSlots, {}))
+  // renderTree (not bare buildElement) so the prerendered Flight payload carries
+  // the same <title>/<meta> elements the live SPA payload does.
+  const flight = renderToReadableStream(await renderTree(component, props, layouts, loadings, parallelSlots, {}))
   const [forHtml, forPayload] = flight.tee()
   const rscPayload = await new Response(forPayload).text()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
@@ -336,7 +338,7 @@ export async function handleRscPprShell(
   parallelSlots: Record<string, string> = {},
 ): Promise<{ shellHtml: string; clientChunks: unknown; timedOut: boolean; usedDynamicApis: boolean }> {
   applyPhp()
-  const flight = renderToReadableStream(buildElement(component, props, layouts, loadings, parallelSlots, {}))
+  const flight = renderToReadableStream(await renderTree(component, props, layouts, loadings, parallelSlots, {}))
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
   const htmlStream = await ssr.handleSsr(flight)
   const shellHtml = await new Response(htmlStream).text()

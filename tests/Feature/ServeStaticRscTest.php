@@ -79,10 +79,9 @@ test('falls through when no static html file exists for non-RSC request', functi
     expect($response->getContent())->toBe('dynamic content');
 });
 
-test('includes client chunks header from meta.json', function () {
+test('static flight response carries only content type and version', function () {
     file_put_contents($this->staticDir.'/test-page.flight', 'payload');
     file_put_contents($this->staticDir.'/test-page.meta.json', json_encode([
-        'clientChunks' => ['/build/rsc/chunk-a.js', '/build/rsc/chunk-b.js'],
         'version' => 'v1',
     ]));
 
@@ -91,39 +90,14 @@ test('includes client chunks header from meta.json', function () {
         'Accept' => '*/*',
     ]);
 
-    $chunks = json_decode($response->headers->get(Header::X_RSC_CHUNKS), true);
-    expect($chunks)->toBe(['/build/rsc/chunk-a.js', '/build/rsc/chunk-b.js']);
-});
+    // The prerendered Flight payload is self-describing under
+    // @vitejs/plugin-rsc — no chunk, CSS or metadata sidecar headers.
+    $response->assertStatus(200);
+    expect($response->headers->get(Header::X_RSC_VERSION))->toBe('v1');
 
-test('includes title header when present in meta', function () {
-    file_put_contents($this->staticDir.'/test-page.flight', 'payload');
-    file_put_contents($this->staticDir.'/test-page.meta.json', json_encode([
-        'clientChunks' => [],
-        'version' => 'v1',
-        'title' => 'My Page Title',
-    ]));
-
-    $response = $this->get('/test-page', [
-        Header::X_RSC => 'true',
-        'Accept' => '*/*',
-    ]);
-
-    expect($response->headers->get(Header::X_RSC_TITLE))->toBe(rawurlencode('My Page Title'));
-});
-
-test('omits title header when not in meta', function () {
-    file_put_contents($this->staticDir.'/test-page.flight', 'payload');
-    file_put_contents($this->staticDir.'/test-page.meta.json', json_encode([
-        'clientChunks' => [],
-        'version' => 'v1',
-    ]));
-
-    $response = $this->get('/test-page', [
-        Header::X_RSC => 'true',
-        'Accept' => '*/*',
-    ]);
-
-    expect($response->headers->has(Header::X_RSC_TITLE))->toBeFalse();
+    foreach (['X-RSC-Chunks', 'X-RSC-CSS', 'X-RSC-Title', 'X-RSC-Meta'] as $header) {
+        expect($response->headers->has($header))->toBeFalse("unexpected {$header} header");
+    }
 });
 
 test('serves nested static pages', function () {

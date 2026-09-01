@@ -17,7 +17,7 @@ Activate this skill when:
 - Implementing parallel routes (@folder) or route interception
 - Adding php() callables or server actions
 - Debugging streaming, Suspense, or hydration issues
-- Modifying the build pipeline (build-rsc.ts, worker.ts, rsc-handler.ts)
+- Modifying the build pipeline (build-rsc-vite.ts, worker.ts)
 
 ## File-Based Routing
 
@@ -186,7 +186,7 @@ export default function Layout({ children, modal }) {
 1. Browser `fetch()` with `X-RSC: true` header
 2. PHP `PageController` → `RscResponse::toStreamedRscResponse()`
 3. PHP `BunBridge::rscStream()` → socket message to Bun worker
-4. Bun `handleRscStreamMessage` → `renderRscStream()` → Flight stream
+4. Bun worker → the generated entry's `handleRscStream()` → Flight stream
 5. PHP yields chunks → browser `createFromReadableStream()` → React renders
 
 ### Initial HTML Load
@@ -218,10 +218,63 @@ The `stream-start` frame MUST be read eagerly from the main socket before enteri
 
 ## Build System
 
-`resources/build-rsc.ts`:
-- Discovers server/client/action components in `app/` directory
-- Generates `entry.rsc.tsx` (server bundle with `buildElement`)
-- Generates `entry.hydrate.tsx` (browser bundle with `createRscApp`)
-- Generates `routes.generated.ts` (typed route helper)
-- Generates `intercept-manifest.json` (client-side intercept matching)
-- Emits server, SSR, and browser builds with manifests
+`resources/build-rsc-vite.ts` — runs Vite with `@vitejs/plugin-rsc`:
+- Discovers `page`/`layout`/`loading`/`default` route components under `app/`
+- Generates the three plugin entries (rsc / ssr / browser) carrying LaraBun's
+  `buildElement` composition and the worker's render contract
+- Server bundles land in `bootstrap/rsc/vite`; the browser bundle goes to
+  `public/build/rsc-vite` and is served directly, never through PHP
+- The plugin handles directive splitting, client references and CSS; React 19
+  hoists the `<title>`/`<meta>` rendered inside the tree
+- React Compiler switches on automatically when the app installs
+  `babel-plugin-react-compiler`, `@vitejs/plugin-react` and `@rolldown/plugin-babel`
+
+### loading.tsx requirement
+
+A route needs `loading.tsx` only when the page itself blocks before it can
+paint — an async default export awaiting `php()`, or a `route.php` resolving
+`props()` through a closure. The build fails with the offending route named.
+
+Slow work in a child wrapped in its own `<Suspense>` needs nothing, because the
+page still paints a shell immediately. `viewData()` is Blade-only and never
+blocks React, so it is ignored.
+
+## Deployment
+
+`bun:serve` is a long-running supervisor that spawns the Bun workers; PHP talks
+to them over a Unix socket. Any host that can run a persistent process
+alongside PHP works — the two only need to share a filesystem.
+
+### Laravel Cloud
+
+Runs on any plan, including Starter and Growth. No enterprise plan and no TCP
+transport are required.
+
+1. **Build commands** — install Bun before building, since Cloud's PHP image
+   has none. `bun:install` writes a static binary to `bin/bun` inside the
+   project, so it persists into the deployed image:
+
+   ```bash
+   php artisan bun:install && php artisan rsc:build
+   ```
+
+2. **App cluster → Background processes → Custom worker** — command
+   `php artisan bun:serve`, 1 instance. Cloud restarts it if it exits.
+
+   Use the **App** cluster, not a worker cluster. Background processes there run
+   in the same pod that serves web traffic, so the Unix socket works. Worker
+   clusters are separate compute that does not serve web traffic, so PHP could
+   not reach a worker running on one.
+
+3. **Set `BUN_WORKERS`** — Cloud spawns your custom process once *per replica*,
+   and each Bun worker loads the RSC bundle into its own heap. `BUN_WORKERS=1`
+   is right for small instances. Left unset, the default is bounded by the
+   cgroup CPU quota and the container memory limit, but setting it explicitly is
+   clearer.
+
+Keep `BUN_TRANSPORT=unix` (the default).
+
+**Scale to Zero** stops the App cluster on its sleep timeout, taking the Bun
+workers with it; they restart when the environment wakes. PHP retries the socket
+connection for up to 3s to cover that. A manual wake interval avoids the cold
+start entirely.

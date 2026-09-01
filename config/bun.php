@@ -12,9 +12,13 @@ return [
 
     // Transport between PHP and the Bun worker. 'unix' (default) uses a local
     // Unix domain socket — fastest, and lockable to the owner on shared hosts.
-    // 'tcp' uses a loopback connection instead; use it where PHP and the worker
-    // may not share a filesystem for the socket (e.g. Laravel Cloud, split
-    // containers). With multiple workers, main ports are host:port..port+N-1 and
+    // Keep this on any host where PHP and the worker share a filesystem, which
+    // includes Laravel Cloud: `bun:serve` runs as an App-cluster background
+    // process in the same pod that serves web traffic.
+    //
+    // 'tcp' uses a loopback connection instead. Reach for it only when the two
+    // genuinely cannot share a socket path — separate containers on a shared
+    // network. With multiple workers, main ports are host:port..port+N-1 and
     // callback ports follow at port+N..port+2N-1.
     'transport' => env('BUN_TRANSPORT', 'unix'),
     'host' => env('BUN_HOST', '127.0.0.1'),

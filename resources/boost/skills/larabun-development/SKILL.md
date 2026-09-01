@@ -239,17 +239,21 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [
-    react({ babel: { plugins: ['babel-plugin-react-compiler'] } }),
-  ],
+  plugins: [react({ compiler: true })],
 })
 ```
 
-That is all the React Compiler needs — install `@vitejs/plugin-react` and
-`babel-plugin-react-compiler` in the app and it runs. The same file is where
-Tailwind, extra aliases, or any other plugin belongs. `rsc()` always runs
-first, since a `react()`/babel layer has to transform what it has already
-split into client and server graphs.
+That enables the React Compiler — install `@vitejs/plugin-react` and
+`oxc-transform-react` in the app and it runs, no Babel involved. The Babel
+route still works if you need its options:
+
+```ts
+react({ babel: { plugins: ['babel-plugin-react-compiler'] } })
+```
+
+The same file is where Tailwind, extra aliases, or any other plugin belongs.
+`rsc()` always runs first, since a `react()` layer has to transform what it has
+already split into client and server graphs.
 
 ### loading.tsx requirement
 

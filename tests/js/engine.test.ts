@@ -95,7 +95,7 @@ beforeAll(async () => {
   // development build — pinning production breaks the useForm suite depending
   // on file order. The assertions below hold in either build.
   engine = await import(bundlePath)
-  engine.installPhpFn(async (fn: string, ...args: unknown[]) => {
+  engine.installHostFn(async (fn: string, ...args: unknown[]) => {
     if (fn === 'getUser') return { display: 'ramon' }
     if (fn === 'slowData') {
       await new Promise((r) => setTimeout(r, (args[0] as number) ?? 50))
@@ -118,7 +118,7 @@ describe('composition', () => {
     expect(payload).toContain('"html"')
   })
 
-  test('passes php() results into the tree', async () => {
+  test('passes host call results into the tree', async () => {
     const { stream } = await engine.handleRscStream('app/page', { name: 'ramon' }, LAYOUTS, [], {}, {})
 
     expect(await text(stream)).toContain('ramon')
@@ -217,7 +217,7 @@ describe('ppr classification', () => {
    * stays suspended and only the static shell is flushed. The two flags decide
    * whether a page may be frozen whole, cached as a shell, or left dynamic.
    */
-  test('reports a page with no php() as fully static', async () => {
+  test('reports a page with no host call as fully static', async () => {
     const r = await engine.handleRscPprShell('app/static/page', {}, LAYOUTS, [], {})
 
     expect(r.usedDynamicApis).toBe(false)
@@ -226,7 +226,7 @@ describe('ppr classification', () => {
     expect(r.shellHtml).toContain('Static hello from vite engine')
   })
 
-  test('reports a page that awaits php() as dynamic', async () => {
+  test('reports a page that awaits the host callable as dynamic', async () => {
     const r = await engine.handleRscPprShell('app/page', {}, LAYOUTS, ['app/loading'], {})
 
     expect(r.usedDynamicApis).toBe(true)
@@ -250,7 +250,7 @@ describe('ppr classification', () => {
     expect(r.shellHtml).not.toContain('arrived after')
   })
 
-  test('leaves the real php() implementation installed afterwards', async () => {
+  test('leaves the real host callable installed afterwards', async () => {
     await engine.handleRscPprShell('app/page', {}, LAYOUTS, ['app/loading'], {})
 
     // The probe must not leak into subsequent request-time renders.
@@ -335,19 +335,19 @@ describe('loading.tsx validation', () => {
     return { code, stderr }
   }
 
-  test('rejects a page whose own default export awaits php()', async () => {
+  test('rejects a page whose own default export awaits the host callable', async () => {
     const { code, stderr } = await buildApp({
       'app/layout.tsx': LAYOUT,
       'app/blocking/page.tsx':
         `export default async function P() {\n` +
-        `  const d: any = await (globalThis as any).php('x')\n` +
+        `  const d: any = await (globalThis as any).rpc('x')\n` +
         `  return <main>{d}</main>\n` +
         `}\n`,
     })
 
     expect(code).toBe(1)
     expect(stderr).toContain('app/blocking/page')
-    expect(stderr).toContain('awaits php()')
+    expect(stderr).toContain('awaits rpc()')
   })
 
   test('accepts a blocking page that has a loading.tsx in its chain', async () => {
@@ -356,7 +356,7 @@ describe('loading.tsx validation', () => {
       'app/loading.tsx': `export default function L() { return <div>loading</div> }\n`,
       'app/blocking/page.tsx':
         `export default async function P() {\n` +
-        `  const d: any = await (globalThis as any).php('x')\n` +
+        `  const d: any = await (globalThis as any).rpc('x')\n` +
         `  return <main>{d}</main>\n` +
         `}\n`,
     })
@@ -366,13 +366,13 @@ describe('loading.tsx validation', () => {
 
   test('accepts a page whose slow work sits in a child behind its own Suspense', async () => {
     // The page itself is synchronous, so it paints a shell immediately — no
-    // loading.tsx required even though the file calls php().
+    // loading.tsx required even though the file calls rpc().
     const { code } = await buildApp({
       'app/layout.tsx': LAYOUT,
       'app/deferred/page.tsx':
         `import { Suspense } from 'react'\n` +
         `async function Slow() {\n` +
-        `  const d: any = await (globalThis as any).php('x')\n` +
+        `  const d: any = await (globalThis as any).rpc('x')\n` +
         `  return <p>{d}</p>\n` +
         `}\n` +
         `export default function P() {\n` +
@@ -391,7 +391,7 @@ describe('loading.tsx validation', () => {
     })
 
     expect(code).toBe(1)
-    expect(stderr).toContain('props()')
+    expect(stderr).toContain('resolves props dynamically')
   })
 
   test('ignores viewData() closures, which never reach React', async () => {
@@ -407,7 +407,7 @@ describe('loading.tsx validation', () => {
 
 describe('app vite config', () => {
   /**
-   * The engine has no opinion about which plugins an app uses — the React
+   * The plugin has no opinion about which plugins an app uses — the React
    * Compiler, Tailwind, anything else. An app declares them in its own
    * vite.rsc.config and the engine merges them in.
    */
@@ -452,10 +452,10 @@ describe('app vite config', () => {
     writeFileSync(join(app, 'app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
     writeFileSync(
       configPath,
-      `import { larabun } from ${JSON.stringify(join(packageRoot, 'resources/vite.ts'))}
+      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'resources/vite.ts'))}
 
 export default {
-  plugins: [{ name: 'vite:react-babel', enforce: 'pre' }, larabun()],
+  plugins: [{ name: 'vite:react-babel', enforce: 'pre' }, rscRoutes()],
 }
 `,
     )
@@ -498,14 +498,14 @@ export default {
       'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
     )
     writeFileSync(join(app, 'app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
-    // The app composes larabun() itself — this is the documented shape.
+    // The app composes rscRoutes() itself — this is the documented shape.
     writeFileSync(
       configPath,
-      `import { larabun } from ${JSON.stringify(join(packageRoot, 'resources/vite.ts'))}
+      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'resources/vite.ts'))}
 
 export default {
   plugins: [
-    larabun(),
+    rscRoutes(),
     {
       name: 'larabun-marker',
       transform(code, id) {

@@ -1,10 +1,11 @@
 /**
- * Call a PHP function from a React Server Component during RSC rendering.
+ * Call a function registered by the host application from a React Server
+ * Component, during RSC rendering.
  *
- * The function name must be registered in config/bun.php under rsc.callables,
+ * On Laravel the name must be registered in config/bun.php under rsc.callables,
  * or auto-discovered from rsc.callables_dir (e.g. "UserCallable.getUser").
  */
-declare function php<T = unknown>(functionName: string, args?: Record<string, unknown>): Promise<T>;
+declare function rpc<T = unknown>(functionName: string, args?: Record<string, unknown>): Promise<T>;
 
 /**
  * Page metadata for RSC pages.

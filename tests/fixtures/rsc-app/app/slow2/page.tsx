@@ -1,7 +1,7 @@
 import { Suspense } from 'react'
 
 async function SlowPart() {
-  const data = (await (globalThis as any).php('slowData', 3000)) as { value: string }
+  const data = (await (globalThis as any).rpc('slowData', 3000)) as { value: string }
 
   return <p id="slow2-content">{data.value}</p>
 }

@@ -3,7 +3,7 @@ import { Suspense } from 'react'
 export const metadata = { title: 'Slow Page' }
 
 async function SlowPart({ ms, label }: { ms: number; label: string }) {
-  const data = (await (globalThis as any).php('slowData', ms)) as { value: string }
+  const data = (await (globalThis as any).rpc('slowData', ms)) as { value: string }
 
   return <p id={label}>{label}: {data.value}</p>
 }

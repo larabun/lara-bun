@@ -1,6 +1,6 @@
 ---
 name: larabun-development
-description: "Develops LaraBun applications — React Server Components, file-based routing, Forms, useForm, server actions, php() callables, optimistic updates, streaming, Suspense, and the build pipeline."
+description: "Develops LaraBun applications — React Server Components, file-based routing, Forms, useForm, server actions, rpc() callables, optimistic updates, streaming, Suspense, and the build pipeline."
 license: MIT
 metadata:
   author: larabun
@@ -15,7 +15,7 @@ Activate this skill when:
 - Creating or modifying RSC pages, layouts, or components
 - Working with file-based routing conventions
 - Implementing parallel routes (@folder) or route interception
-- Adding php() callables or server actions
+- Adding rpc() callables or server actions
 - Debugging streaming, Suspense, or hydration issues
 - Modifying the build pipeline (resources/vite.ts, worker.ts)
 
@@ -65,7 +65,7 @@ export default function Counter() {
 "use server";
 export async function addTodo(formData: FormData) {
   const title = formData.get("title") as string;
-  return await (globalThis as any).php("Todos.add", title);
+  return await (globalThis as any).rpc("Todos.add", title);
 }
 ```
 
@@ -209,16 +209,16 @@ Binary frames: 4-byte big-endian length + JSON payload.
 - `rsc-ppr-shell` → PPR shell capture (build time)
 
 ### Callback Socket (.sock.cb)
-- Persistent pool for `php()` calls during rendering
+- Persistent pool for `rpc()` calls during rendering
 - PHP registers with `callbackId`, Bun routes responses back
 
 ## Critical: Stream-Start Ordering
 
-The `stream-start` frame MUST be read eagerly from the main socket before entering the callback select loop. Before processing any callback, drain pending main socket frames with non-blocking `socket_select(timeout=0)`. This prevents slow `php()` callbacks from blocking response delivery.
+The `stream-start` frame MUST be read eagerly from the main socket before entering the callback select loop. Before processing any callback, drain pending main socket frames with non-blocking `socket_select(timeout=0)`. This prevents slow `rpc()` callbacks from blocking response delivery.
 
 ## Build System
 
-`resources/vite.ts` — the `larabun()` Vite plugin (`resources/build-rsc-vite.ts` is the thin CLI that picks a config and runs Vite):
+`resources/vite.ts` — the `rscRoutes()` Vite plugin (`resources/build-rsc-vite.ts` is the thin CLI that picks a config and runs Vite):
 - Discovers `page`/`layout`/`loading`/`default` route components under `app/`
 - Generates the three plugin entries (rsc / ssr / browser) carrying LaraBun's
   `buildElement` composition and the worker's render contract
@@ -233,22 +233,22 @@ project root (or point `BUN_RSC_VITE_CONFIG` anywhere):
 
 ```ts
 // vite.rsc.config.ts
-import { larabun } from 'lara-bun/vite'
+import { rscRoutes } from 'lara-bun/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
-  plugins: [larabun(), react({ compiler: true })],
+  plugins: [rscRoutes(), react({ compiler: true })],
 })
 ```
 
-`larabun()` discovers the `app/` route tree, generates the three entries, and
+`rscRoutes()` discovers the `app/` route tree, generates the three entries, and
 supplies the structural config (entries, output dirs, `base`). It includes
 `@vitejs/plugin-rsc`, so you never add `rsc()` yourself. Vite runs this config
 directly — nothing is merged on top of it. Without a config the build falls
-back to `larabun()` alone, so a project works with no Vite config at all.
+back to `rscRoutes()` alone, so a project works with no Vite config at all.
 
-Put `larabun()` first. A JSX transform running before `rsc()` sees the module
+Put `rscRoutes()` first. A JSX transform running before `rsc()` sees the module
 graph before the client/server split; the build refuses with a message naming
 the offending plugin rather than failing somewhere unrelated.
 
@@ -265,7 +265,7 @@ Tailwind, aliases, and any other plugin belong in the same file.
 ### loading.tsx requirement
 
 A route needs `loading.tsx` only when the page itself blocks before it can
-paint — an async default export awaiting `php()`, or a `route.php` resolving
+paint — an async default export awaiting `rpc()`, or a `route.php` resolving
 `props()` through a closure. The build fails with the offending route named.
 
 Slow work in a child wrapped in its own `<Suspense>` needs nothing, because the
@@ -283,7 +283,7 @@ special runtime.
 The shell already contains the client bootstrap, so the browser paints it
 immediately, boots, and fills the hole from the Flight request — which is
 `no-store` and always hits the origin. No request-specific data is ever in a
-cached shell: the build renders it with `php()` replaced by a probe that never
+cached shell: the build renders it with `rpc()` replaced by a probe that never
 resolves.
 
 ```

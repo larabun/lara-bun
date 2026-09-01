@@ -125,11 +125,11 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
         return '{"error":"Missing component in RSC message"}';
       }
       try {
-        // Install php() if callback connection is available
+        // Install the host callable if a callback connection is available
         let cleanupPhp: (() => void) | null = null;
         if (message.callbackId) {
           const cbConn = await getCallbackConnection(message.callbackId);
-          cleanupPhp = rscHandler.installPhpFn(createPhpFn(cbConn));
+          cleanupPhp = rscHandler.installHostFn(createPhpFn(cbConn));
         }
 
         try {
@@ -209,7 +209,7 @@ interface BrowserManifest {
 }
 
 type RscHandlerModule = {
-  installPhpFn: (phpFn: (fn: string, ...args: unknown[]) => Promise<unknown>) => () => void;
+  installHostFn: (hostFn: (fn: string, ...args: unknown[]) => Promise<unknown>) => () => void;
   handleRsc: (
     component: string,
     props: Record<string, unknown>,
@@ -251,7 +251,7 @@ let rscHandler: RscHandlerModule | null = null;
 if (process.env.BUN_RSC_BUNDLE) {
   try {
     // The built @vitejs/plugin-rsc entry IS the handler — it exports the
-    // installPhpFn / handleRsc* / handleAction / resolveMetadata contract.
+    // installHostFn / handleRsc* / handleAction / resolveMetadata contract.
     rscHandler = (await import(process.env.BUN_RSC_BUNDLE)) as RscHandlerModule;
     log("RSC handler loaded");
   } catch (err) {
@@ -293,7 +293,7 @@ async function handleRscStreamMessage(
     if (message.callbackId) {
       const cbConn = await getCallbackConnection(message.callbackId);
       const phpFn = createPhpFn(cbConn);
-      cleanupPhp = rscHandler.installPhpFn(phpFn);
+      cleanupPhp = rscHandler.installHostFn(phpFn);
     }
 
     const metadata = await rscHandler.resolveMetadata(
@@ -409,7 +409,7 @@ async function handleRscHtmlStreamMessage(
         });
       };
 
-      cleanupPhp = rscHandler.installPhpFn(deferredPhpFn);
+      cleanupPhp = rscHandler.installHostFn(deferredPhpFn);
       flushDeferred = () => { clearTimeout(autoFlushTimer); flush(); };
     }
 
@@ -504,7 +504,7 @@ async function handleRscActionMessage(
   try {
     if (message.callbackId) {
       const cbConn = await getCallbackConnection(message.callbackId);
-      cleanupPhp = rscHandler.installPhpFn(createPhpFn(cbConn));
+      cleanupPhp = rscHandler.installHostFn(createPhpFn(cbConn));
     }
 
     // Decode base64 body if encoded by PHP (binary-safe transport for file uploads)

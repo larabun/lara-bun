@@ -658,3 +658,17 @@ describe('file uploads through a server action', () => {
     expect(await text(stream)).toContain('Hi ramon from a server action')
   })
 })
+
+describe('package alias', () => {
+  test('resolves the client runtime by package specifier', async () => {
+    // The fixture's Nav imports Link from 'laravel-rsc/Link'. An unresolved
+    // alias fails the build outright, so a rendered <a> is the proof. Nav is a
+    // client component, so it only becomes markup in the SSR pass — the Flight
+    // payload carries a client reference instead.
+    const { htmlStream } = await engine.handleRscHtmlStream('app/feed/page', {}, LAYOUTS, [], {}, {})
+    const html = await text(htmlStream)
+
+    expect(html).toContain('id="nav-home"')
+    expect(html).toContain('href="/"')
+  })
+})

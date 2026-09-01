@@ -1,8 +1,9 @@
 'use client'
 
-// Uses Laravel RSC's real Link so the fixture exercises the SPA engine
+// Imports Link by the package specifier, so the fixture also covers the
+// alias the plugin installs for app code.
 // (prefetch on hover + intercepted click -> window.__rsc_navigate).
-import Link from '../../../resources/js/Link'
+import Link from 'laravel-rsc/Link'
 
 export function Nav() {
   return (

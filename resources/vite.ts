@@ -44,6 +44,12 @@ export interface RscRoutesOptions {
    */
   hostGlobal?: string
   /**
+   * Bare-specifier prefix apps use to import the client runtime, as in
+   * `import Link from 'laravel-rsc/Link'`. Aliased to this package's js/
+   * directory so an app never writes a relative path into vendor code.
+   */
+  packageAlias?: string
+  /**
    * How to tell that a route's props are resolved dynamically by the host.
    * Laravel writes a `route.php` beside the page and resolves `props()` through
    * a closure; another host substitutes its own file and pattern.
@@ -62,6 +68,7 @@ let publicAssetsDir: string
 let assetsBaseUrl: string
 let packageDir: string
 let hostGlobal: string
+let packageAlias: string
 let routeConfig: { file: string; dynamicPattern: RegExp }
 
 function resolvePaths(options: RscRoutesOptions): void {
@@ -80,6 +87,7 @@ function resolvePaths(options: RscRoutesOptions): void {
   assetsBaseUrl = options.assetsUrl || process.env.RSC_ASSETS_URL || '/build/rsc-vite/'
   packageDir = resolve(options.packageDir || process.env.RSC_PACKAGE_DIR || import.meta.dir)
   hostGlobal = options.hostGlobal || 'rpc'
+  packageAlias = options.packageAlias || 'laravel-rsc'
   routeConfig = options.routeConfig ?? {
     file: 'route.php',
     dynamicPattern: /props\s*\(\s*(fn|function)\s*\(/,
@@ -647,7 +655,17 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
         // Force single instances of React/RSC runtime — critical when the
         // package is symlinked (local dev / monorepo), else "use client"
         // components SSR against a second React copy and hooks throw.
-        resolve: { dedupe: ['react', 'react-dom', 'react-server-dom-webpack', '@vitejs/plugin-rsc'] },
+        resolve: {
+          dedupe: ['react', 'react-dom', 'react-server-dom-webpack', '@vitejs/plugin-rsc'],
+          // `import Link from 'laravel-rsc/Link'` resolves to the client runtime
+          // shipped with this package, wherever the package is installed.
+          alias: [
+            {
+              find: new RegExp('^' + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(.*)$'),
+              replacement: join(packageDir, 'js') + '/$1',
+            },
+          ],
+        },
         build: { emptyOutDir: true },
         environments: {
           // Server bundles — stay under the (non-public) out dir.

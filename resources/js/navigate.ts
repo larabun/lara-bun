@@ -241,6 +241,21 @@ function isExternalUrl(url: string): boolean {
   }
 }
 
+/**
+ * The layout chain a navigation to a url will claim.
+ *
+ * Leaving an interception claims fewer layouts than are held, which is what
+ * forces the layout owning the slot to render again so the slot can empty.
+ * Both sides have to agree on it: a prefetch recorded against a different
+ * chain can never be used, so the close of every modal refetched a payload it
+ * had already fetched.
+ */
+function claimedChain(interceptSlot: string | null): string[] {
+  return !interceptSlot && interceptedAtDepth !== null
+    ? heldLayouts.slice(0, interceptedAtDepth)
+    : heldLayouts;
+}
+
 export async function navigate(
   url: string,
   opts?: { replace?: boolean; preserveScroll?: boolean; restore?: boolean }
@@ -309,12 +324,7 @@ export async function navigate(
     const cached = cache.get(cacheKey);
     let treePromise: Promise<ReactNode>;
 
-    // Claiming fewer layouts than we hold forces the layout that owns the
-    // intercepted slot to render again, which is what clears it.
-    const chain =
-      !interceptSlot && interceptedAtDepth !== null
-        ? heldLayouts.slice(0, interceptedAtDepth)
-        : heldLayouts;
+    const chain = claimedChain(interceptSlot);
 
     // A partial payload only composes against the chain it was rendered for —
     // the one this navigation is about to claim, not whatever is mounted.
@@ -408,6 +418,7 @@ function prefetchUrl(
   interceptSlot?: string,
   refererUrl?: string
 ): void {
+  const chain = claimedChain(interceptSlot ?? null);
   const existing = cache.get(cacheKey);
 
   if (existing && existing.expiresAt > Date.now()) {
@@ -424,12 +435,12 @@ function prefetchUrl(
     expiresAt: Date.now() + ttl,
     segmentDepth: 0,
     layouts: null,
-    heldWhenFetched: heldLayouts.join(","),
+    heldWhenFetched: chain.join(","),
   };
 
   // Low priority: the browser then lets a real navigation overtake a queue of
   // speculative requests instead of serving them in the order they were made.
-  entry.tree = fetchRscPayload(url, controller.signal, interceptSlot, refererUrl, heldLayouts, "low")
+  entry.tree = fetchRscPayload(url, controller.signal, interceptSlot, refererUrl, chain, "low")
     .then((response) => {
       entry.segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? 0) || 0;
 

@@ -90,6 +90,14 @@ function renderRoute(url: string, from: number): ReactNode {
 // ── A server that speaks the segment protocol ────────────────────────────────
 
 let requests: Array<{ url: string; held: string | null; depth: number }> = []
+/**
+ * The depth each navigation actually applied at.
+ *
+ * A payload that came from the prefetch cache makes no request, so asserting
+ * on the last request would be asserting on the prefetch — and would pass
+ * whatever the close then did with it.
+ */
+let applied: Array<{ key: string; depth: number }> = []
 
 function sharedDepth(held: string | null, chain: string[]): number {
   if (!held) return 0
@@ -159,6 +167,8 @@ async function boot(url: string) {
   setCallServer(async () => null)
 
   setNavigateHandler((tree, key, segmentDepth) => {
+    applied.push({ key, depth: segmentDepth })
+
     if (segmentDepth > 0) {
       setSegment(segmentDepth, key, tree as ReactNode)
 
@@ -231,6 +241,7 @@ async function type(id: string, value: string) {
 beforeEach(() => {
   clearSegments()
   requests = []
+  applied = []
   installServer()
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -395,10 +406,14 @@ describe('opening and leaving an intercepted view', () => {
   })
 
   test('a link hovered inside the modal does not defeat the close', async () => {
-    // Hovering prefetches against the whole chain, which is not the chain the
-    // close will claim. Reusing it skips the layout holding the modal, so the
-    // URL changes and the modal stays open over the page behind it — the shape
-    // a real pointer produces and a scripted click never does.
+    // A pointer hovers Close before clicking it, which a scripted click never
+    // does. The prefetch has to be recorded against the chain the close will
+    // claim, not the one mounted — otherwise reusing it skips the layout
+    // holding the modal and the URL changes with the modal still over the page.
+    //
+    // Asserted on the depth applied rather than the last request: the close
+    // reuses the prefetch and issues none, so the last request is the
+    // prefetch's and would pass whatever the close did with it.
     await boot('/deep')
     await go('/deep/item/1')
 
@@ -409,7 +424,27 @@ describe('opening and leaving an intercepted view', () => {
 
     await go('/deep')
 
-    expect(requests.at(-1)!.depth).toBeLessThanOrEqual(SLOT_OWNER_DEPTH)
+    expect(applied.at(-1)!.depth).toBeLessThanOrEqual(SLOT_OWNER_DEPTH)
+  })
+
+  test('and the prefetch it fired is not simply thrown away', async () => {
+    // The close claims fewer layouts than are held, so a prefetch recorded
+    // against the held chain can never match and the payload is refetched from
+    // scratch — a request made, paid for, and discarded every time, on the one
+    // navigation a modal guarantees the user will make.
+    await boot('/deep')
+    await go('/deep/item/1')
+
+    const before = requests.length
+
+    await act(async () => {
+      prefetch('/deep')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    await go('/deep')
+
+    expect(requests.length - before).toBe(1)
   })
 })
 

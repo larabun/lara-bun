@@ -25,9 +25,6 @@ class CallableRegistry
     /** @var array<string, array{class-string, string}|class-string|Closure> */
     private array $callables = [];
 
-    /** @var array<string, object> */
-    private array $instances = [];
-
     /** @var array<string, array{authenticated: Authenticated[], can: Can[], middleware: string[]}> */
     private array $attributeCache = [];
 
@@ -291,13 +288,20 @@ class CallableRegistry
         return [$formRequest];
     }
 
+    /**
+     * Resolve the class for this call.
+     *
+     * Deliberately not cached. This registry is a singleton, and under a
+     * persistent runtime — Octane with FrankenPHP, say — a singleton outlives
+     * the request that first populated it. A cached instance whose constructor
+     * took the Request, the authenticated user, or anything else request-shaped
+     * would then be handed to every later request the worker serves, including
+     * other people's. Under PHP-FPM the same cache is per-request and saves
+     * approximately nothing, so there is no trade here to weigh.
+     */
     private function resolveInstance(string $class): object
     {
-        if (! isset($this->instances[$class])) {
-            $this->instances[$class] = $this->container->make($class);
-        }
-
-        return $this->instances[$class];
+        return $this->container->make($class);
     }
 
     /**

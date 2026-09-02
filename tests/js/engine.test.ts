@@ -884,3 +884,51 @@ describe('slot ownership', () => {
     expect(html).toContain('modal-default')
   })
 })
+
+/**
+ * Segment boundaries in the rendered tree.
+ *
+ * They are the seam a later navigation replaces on its own. Introduced ahead
+ * of that so any regression they cause — hydration, prerendering, the client
+ * reference count — shows up on its own rather than mixed in with partial
+ * responses.
+ */
+describe('segment boundaries', () => {
+  test('travel as a client reference, one per layout', async () => {
+    const { stream } = await engine.handleRscStream(
+      'app/nested/page',
+      {},
+      [
+        { component: 'app/layout', props: {} },
+        { component: 'app/nested/layout', props: {} },
+      ],
+      [], {}, {},
+    )
+    const payload = await text(stream)
+
+    // A client reference, not server-rendered markup: the browser resolves it
+    // so the boundary can re-render without the server.
+    expect(payload).toMatch(/:I\[.*"SegmentBoundary"/)
+  })
+
+  test('add no markup of their own', async () => {
+    const { htmlStream } = await engine.handleRscHtmlStream(
+      'app/static/page', {}, LAYOUTS, [], {}, {},
+    )
+    const html = await new Response(htmlStream).text()
+
+    expect(html).toContain('Static hello from vite engine')
+    // The boundary renders its children directly — nothing wraps them.
+    expect(html).not.toContain('segment-boundary')
+  })
+
+  test('do not make a static page look dynamic to the prerenderer', async () => {
+    // The boundary is a client component, but it touches no host call, so a
+    // page that was fully prerenderable must stay so.
+    const shell = await engine.handleRscPprShell('app/static/page', {}, LAYOUTS, [], {})
+
+    expect(shell.usedDynamicApis).toBe(false)
+    expect(shell.timedOut).toBe(false)
+    expect(shell.shellHtml).toContain('Static hello from vite engine')
+  })
+})

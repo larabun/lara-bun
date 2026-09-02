@@ -135,6 +135,20 @@ through to a full-page navigation. Neither failure is visible at build time, so
 `rsc.host_global` and reaches the plugin as `RSC_HOST_GLOBAL`, so the codegen and
 the plugin cannot disagree about what it is called.
 
+### Segment Boundaries
+`buildElement` puts a `SegmentBoundary` client component between each layout and
+its children, depth 1 being everything below the root layout. It is the seam a
+navigation can replace on its own: server components cannot be re-rendered on
+the client, so the swap point has to be a client component reading from
+`segmentStore`. With nothing stored a boundary renders the children the server
+sent, which is the behaviour that existed before boundaries — that default is
+what lets them ship ahead of partial responses.
+
+`setSegment(depth, tree)` drops every deeper segment, which belonged to the page
+being replaced; leaving them would render the previous page inside the new one.
+A deployment must `clearSegments()`, since a retained layout from the old build
+has no claim on being right for the new one.
+
 ### Slots Belong to the Layout That Declares Them
 Parallel slots are collected by walking up from the page to the app root, so an
 `@slot` directory sits at some level and belongs to the layout in that

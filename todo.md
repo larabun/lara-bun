@@ -21,3 +21,8 @@ test for route generation
 
 document bun and node usage if differ
 there is alot of security vulnerabilty with nextjs and react server functions especially. do we have these issues as well?
+
+
+rsc-router-laravel-adapter or rsc-laravel-adapter
+
+I know nextjs recently release instant navigation, no matter how slow is the network navigation happens instantly but am wondering if it to address a issue they have which we don't have, our stream kick off instantly once hit the server but i don't know if it work on slow network altho we have prefetch. So next js limitation now is with instant navigation it don't fetch the data until it navigate which I kind of don't like but I like as you click it navigate instantly but I will be guided by you on this

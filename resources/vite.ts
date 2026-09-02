@@ -697,8 +697,13 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
         // Force single instances of React/RSC runtime — critical when the
         // package is symlinked (local dev / monorepo), else "use client"
         // components SSR against a second React copy and hooks throw.
+        //
+        // react-server-dom-webpack is deliberately absent: @vitejs/plugin-rsc
+        // vendors its own copy, nothing here imports the specifier, and the
+        // built bundles reference it zero times — deduping it was a no-op left
+        // over from the hand-rolled engine.
         resolve: {
-          dedupe: ['react', 'react-dom', 'react-server-dom-webpack', '@vitejs/plugin-rsc'],
+          dedupe: ['react', 'react-dom', '@vitejs/plugin-rsc'],
           // `import Link from 'laravel-rsc/Link'` resolves to the client runtime
           // shipped with this package, wherever the package is installed.
           alias: [

@@ -37,7 +37,7 @@
     "./streaming": "./resources/streaming.ts",
     "./errors": "./resources/errors.ts",
     "./Link": "./resources/js/Link.tsx",
-    "./Form": "./resources/js/FormComponent.tsx",
+    "./Form": "./resources/js/Form.tsx",
     "./navigate": "./resources/js/navigate.ts",
     "./router": "./resources/js/router.ts",
     "./useForm": "./resources/js/useForm.ts",
@@ -45,7 +45,8 @@
     "./useLinkStatus": "./resources/js/useLinkStatus.ts",
     "./client": "./resources/js/createViteRscApp.ts",
     "./types": "./resources/types.d.ts",
-    "./useOnline": "./resources/js/useOnline.ts"
+    "./useOnline": "./resources/js/useOnline.ts",
+    "./form": "./resources/js/Form.tsx"
   },
   "version": "0.1.0",
   "description": "File-based React Server Components routing for Vite \u2014 a router, a build, and a worker that any backend can drive.",

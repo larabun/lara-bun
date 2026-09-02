@@ -20,7 +20,7 @@ registerDom()
 import { act, useOptimistic, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import Form, { useFormStatus } from '../../resources/js/FormComponent.tsx'
+import Form, { useFormStatus } from '../../resources/js/Form.tsx'
 import { ServerValidationError } from '../../resources/js/errors.ts'
 
 let release: (() => void) | null = null
@@ -41,7 +41,13 @@ function PendingProbe() {
 }
 
 /** A list whose server write is held open until the test releases it. */
-function TodoList({ failing }: { failing?: 'validation' | 'unexpected' }) {
+function TodoList({
+  failing,
+  onError,
+}: {
+  failing?: 'validation' | 'unexpected'
+  onError?: (errors: Record<string, string[]>, error?: unknown) => void
+}) {
   const [items, setItems] = useState<string[]>(['first'])
   const [shown, addOptimistic] = useOptimistic(items, (state: string[], next: string) => [...state, next])
 
@@ -58,7 +64,11 @@ function TodoList({ failing }: { failing?: 'validation' | 'unexpected' }) {
   }
 
   return (
-    <Form action={save} optimistic={(data: { title?: string }) => addOptimistic(String(data.title))}>
+    <Form
+      action={save}
+      onError={onError}
+      optimistic={(data: { title?: string }) => addOptimistic(String(data.title))}
+    >
       <input name="title" defaultValue="second" />
       <PendingProbe />
       <ul>
@@ -162,15 +172,60 @@ describe('an optimistic update', () => {
     expect(shownItems(container)).toEqual(['first'])
   })
 
-  test.failing('is taken back when the write throws something unexpected', async () => {
-    // Anything that is not a validation or dump error is rethrown inside the
-    // transition, so the action rejects rather than settling and the row stays
-    // on screen as though the write had worked.
-    const container = await render(<TodoList failing="unexpected" />)
+  test('is taken back when the write throws something unexpected', async () => {
+    // Rethrowing left the action rejected, and until it settles React keeps
+    // the optimistic row on screen — showing a write that had failed.
+    const container = await render(<TodoList failing="unexpected" onError={() => {}} />)
 
     await submit(container)
     await serverAnswers()
 
     expect(shownItems(container)).toEqual(['first'])
+  })
+
+  test('an unexpected failure reaches onError, with the thrown value', async () => {
+    const seen: Array<{ errors: Record<string, string[]>; error?: unknown }> = []
+    const container = await render(
+      <TodoList failing="unexpected" onError={(errors, error) => seen.push({ errors, error })} />,
+    )
+
+    await submit(container)
+    await serverAnswers()
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0].errors).toEqual({})
+    expect((seen[0].error as Error).message).toBe('server said no')
+  })
+
+  test('an unhandled failure is reported rather than swallowed', async () => {
+    // Rethrowing at least made an unexpected error loud. Catching it to let
+    // the transition settle must not make it disappear instead.
+    const original = console.error
+    const reported: unknown[] = []
+    console.error = (...args: unknown[]) => reported.push(args)
+
+    try {
+      const container = await render(<TodoList failing="unexpected" />)
+      await submit(container)
+      await serverAnswers()
+
+      expect(reported).toHaveLength(1)
+      expect(String(reported[0])).toContain('server said no')
+    } finally {
+      console.error = original
+    }
+  })
+
+  test('a validation failure still reports field errors and nothing else', async () => {
+    // The existing contract: one argument, the field errors.
+    const seen: Array<{ errors: Record<string, string[]>; error?: unknown }> = []
+    const container = await render(
+      <TodoList failing="validation" onError={(errors, error) => seen.push({ errors, error })} />,
+    )
+
+    await submit(container)
+    await serverAnswers()
+
+    expect(seen).toEqual([{ errors: { title: ['Title is taken'] }, error: undefined }])
   })
 })

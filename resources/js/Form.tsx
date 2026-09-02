@@ -39,7 +39,14 @@ interface FormProps<T extends Record<string, unknown> = Record<string, unknown>>
   /** Called inside the transition with typed form data. Use it to call your useOptimistic setter. */
   optimistic?: (data: T) => void;
   onSuccess?: (result: unknown) => void;
-  onError?: (errors: Record<string, string[]>) => void;
+  /**
+   * Called when a submit does not succeed.
+   *
+   * Validation failures arrive as field errors, with no second argument.
+   * Anything else arrives as an empty error map and the thrown value — there
+   * are no field errors to report, but the form still has to say so.
+   */
+  onError?: (errors: Record<string, string[]>, error?: unknown) => void;
   onSubmit?: (formData: FormData) => void | false;
   children: ReactNode | ((form: FormRenderProps<T>) => ReactNode);
 }
@@ -67,6 +74,10 @@ function formDataToObject<T extends Record<string, unknown>>(formData: FormData)
   return obj as T;
 }
 
+/**
+ * Also exported by name, and re-exported below, because both spellings are in
+ * use: `import Form from` and `import { Form } from`.
+ */
 export default function Form<T extends Record<string, unknown> = Record<string, unknown>>({
   action,
   method: methodProp,
@@ -225,8 +236,16 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
             onError?.(err.errors);
           } else if (err instanceof ServerDumpError) {
             // Dump overlay is already shown — silently swallow
+          } else if (onError) {
+            // Not rethrown. A rejected action never settles, and until it
+            // settles React keeps the optimistic update on screen — so an
+            // unexpected failure left the row showing as though the write had
+            // worked. Settling is what takes it back.
+            onError({}, err);
           } else {
-            throw err;
+            // Nothing is handling it, and swallowing here would lose it
+            // entirely — the reason this used to rethrow.
+            console.error('[rsc-router] form submit failed', err);
           }
         }
       });
@@ -257,3 +276,12 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
     </FormStatusContext.Provider>
   );
 }
+
+// The barrel this replaces exported these names. It could not simply be called
+// Form.ts: on a case-insensitive filesystem that is the same module as
+// Form.tsx, so re-exporting "./Form" from it resolved to itself. Renaming the
+// component to FormComponent.tsx avoided the collision, at the cost of the
+// alias path `<pkg>/Form` matching only the barrel — by case-insensitive luck
+// on macOS, and nothing at all on Linux.
+export { default as Form } from "./Form";
+export { useForm } from "./useForm";

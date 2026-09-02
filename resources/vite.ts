@@ -523,10 +523,61 @@ export async function handleRscHtmlStream(
 }
 
 // Server action (worker: rsc-action).
+/** The page an action was invoked from, so what it invalidated can be rendered. */
+interface PageContext {
+  component: string
+  props: Record<string, unknown>
+  layouts: LayoutEntry[]
+  loadings: string[]
+  parallelSlots: Record<string, string>
+}
+
+/**
+ * Render one thing an action said it invalidated.
+ *
+ *   'all'   the whole document, layouts included
+ *   'page'  everything below the layouts, which stay as they are
+ *   <slot>  a single parallel slot, by the name its directory gave it
+ *
+ * A slot is the only unit smaller than a page the server can name, which is
+ * why two tables have to be slots to be refreshed apart from each other.
+ */
+async function renderRevalidated(target: string, page: PageContext): Promise<unknown> {
+  if (target === 'all' || target === 'page') {
+    return renderTree(
+      page.component,
+      page.props,
+      page.layouts,
+      page.loadings,
+      page.parallelSlots,
+      {},
+      target === 'all' ? 0 : page.layouts.length,
+      '',
+    )
+  }
+
+  const slotComponent = page.parallelSlots[target]
+
+  if (!slotComponent) {
+    throw new Error(
+      'Cannot revalidate ' + target + ': the page has no such slot. It has: ' +
+        (Object.keys(page.parallelSlots).join(', ') || 'none'),
+    )
+  }
+
+  const SlotComp = components[slotComponent]
+
+  if (!SlotComp) throw new Error('Unknown RSC component: ' + slotComponent)
+
+  return createElement(SlotComp, page.props)
+}
+
 export async function handleAction(
   actionId: string,
   body: string | FormData | Uint8Array,
   contentType = 'text/plain',
+  page?: PageContext,
+  takeRevalidated?: () => string[],
 ): Promise<{ stream: ReadableStream }> {
   applyHost()
 
@@ -550,7 +601,23 @@ export async function handleAction(
   const args = (await decodeReply(decodable)) as unknown[]
   const action = await loadServerAction(actionId)
   const result = await (action as (...a: unknown[]) => unknown)(...args)
-  return { stream: renderToReadableStream(result) }
+
+  // Read after the action has run: what it invalidated is only known once its
+  // host calls have been made. Rendering here rather than telling the browser
+  // to ask is the whole point — the answer carries what went stale with it.
+  const targets = takeRevalidated?.() ?? []
+
+  if (targets.length === 0 || !page) {
+    return { stream: renderToReadableStream(result) }
+  }
+
+  const revalidated: Record<string, unknown> = {}
+
+  for (const target of targets) {
+    revalidated[target] = await renderRevalidated(target, page)
+  }
+
+  return { stream: renderToReadableStream({ result, revalidated }) }
 }
 
 export async function resolveMetadata(

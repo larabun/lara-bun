@@ -1063,3 +1063,92 @@ describe('rendering without a client bootstrap', () => {
     expect(result.clientComponents.length).toBeGreaterThan(0)
   })
 })
+
+describe('what an action invalidated, rendered into its own answer', () => {
+  const PAGE = {
+    component: 'app/page',
+    props: { name: 'ramon' },
+    layouts: LAYOUTS,
+    loadings: [],
+    parallelSlots: { modal: 'app/@modal/default' },
+  }
+
+  const body = () => new TextEncoder().encode(JSON.stringify(['ramon']))
+
+  test('an action that marks nothing answers with just its result', async () => {
+    // Most actions return what changed and the caller sets it. Those must not
+    // pay for a render nobody asked for.
+    const { stream } = await engine.handleAction(
+      serverActionId('greet'),
+      body(),
+      'text/plain;charset=UTF-8',
+      PAGE,
+      () => [],
+    )
+
+    const payload = await text(stream)
+
+    expect(payload).toContain('Hi ramon from a server action')
+    expect(payload).not.toContain('revalidated')
+  })
+
+  test('a marked slot is rendered and travels with the result', async () => {
+    // One round trip: the browser is not told what went stale and asked to
+    // come back for it.
+    const { stream } = await engine.handleAction(
+      serverActionId('greet'),
+      body(),
+      'text/plain;charset=UTF-8',
+      PAGE,
+      () => ['modal'],
+    )
+
+    const payload = await text(stream)
+
+    expect(payload).toContain('Hi ramon from a server action')
+    expect(payload).toContain('modal-default')
+  })
+
+  test('the page target re-renders below the layouts, not the layouts', async () => {
+    const { stream } = await engine.handleAction(
+      serverActionId('greet'),
+      body(),
+      'text/plain;charset=UTF-8',
+      PAGE,
+      () => ['page'],
+    )
+
+    const payload = await text(stream)
+
+    expect(payload).toContain('ramon')
+    // The layout is above the boundary being replaced, so it is not sent.
+    expect(payload).not.toContain('html')
+  })
+
+  test('the all target re-renders the layouts too', async () => {
+    const { stream } = await engine.handleAction(
+      serverActionId('greet'),
+      body(),
+      'text/plain;charset=UTF-8',
+      PAGE,
+      () => ['all'],
+    )
+
+    // The document element only appears when the chain is rendered from the top.
+    expect(await text(stream)).toContain('html')
+  })
+
+  test('a slot the page does not have says which ones it has', async () => {
+    // Naming a slot that is not on the page is a typo, and silently rendering
+    // nothing would look like the action failing to change anything.
+    const failing = engine.handleAction(
+      serverActionId('greet'),
+      body(),
+      'text/plain;charset=UTF-8',
+      PAGE,
+      () => ['nope'],
+    )
+
+    await expect(failing).rejects.toThrow('modal')
+  })
+})

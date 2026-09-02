@@ -169,8 +169,9 @@ interface Timed {
  */
 function streamRun(
   message: Record<string, unknown>,
-  answer: (fn: string, args: unknown[]) => Promise<unknown>,
+  answer: (fn: string, args: unknown[]) => Promise<Record<string, unknown>>,
   quietMs = 1500,
+  extraFrames: Uint8Array[] = [],
 ): Promise<{ main: Timed[]; calls: Timed[] }> {
   return new Promise((resolve, reject) => {
     const callbackId = `cb-test-${Math.floor(performance.now() * 1000)}`
@@ -205,6 +206,7 @@ function streamRun(
       mainSocket.on('error', reject)
       mainSocket.on('connect', () => {
         send(mainSocket!, { ...message, callbackId })
+        for (const extra of extraFrames) mainSocket!.write(extra)
         idle()
       })
 
@@ -236,8 +238,9 @@ function streamRun(
         calls.push({ at: performance.now() - started, frame: request })
         idle()
 
-        const result = await answer(request.function, request.args ?? [])
-        send(cb, { id: request.id, result })
+        // The whole reply, so a test can answer with a refusal or a redirect
+        // rather than only with a value.
+        send(cb, { id: request.id, ...(await answer(request.function, request.args ?? [])) })
         idle()
       }
     })
@@ -305,7 +308,7 @@ describe('streaming over the socket', () => {
   test('a render answers stream-start, then chunks, then stream-end', async () => {
     const { main } = await streamRun(
       { type: 'rsc-stream', component: 'app/feed/page', props: {}, layouts: LAYOUTS },
-      async () => null,
+      async () => ({ result: null }),
     )
 
     const types = main.map((f) => f.frame.type)
@@ -324,7 +327,7 @@ describe('streaming over the socket', () => {
       async (_fn, args) => {
         await new Promise((r) => setTimeout(r, Number(args[0]) || 0))
 
-        return { value: 'done' }
+        return { result: { value: 'done' } }
       },
       2000,
     )
@@ -346,7 +349,7 @@ describe('streaming over the socket', () => {
       async (_fn, args) => {
         await new Promise((r) => setTimeout(r, Number(args[0]) || 0))
 
-        return { value: 'done' }
+        return { result: { value: 'done' } }
       },
       2000,
     )
@@ -366,7 +369,7 @@ describe('streaming over the socket', () => {
   test('an html render answers html-start through html-end', async () => {
     const { main } = await streamRun(
       { type: 'rsc-html-stream', component: 'app/feed/page', props: {}, layouts: LAYOUTS },
-      async () => null,
+      async () => ({ result: null }),
     )
 
     const types = main.map((f) => f.frame.type)
@@ -374,5 +377,126 @@ describe('streaming over the socket', () => {
     expect(types[0]).toBe('html-start')
     expect(types).toContain('html-chunk')
     expect(types.at(-1)).toBe('html-end')
+  }, 30_000)
+})
+
+describe('the request/response messages', () => {
+  test('lists the functions it has discovered', async () => {
+    const [reply] = await exchange([frame('{"type":"list"}')])
+
+    expect(JSON.parse(reply!)).toHaveProperty('result')
+  })
+
+  test('renders a whole document and reports its metadata', async () => {
+    const [reply] = await exchange([
+      frame(JSON.stringify({ type: 'rsc', component: 'app/slow/page', props: {}, layouts: LAYOUTS })),
+    ])
+
+    const { result } = JSON.parse(reply!)
+
+    // Composed against the template on the root layout, not the page's own
+    // string — which is why metadata resolves against the whole chain even
+    // when the render itself is partial.
+    expect(result.metadata.title).toBe('Slow Page · Laravel RSC')
+  })
+
+  test('renders a payload for a client that already holds layouts', async () => {
+    // The partial-navigation path: `from` is how many layouts to leave out, so
+    // the answer composes against what the browser still has mounted.
+    const [reply] = await exchange([
+      frame(
+        JSON.stringify({
+          type: 'rsc-payload',
+          component: 'app/feed/page',
+          props: {},
+          layouts: LAYOUTS,
+          from: 1,
+          pageKey: '/feed',
+        }),
+      ),
+    ])
+
+    const { result } = JSON.parse(reply!)
+
+    expect(result).toHaveProperty('rscPayload')
+    expect(String(result.rscPayload)).toContain('Feed content')
+  })
+
+  test('renders a PPR shell', async () => {
+    // The half a CDN can cache. Its Suspense boundaries are deliberately left
+    // unfinished, to be filled in by the browser.
+    const [reply] = await exchange([
+      frame(
+        JSON.stringify({
+          type: 'rsc-ppr-shell',
+          component: 'app/slow/page',
+          props: {},
+          layouts: LAYOUTS,
+        }),
+      ),
+    ], 4000)
+
+    const { result } = JSON.parse(reply!)
+
+    expect(result).toHaveProperty('shellHtml')
+    expect(String(result.shellHtml)).toContain('slow-fallback')
+  }, 30_000)
+
+  test('an unknown message type is answered, not ignored', async () => {
+    const [reply] = await exchange([frame('{"type":"nonsense"}')])
+
+    expect(JSON.parse(reply!).error).toContain('nonsense')
+  })
+})
+
+describe('what a refusal from the host looks like on the wire', () => {
+  /**
+   * Through an action, because that is where PHP converts these: a
+   * validation frame becomes a 422, a redirect a 302, an unauthenticated one
+   * a 401. A host call that fails inside a Suspense boundary never gets here
+   * — React serializes that into the stream instead.
+   */
+  async function refusedAction(reply: Record<string, unknown>) {
+    const args = new TextEncoder().encode(JSON.stringify(['ramon']))
+
+    const { main } = await streamRun(
+      {
+        type: 'rsc-action',
+        actionId: actionId('needsHost'),
+        bodyEncoding: 'binary',
+        bodyLength: args.length,
+        contentType: 'text/plain;charset=UTF-8',
+      },
+      async () => reply,
+      1500,
+      [frame(args)],
+    )
+
+    return main.map((f) => f.frame)
+  }
+
+  test('a validation failure keeps its field errors', async () => {
+    // Losing the fields here loses the message the form was going to show.
+    const frames = await refusedAction({
+      validation_errors: { title: ['Title is taken'] },
+      error: 'invalid',
+    })
+
+    const refusal = frames.find((f) => 'validation_errors' in f)
+
+    expect(refusal).toBeDefined()
+    expect(refusal!.validation_errors).toEqual({ title: ['Title is taken'] })
+  }, 30_000)
+
+  test('a redirect travels as a location', async () => {
+    const frames = await refusedAction({ redirect: '/login' })
+
+    expect(frames.find((f) => 'redirect' in f)?.redirect).toBe('/login')
+  }, 30_000)
+
+  test('an unauthenticated host call says so', async () => {
+    const frames = await refusedAction({ unauthenticated: true, error: 'Unauthenticated.' })
+
+    expect(frames.find((f) => 'unauthenticated' in f)?.unauthenticated).toBe(true)
   }, 30_000)
 })

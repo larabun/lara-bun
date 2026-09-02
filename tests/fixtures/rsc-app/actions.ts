@@ -17,3 +17,13 @@ export async function upload(file: File, label: string) {
     firstBytes: Array.from(bytes.slice(0, 4)),
   }
 }
+
+// Calls back into the host, so a test can answer with a refusal and see what
+// the worker puts on the wire. PHP turns those frames into a 422, a redirect
+// or a 401 — none of which is reachable from an action that never asks.
+export async function needsHost(name: string) {
+  return await (globalThis as never as { rpc: (fn: string, ...a: unknown[]) => Promise<unknown> }).rpc(
+    'checkAccess',
+    name,
+  )
+}

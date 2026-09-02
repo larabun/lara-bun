@@ -16,6 +16,7 @@
 import { Activity, useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { setNavigateHandler, setRestoreHandler } from './navigate'
+import { clearSegments, setSegment } from './segmentStore'
 
 export interface RouterEntry {
   /** Identifies the page: its URL, or the intercept variant of one. */
@@ -113,7 +114,19 @@ export function ActivityRoot({ initialKey, initialTree }: { initialKey: string; 
   const { entries, activeKey, handle } = useActivityRouter({ key: initialKey, tree: initialTree })
 
   useEffect(() => {
-    setNavigateHandler((tree, key) => handle.show(key, tree as ReactNode))
+    setNavigateHandler((tree, key, segmentDepth) => {
+      // A partial payload replaces one segment inside the page that is already
+      // showing; only a whole document is a new page to retain.
+      if (segmentDepth > 0) {
+        setSegment(segmentDepth, tree as ReactNode)
+
+        return
+      }
+
+      clearSegments()
+      handle.show(key, tree as ReactNode)
+    })
+
     setRestoreHandler((key) => handle.restore(key))
   }, [handle])
 

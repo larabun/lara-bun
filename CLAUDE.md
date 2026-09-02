@@ -135,6 +135,24 @@ through to a full-page navigation. Neither failure is visible at build time, so
 `rsc.host_global` and reaches the plugin as `RSC_HOST_GLOBAL`, so the codegen and
 the plugin cannot disagree about what it is called.
 
+### Partial Navigation Payloads
+A navigation sends `X-RSC-Segments` — the layout chain the client has mounted,
+outermost first. The host compares it with the route's chain
+(`RscResponse::commonLayoutDepth`) and passes the shared depth to the engine as
+`from`; the response reports `X-RSC-Segment-Depth` (the boundary the payload
+replaces, 0 meaning a whole document) and `X-RSC-Layouts` (the chain to send
+back next time). Depth 0 replaces the root and clears the store; anything
+deeper goes to that boundary.
+
+The engine decides the real depth, not the host: `segmentStart` widens the
+render when an interceptor targets a slot on a layout that would otherwise be
+skipped, because the override could never reach a layout the client is keeping.
+Metadata always resolves against the FULL chain — a title template lives on an
+outer layout, and a partial render still has to produce the same `<title>`.
+
+Prerendered routes never take this path; they are served from `.flight` by
+`ServeStaticRsc` before any of it runs.
+
 ### Segment Boundaries
 `buildElement` puts a `SegmentBoundary` client component between each layout and
 its children, depth 1 being everything below the root layout. It is the seam a

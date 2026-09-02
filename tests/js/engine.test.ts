@@ -932,3 +932,71 @@ describe('segment boundaries', () => {
     expect(shell.shellHtml).toContain('Static hello from vite engine')
   })
 })
+
+/**
+ * Partial renders.
+ *
+ * A navigation between two pages under the same layouts only has to send what
+ * changed. `from` names how many layouts the client already has mounted; the
+ * engine renders from there down and reports the depth it actually produced,
+ * which is not always the one it was asked for.
+ */
+describe('segment rendering', () => {
+  const NESTED = [
+    { component: 'app/layout', props: {} },
+    { component: 'app/nested/layout', props: {} },
+  ]
+
+  async function render(from: number, overrides: Record<string, unknown> = {}) {
+    const result = await engine.handleRscStream(
+      'app/nested/page', {}, NESTED, [], { modal: 'app/@modal/default' }, overrides, from,
+    )
+
+    return { payload: await text(result.stream), depth: result.segmentDepth }
+  }
+
+  test('from 0 renders the whole document, as before', async () => {
+    const { payload, depth } = await render(0)
+
+    expect(depth).toBe(0)
+    expect(payload).toContain('"html"')
+    expect(payload).toContain('Nested page content')
+  })
+
+  test('skipping the root layout leaves <html> out of the payload', async () => {
+    const { payload, depth } = await render(1)
+
+    expect(depth).toBe(1)
+    expect(payload).toContain('Nested page content')
+    expect(payload).toContain('nested-layout')
+    // The client still has <html> mounted; resending it is the waste this removes.
+    expect(payload).not.toContain('"html"')
+  })
+
+  test('skipping every layout sends the page alone', async () => {
+    const { payload, depth } = await render(2)
+
+    expect(depth).toBe(2)
+    expect(payload).toContain('Nested page content')
+    expect(payload).not.toContain('nested-layout')
+  })
+
+  test('still carries the title, which an outer layout templates', async () => {
+    // Metadata resolves against the full chain even when composition does not,
+    // so a partial render produces the same <title> as a whole document.
+    const { payload } = await render(2)
+
+    expect(payload).toContain('Laravel RSC')
+  })
+
+  test('widens the render when an interceptor targets a layout being skipped', async () => {
+    // @modal is declared at app/, owned by the root layout. Honouring from: 2
+    // would render the page alone and the modal would never appear.
+    const { payload, depth } = await render(2, {
+      modal: { component: 'app/@modal/(.)photo/[id]/page', props: { id: '9' } },
+    })
+
+    expect(depth).toBe(0)
+    expect(payload).toContain('Modal for photo')
+  })
+})

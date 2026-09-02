@@ -279,7 +279,7 @@ class RuntimeBridge
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      */
-    public function rscStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = []): \Generator
+    public function rscStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = [], int $from = 0): \Generator
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -303,6 +303,7 @@ class RuntimeBridge
                 'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
                 'slotOverrides' => $slotOverrides !== [] ? $slotOverrides : null,
                 'callbackId' => $callbackId,
+                'from' => $from,
             ], JSON_THROW_ON_ERROR));
 
             // Read stream-start before the main loop so HTTP headers flush
@@ -319,6 +320,9 @@ class RuntimeBridge
             yield [
                 'clientChunks' => $startFrame['clientChunks'] ?? [],
                 'metadata' => $startFrame['metadata'] ?? null,
+                // What the worker actually rendered, which is not always what
+                // was asked: an interceptor can force a wider render.
+                'segmentDepth' => $startFrame['segmentDepth'] ?? 0,
             ];
 
             $idleTimeout = $this->streamIdleTimeout();

@@ -189,7 +189,10 @@ class RscResponse implements Responsable
     protected function toStreamedRscResponse(string $version): StreamedResponse
     {
         $bridge = app(RuntimeBridge::class);
-        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides);
+        $chain = array_column($this->layouts, 'component');
+        $from = self::commonLayoutDepth(request()->header(Header::X_RSC_SEGMENTS), $chain);
+
+        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $from);
 
         // First yield is the stream-start frame — read it eagerly so headers
         // are settled before the body starts streaming. Page metadata lands in
@@ -202,6 +205,11 @@ class RscResponse implements Responsable
             'Content-Type' => 'text/x-component',
             Header::X_RSC_VERSION => $version,
             'X-Accel-Buffering' => 'no',
+            // What the payload actually replaces, and the chain it leaves the
+            // client holding. The worker decides the depth — an interceptor can
+            // widen the render past what was asked for.
+            Header::X_RSC_SEGMENT_DEPTH => (string) ($meta['segmentDepth'] ?? 0),
+            Header::X_RSC_LAYOUTS => implode(',', $chain),
         ];
 
         return new StreamedResponse(function () use ($generator): void {
@@ -260,6 +268,40 @@ class RscResponse implements Responsable
             'Content-Type' => 'text/html; charset=utf-8',
             'X-Accel-Buffering' => 'no',
         ]);
+    }
+
+    /**
+     * How many outermost layouts the client already has mounted.
+     *
+     * The client sends the chain it is holding; anything the two agree on from
+     * the root down is still on screen and does not need re-rendering. The
+     * first difference is where this route's payload has to start.
+     *
+     * Zero means send the whole document — which is also what an absent or
+     * unrecognised header means, so a client that says nothing still works.
+     *
+     * @param  list<string>  $chain
+     */
+    public static function commonLayoutDepth(?string $held, array $chain): int
+    {
+        if ($held === null || $held === '') {
+            return 0;
+        }
+
+        $heldChain = array_values(array_filter(array_map('trim', explode(',', $held))));
+        $depth = 0;
+
+        foreach ($chain as $i => $component) {
+            if (($heldChain[$i] ?? null) !== $component) {
+                break;
+            }
+
+            $depth++;
+        }
+
+        // The client holding layouts this route does not have means it came
+        // from somewhere deeper; only the shared prefix is reusable.
+        return min($depth, count($chain));
     }
 
     public function getComponent(): string

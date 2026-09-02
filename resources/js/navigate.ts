@@ -21,7 +21,7 @@ interface InterceptEntry {
 }
 
 let version = "";
-let onNavigate: ((tree: ReactNode, key: string) => void) | null = null;
+let onNavigate: ((tree: ReactNode, key: string, segmentDepth: number) => void) | null = null;
 let onRestore: ((key: string) => boolean) | null = null;
 let flightDeserializer: Deserializer | null = null;
 let callServerFn: CallServerFn | null = null;
@@ -29,13 +29,31 @@ let activeController: AbortController | null = null;
 const cache = new Map<string, CacheEntry>();
 let interceptManifest: InterceptEntry[] = [];
 
+// The layout chain currently mounted, outermost first. Sent so the server can
+// skip re-rendering the layouts still on screen.
+let heldLayouts: string[] = [];
+
 const DEFAULT_PREFETCH_TTL = 30_000;
 
 export function setVersion(v: string): void {
   version = v;
 }
 
-export function setNavigateHandler(fn: (tree: ReactNode, key: string) => void): void {
+/**
+ * The layout chain the client is holding.
+ *
+ * Seeded from the initial page's response and updated on every navigation, so
+ * the next request can say what is already mounted.
+ */
+export function setHeldLayouts(chain: string[]): void {
+  heldLayouts = chain;
+}
+
+export function getHeldLayouts(): string[] {
+  return heldLayouts;
+}
+
+export function setNavigateHandler(fn: (tree: ReactNode, key: string, segmentDepth: number) => void): void {
   onNavigate = fn;
 }
 
@@ -94,7 +112,7 @@ function matchIntercept(url: string): string | null {
 }
 
 export function renderTree(tree: ReactNode): void {
-  onNavigate?.(tree, retentionKey(window.location.href, null));
+  onNavigate?.(tree, retentionKey(window.location.href, null), 0);
 }
 
 /**
@@ -129,6 +147,10 @@ function fetchRscPayload(url: string, signal?: AbortSignal, interceptSlot?: stri
     "X-RSC": "true",
     "X-RSC-Version": version,
   };
+
+  if (heldLayouts.length) {
+    headers["X-RSC-Segments"] = heldLayouts.join(",");
+  }
 
   if (interceptSlot) {
     headers["X-RSC-Intercept"] = interceptSlot;
@@ -237,6 +259,10 @@ export async function navigate(
     return;
   }
 
+  // A prefetched payload was rendered against the chain held at prefetch time.
+  let segmentDepth = 0;
+  let nextLayouts: string[] | null = null;
+
   try {
     const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
     const cached = cache.get(cacheKey);
@@ -255,6 +281,11 @@ export async function navigate(
         return;
       }
 
+      segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? 0) || 0;
+
+      const servedLayouts = response.headers.get("X-RSC-Layouts");
+      if (servedLayouts !== null) nextLayouts = servedLayouts === "" ? [] : servedLayouts.split(",");
+
       treePromise = deserializeResponse(response);
     }
 
@@ -268,7 +299,9 @@ export async function navigate(
       history.pushState({ rscUrl: url }, "", url);
     }
 
-    onNavigate?.(tree, activityKey);
+    if (nextLayouts !== null) heldLayouts = nextLayouts;
+
+    onNavigate?.(tree, activityKey, segmentDepth);
 
     if (!opts?.preserveScroll && !interceptSlot) {
       // Wait for React to commit the DOM update before scrolling.

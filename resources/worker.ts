@@ -31,6 +31,8 @@ interface IncomingMessage {
   slotOverrides?: Record<string, SlotOverride> | null;
   callbackSocket?: string; // deprecated — use callbackId
   callbackId?: string;
+  /** How many layouts the client already has mounted; the render starts there. */
+  from?: number;
   nonce?: string;
   actionId?: string;
   body?: string;
@@ -308,11 +310,12 @@ async function handleRscStreamMessage(
 
     deferred?.begin();
 
-    const { stream, clientChunks } = await rscHandler.handleRscStream(
+    const { stream, clientChunks, segmentDepth } = await rscHandler.handleRscStream(
       message.component,
       message.props ?? {},
       message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
-      message.slotOverrides ?? undefined
+      message.slotOverrides ?? undefined,
+      message.from ?? 0
     );
 
     const reader = stream.getReader();
@@ -323,7 +326,7 @@ async function handleRscStreamMessage(
       writeFrame(mainSocket, JSON.stringify({ type: "stream-chunk", data: text }));
     };
 
-    writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata }));
+    writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata, segmentDepth }));
 
     // Flight's root model and the rows for each Suspense fallback go out before
     // any host call is released; see streamWithDeferredRelease.

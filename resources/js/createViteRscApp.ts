@@ -7,12 +7,14 @@ import { createFromReadableStream, encodeReply, setServerCallback } from "@vitej
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { ActivityRoot } from "./ActivityRouter";
+import { clearSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
   navigate,
   prefetch,
   retentionKey,
   setCallServer,
+  setHeldLayouts,
   setDeserializer,
   setInterceptManifest,
   setNavigateHandler,
@@ -87,6 +89,11 @@ export async function createViteRscApp(
   if (servedVersion) {
     setVersion(servedVersion);
   }
+
+  // The chain this page is built from, so the next navigation can say what is
+  // already mounted and be sent only what changed.
+  const servedLayouts = res.headers.get("X-RSC-Layouts");
+  setHeldLayouts(servedLayouts ? servedLayouts.split(",") : []);
   const tree = await createFromReadableStream(res.body!, { callServer });
 
   // Retaining the previous page behind <Activity> needs a wrapper above the
@@ -123,10 +130,19 @@ export async function createViteRscApp(
     },
   });
 
-  // With retention, ActivityRoot registers the handlers as it mounts.
-  if (!retains) {
-    setNavigateHandler((newTree: ReactNode) => root.render(newTree));
-  }
+  // Depth 0 is a whole document and replaces the root. Anything deeper is one
+  // segment: handing it to the boundary at that depth leaves the layouts above
+  // it mounted, which is the point of asking for a partial render at all.
+  setNavigateHandler((newTree: ReactNode, _key: string, segmentDepth: number) => {
+    if (segmentDepth > 0) {
+      setSegment(segmentDepth, newTree);
+
+      return;
+    }
+
+    clearSegments();
+    root.render(newTree);
+  });
 
   window.addEventListener("popstate", () => {
     // restore: back and forward reveal the page you were on, with its state.

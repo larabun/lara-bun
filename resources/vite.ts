@@ -272,6 +272,7 @@ function buildElement(
   parallelSlots: Record<string, string>,
   slotOverrides: Record<string, SlotOverride>,
   head: unknown[] = [],
+  from = 0,
 ) {
   const Component = components[component]
   if (!Component) throw new Error('Unknown RSC component: ' + component)
@@ -308,12 +309,17 @@ function buildElement(
     }
 
     const owner = ownerLayoutIndex(value, layouts)
+    if (owner < from) continue
+
     const bucket = slotsByLayout.get(owner) ?? {}
     bucket[slot] = rendered
     slotsByLayout.set(owner, bucket)
   }
 
-  for (let i = layouts.length - 1; i >= 0; i--) {
+  // Indices stay absolute: from skips the layouts the client already has
+  // mounted, so slot ownership and boundary depth mean the same thing whether
+  // this is a whole document or one segment of it.
+  for (let i = layouts.length - 1; i >= from; i--) {
     const Layout = components[layouts[i].component]
     if (!Layout) continue
 
@@ -343,7 +349,11 @@ async function renderTree(
   loadings: string[],
   parallelSlots: Record<string, string>,
   slotOverrides: Record<string, SlotOverride>,
+  from = 0,
 ) {
+  // The FULL chain, always: a title template lives on an outer layout, and a
+  // partial render still has to produce the same <title> the whole document
+  // would have.
   const md = await resolveMetadata(component, props, layouts)
   const head: unknown[] = []
 
@@ -358,7 +368,33 @@ async function renderTree(
 
   // Metadata elements are rendered INSIDE the document tree so React 19 hoists
   // <title>/<meta> into <head> (hoisting only works from within the tree).
-  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head)
+  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from)
+}
+
+/**
+ * The shallowest layout this render must actually produce.
+ *
+ * An interceptor replaces a slot on the layout that declares it. If that layout
+ * is one the client already has, a partial render would never reach it and the
+ * modal would silently not appear — so the render is widened to include it.
+ */
+function segmentStart(
+  from: number,
+  layouts: LayoutEntry[],
+  parallelSlots: Record<string, string>,
+  slotOverrides: Record<string, SlotOverride>,
+): number {
+  let start = from
+
+  for (const slot of Object.keys(slotOverrides)) {
+    const declared = parallelSlots[slot]
+    if (!declared) continue
+
+    const owner = ownerLayoutIndex(declared, layouts)
+    if (owner < start) start = owner
+  }
+
+  return start
 }
 
 // SPA-navigation Flight stream (worker: rsc-stream).
@@ -369,11 +405,20 @@ export async function handleRscStream(
   loadings: string[] = [],
   parallelSlots: Record<string, string> = {},
   slotOverrides: Record<string, SlotOverride> = {},
-): Promise<{ stream: ReadableStream; clientChunks: unknown }> {
+  from = 0,
+): Promise<{ stream: ReadableStream; clientChunks: unknown; segmentDepth: number }> {
   applyHost()
+
+  // The host proposes how much the client already has; the engine decides what
+  // is actually safe to skip and reports back what it rendered.
+  const start = segmentStart(from, layouts, parallelSlots, slotOverrides)
+
   return {
-    stream: renderToReadableStream(await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides)),
+    stream: renderToReadableStream(
+      await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, start),
+    ),
     clientChunks: {},
+    segmentDepth: start,
   }
 }
 

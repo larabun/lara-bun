@@ -27,6 +27,7 @@ import {
   setCallServer,
   setDeserializer,
   setHeldLayouts,
+  setInterceptManifest,
   setNavigateHandler,
   setRestoreHandler,
 } from '../../resources/js/navigate.ts'
@@ -43,7 +44,12 @@ const ROUTES: Record<string, string[]> = {
   '/deep': ['app/layout', 'app/docs/layout', 'app/docs/deep/layout'],
   // Shares only the root.
   '/other': ['app/layout', 'app/other/layout'],
+  // Lives under /deep's layout, and is intercepted into that layout's slot.
+  '/deep/item/1': ['app/layout', 'app/docs/layout', 'app/docs/deep/layout'],
 }
+
+/** The layout that declares the intercepted slot, and so renders it. */
+const SLOT_OWNER_DEPTH = 2
 
 /** A page with state a user would be annoyed to lose. */
 function Page({ id }: { id: string }) {
@@ -104,7 +110,13 @@ function installServer() {
 
     if (!chain) throw new Error(`no route for ${url}`)
 
-    const depth = sharedDepth(held, chain)
+    // An interceptor replaces a slot on the layout that declares it, so the
+    // render has to reach that layout however much the client already holds.
+    const intercepting = init?.headers?.['X-RSC-Intercept'] !== undefined
+    const depth = intercepting
+      ? Math.min(sharedDepth(held, chain), SLOT_OWNER_DEPTH)
+      : sharedDepth(held, chain)
+
     requests.push({ url, held, depth })
 
     return new Response(`${url}|${depth}`, {
@@ -154,6 +166,7 @@ async function boot(url: string) {
     setRootTree?.(tree as ReactNode)
   })
   setRestoreHandler((key) => restoreSegments(key))
+  setInterceptManifest([{ urlPattern: '/deep/item/[id]', slot: 'modal' }])
   setHeldLayouts(ROUTES[url])
 
   await act(async () => {
@@ -339,5 +352,42 @@ describe('a prefetched navigation', () => {
 
     expect(requests.length).toBeGreaterThan(before)
     expect(visiblePage()).toBe('/b')
+  })
+})
+
+describe('opening and leaving an intercepted view', () => {
+  test('the interceptor is rendered by the layout that declares its slot', async () => {
+    await boot('/deep')
+    await go('/deep/item/1')
+
+    // Not the deepest shared layout: the one that owns the slot.
+    expect(requests.at(-1)).toMatchObject({ url: '/deep/item/1', depth: SLOT_OWNER_DEPTH })
+  })
+
+  test('leaving it re-renders that layout, so the slot can empty again', async () => {
+    // Claiming the whole chain would replace only the page below the layout,
+    // leaving the interceptor in its slot — the modal stayed open over the
+    // page behind it while the URL had already changed.
+    await boot('/deep')
+    await go('/deep/item/1')
+    await go('/deep')
+
+    const leaving = requests.at(-1)!
+
+    expect(leaving.url).toBe('/deep')
+    expect(leaving.depth).toBeLessThanOrEqual(SLOT_OWNER_DEPTH)
+    // The claim itself is what forces it: fewer layouts than are mounted.
+    expect(leaving.held!.split(',').length).toBeLessThanOrEqual(SLOT_OWNER_DEPTH)
+  })
+
+  test('an ordinary navigation afterwards claims the whole chain again', async () => {
+    await boot('/deep')
+    await go('/deep/item/1')
+    await go('/deep')
+    await go('/deep/item/1')
+    await go('/deep')
+
+    // The narrowing applies to leaving an interception, not to everything after.
+    expect(requests.at(-1)!.held!.split(',').length).toBeLessThanOrEqual(SLOT_OWNER_DEPTH)
   })
 })

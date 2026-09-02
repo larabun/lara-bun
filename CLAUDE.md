@@ -161,6 +161,18 @@ DOM, so assert on visibility rather than presence — and happy-dom has no layou
 engine and reports client rects for hidden elements, so read the inline
 `display` Activity sets instead of geometry.
 
+### Leaving an Interception Re-Renders the Slot Owner
+An interceptor replaces a slot on the layout that declares it, so leaving the
+intercepted view has to render that layout again for the slot to fall back to
+its default. `navigate` remembers the depth an interception was applied at and
+claims only that many layouts on the next ordinary navigation, which forces the
+server to re-render the owner. Without it the next payload replaces only the
+page below that layout and the modal stays open over it, with the URL already
+changed.
+
+`segmentStart` on the engine covers the way in — widening a render that would
+otherwise skip the owner. This is the way out; both are needed.
+
 ### A Prefetched Payload Is Partial Too
 `prefetch` is a real request and goes out with the chain the client holds, so
 the server answers with the page alone. The cache entry therefore stores the

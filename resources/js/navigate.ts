@@ -46,6 +46,16 @@ let interceptManifest: InterceptEntry[] = [];
 // skip re-rendering the layouts still on screen.
 let heldLayouts: string[] = [];
 
+/**
+ * The boundary depth an interception was rendered at, while one is showing.
+ *
+ * An interceptor replaces a slot on the layout that declares it, so leaving the
+ * intercepted view has to re-render that layout for the slot to go back to its
+ * default. Left to itself the next navigation shares the whole chain, replaces
+ * only the page below it, and the modal stays open over the new one.
+ */
+let interceptedAtDepth: number | null = null;
+
 const DEFAULT_PREFETCH_TTL = 30_000;
 
 export function setVersion(v: string): void {
@@ -155,14 +165,20 @@ export function getCallServer(): CallServerFn {
   return callServerFn;
 }
 
-function fetchRscPayload(url: string, signal?: AbortSignal, interceptSlot?: string, refererUrl?: string): Promise<Response> {
+function fetchRscPayload(
+  url: string,
+  signal?: AbortSignal,
+  interceptSlot?: string,
+  refererUrl?: string,
+  chain: string[] = heldLayouts,
+): Promise<Response> {
   const headers: Record<string, string> = {
     "X-RSC": "true",
     "X-RSC-Version": version,
   };
 
-  if (heldLayouts.length) {
-    headers["X-RSC-Segments"] = heldLayouts.join(",");
+  if (chain.length) {
+    headers["X-RSC-Segments"] = chain.join(",");
   }
 
   if (interceptSlot) {
@@ -261,6 +277,10 @@ export async function navigate(
   // server may have different data to say, and silently showing a stale page
   // would be the wrong default.
   if (opts?.restore && onRestore?.(activityKey)) {
+    // A restored tree carries its own slot contents, so the flag only has to
+    // reflect whether what is now showing is an intercepted view.
+    if (!interceptSlot) interceptedAtDepth = null;
+
     if (opts.replace) {
       history.replaceState({ rscUrl: url }, "", url);
     } else {
@@ -294,7 +314,14 @@ export async function navigate(
       cache.delete(cacheKey);
     } else {
       cache.delete(cacheKey);
-      const response = await fetchRscPayload(url, controller.signal, interceptSlot ?? undefined, currentUrl);
+      // Claiming fewer layouts than we hold forces the layout that owns the
+      // intercepted slot to render again, which is what clears it.
+      const chain =
+        !interceptSlot && interceptedAtDepth !== null
+          ? heldLayouts.slice(0, interceptedAtDepth)
+          : heldLayouts;
+
+      const response = await fetchRscPayload(url, controller.signal, interceptSlot ?? undefined, currentUrl, chain);
 
       const contentType = response.headers.get("Content-Type") ?? "";
       if (!contentType.includes("text/x-component")) {
@@ -321,6 +348,8 @@ export async function navigate(
     }
 
     if (nextLayouts !== null) heldLayouts = nextLayouts;
+
+    interceptedAtDepth = interceptSlot ? segmentDepth : null;
 
     onNavigate?.(tree, activityKey, segmentDepth);
 

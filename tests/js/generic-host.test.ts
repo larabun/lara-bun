@@ -13,6 +13,15 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 
 const packageRoot = join(import.meta.dir, '../..')
 
+/** Run the plugin's config hook and return what it contributed. */
+async function configFor(options: Record<string, unknown>): Promise<any> {
+  const { rscRoutes } = await import('../../resources/vite.ts')
+  const plugins = rscRoutes(options as never) as any[]
+  const routes = plugins.find((p) => p.name === 'rsc-routes')
+
+  return routes.config({}, { command: 'build', mode: 'production' })
+}
+
 describe('the plugin source', () => {
   const source = readFileSync(join(packageRoot, 'resources/vite.ts'), 'utf-8')
 
@@ -79,4 +88,35 @@ describe('a host that passes nothing', () => {
 
     rmSync(app, { recursive: true, force: true })
   }, 180_000)
+})
+
+describe('the package alias', () => {
+  test('is not applied when the package is installed', async () => {
+    // An alias is a path rewrite and rewrites nothing through the package's
+    // own exports, so with both in play `<pkg>/Form` meant one thing to the
+    // bundler and another to the exports map. Installed, ordinary resolution
+    // has to win.
+    const root = mkdtempSync(join(packageRoot, 'bootstrap/rsc/alias-'))
+    mkdirSync(join(root, 'node_modules', 'rsc-router'), { recursive: true })
+    mkdirSync(join(root, 'src', 'app'), { recursive: true })
+    writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
+
+    const config = await configFor({ projectRoot: root, packageAlias: 'rsc-router' })
+
+    expect(config.resolve?.alias ?? []).toEqual([])
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('is applied when it is not', async () => {
+    const root = mkdtempSync(join(packageRoot, 'bootstrap/rsc/alias-'))
+    mkdirSync(join(root, 'src', 'app'), { recursive: true })
+    writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
+
+    const config = await configFor({ projectRoot: root, packageAlias: 'rsc-router' })
+
+    expect(config.resolve?.alias ?? []).toHaveLength(1)
+
+    rmSync(root, { recursive: true, force: true })
+  })
 })

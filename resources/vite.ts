@@ -124,6 +124,29 @@ function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
   return { file, dynamicPattern: new RegExp(pattern) }
 }
 
+/**
+ * The alias that lets a vendored copy of this package be imported by name.
+ *
+ * Only when the package is not installed, because an alias is a path rewrite
+ * and rewrites nothing through the package's own exports. With both in play
+ * the specifier meant two different things: `<pkg>/Form` resolved to whatever
+ * file happened to sit at js/Form, rather than to what ./Form is declared to
+ * mean. Installed from npm, ordinary resolution reads the exports map and the
+ * two cannot drift.
+ */
+function aliasEntries(): Array<{ find: RegExp; replacement: string }> {
+  if (!packageAlias) return []
+
+  if (existsSync(join(projectRoot, 'node_modules', packageAlias))) return []
+
+  return [
+    {
+      find: new RegExp('^' + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(.*)$'),
+      replacement: join(packageDir, 'js') + '/$1',
+    },
+  ]
+}
+
 function resolvePaths(options: RscRoutesOptions): void {
   projectRoot = resolve(options.projectRoot || process.env.RSC_PROJECT_ROOT || process.cwd())
   sourceDir = resolve(options.sourceDir || process.env.RSC_SOURCE_DIR || join(projectRoot, 'src'))
@@ -933,14 +956,7 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
           // `import Link from '<packageAlias>/Link'` resolves to the client
           // runtime shipped here, for hosts that vendor this package outside
           // node_modules. Installed from npm the name resolves on its own.
-          alias: packageAlias
-            ? [
-                {
-                  find: new RegExp('^' + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(.*)$'),
-                  replacement: join(packageDir, 'js') + '/$1',
-                },
-              ]
-            : [],
+          alias: aliasEntries(),
         },
         build: { emptyOutDir: true },
         environments: {

@@ -7,6 +7,7 @@ import { createFromReadableStream, encodeReply, setServerCallback } from "@vitej
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { ActivityRoot } from "./ActivityRouter";
+import { ServerRedirectError, throwForFailedAction } from "./errors";
 import { clearSegments, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
@@ -65,6 +66,22 @@ export async function createViteRscApp(
       },
       body,
     });
+
+    // A failed action does not answer with a Flight stream, and the decoder
+    // cannot tell — it reports its own parse failure instead of what the
+    // server said.
+    try {
+      await throwForFailedAction(res);
+    } catch (err) {
+      // A redirect is an instruction, not something for a form to display:
+      // an expired session answers this way, and the destination is the login
+      // page rather than a message about one.
+      if (err instanceof ServerRedirectError) {
+        window.location.href = err.location;
+      }
+
+      throw err;
+    }
 
     return createFromReadableStream(res.body!, { callServer });
   }

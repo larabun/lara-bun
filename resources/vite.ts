@@ -530,13 +530,21 @@ export async function handleAction(
 ): Promise<{ stream: ReadableStream }> {
   applyHost()
 
-  let decodable: string | FormData = typeof body === 'string' ? body : ''
+  // Every body arrives as bytes on its own socket frame — an upload because it
+  // has to, the rest because the transport does not special-case them. What
+  // differs is what they decode to: multipart is FormData, everything else is
+  // the text encodeReply produced.
+  //
+  // Treating only multipart as bytes and leaving the rest empty is a silent
+  // failure: the action runs with no arguments at all.
+  let decodable: string | FormData
 
-  // A multipart body arrives as bytes, on its own socket frame. It used to be
-  // base64'd into the JSON frame and rebuilt from a latin1 string here, which
-  // cost a third of the size in transit and two copies on each side.
-  if (typeof body !== 'string' && contentType.includes('multipart/form-data')) {
+  if (typeof body === 'string') {
+    decodable = body
+  } else if (contentType.includes('multipart/form-data')) {
     decodable = await new Response(body, { headers: { 'Content-Type': contentType } }).formData()
+  } else {
+    decodable = new TextDecoder().decode(body)
   }
 
   const args = (await decodeReply(decodable)) as unknown[]

@@ -296,6 +296,23 @@ describe('server actions', () => {
 
     expect(payload).toContain('Hi ramon from a server action')
   })
+
+  test('takes its arguments as bytes, which is how the worker delivers them', async () => {
+    // Every body crosses the socket as bytes on its own frame, upload or not.
+    // Handling only the multipart case and leaving the rest empty runs the
+    // action with no arguments — which answers 500 and looks like the action
+    // itself failed. Nothing caught it: this suite passed a string, and the
+    // worker is the only thing that passes bytes.
+    const body = new TextEncoder().encode(JSON.stringify(['ramon']))
+
+    const { stream } = await engine.handleAction(
+      serverActionId('greet'),
+      body,
+      'text/plain;charset=UTF-8',
+    )
+
+    expect(await text(stream)).toContain('Hi ramon from a server action')
+  })
 })
 
 describe('loading.tsx validation', () => {

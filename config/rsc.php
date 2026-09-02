@@ -49,9 +49,11 @@ return [
     'host_global' => env('RSC_HOST_GLOBAL', 'rpc'),
 
     // Bare-specifier prefix for importing the client runtime, as in
-    // `import Link from 'laravel-rsc/Link'`. The package is installed through
-    // Composer rather than node_modules, so the build aliases this prefix to it.
-    'package_alias' => env('RSC_PACKAGE_ALIAS', 'laravel-rsc'),
+    // `import Link from 'rsc-router/Link'`. That is the engine's npm package
+    // name; the alias exists because this package installs through Composer
+    // rather than node_modules, and becomes unnecessary once rsc-router is
+    // installed from npm, where the name resolves on its own.
+    'package_alias' => env('RSC_PACKAGE_ALIAS', 'rsc-router'),
 
     // Public dir + URL for the browser-facing client bundle. Served directly by
     // the web server (never through PHP); `assets_url` is the Vite base.

@@ -80,16 +80,10 @@ class LaravelRscServiceProvider extends ServiceProvider
             }
         }
 
-        $this->loadViewsFrom(__DIR__.'/../resources/views', 'lara-bun');
-
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__.'/../config/rsc.php' => config_path('rsc.php'),
             ], 'rsc-config');
-
-            $this->publishes([
-                __DIR__.'/../resources/views' => resource_path('views/vendor/lara-bun'),
-            ], 'lara-bun-views');
 
             $this->commands([
                 DevCommand::class,

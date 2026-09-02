@@ -5,5 +5,8 @@
 import { rscRoutes } from '../../resources/vite.ts'
 
 export default {
-  plugins: [rscRoutes()],
+  // packageAlias has no default: the plugin assumes no particular host. Passing
+  // it here is what lets the fixture import the client runtime by name while
+  // the package is not installed in node_modules.
+  plugins: [rscRoutes({ packageAlias: 'rsc-router' })],
 }

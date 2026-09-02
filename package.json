@@ -1,5 +1,5 @@
 {
-  "name": "laravel-rsc",
+  "name": "rsc-router",
   "private": true,
   "type": "module",
   "peerDependencies": {
@@ -31,11 +31,38 @@
   },
   "exports": {
     "./vite": "./resources/vite.ts",
+    "./worker": "./resources/worker.ts",
+    "./build": "./resources/build-rsc-vite.ts",
+    "./runtime": "./resources/runtime.ts",
+    "./streaming": "./resources/streaming.ts",
+    "./errors": "./resources/errors.ts",
     "./Link": "./resources/js/Link.tsx",
+    "./Form": "./resources/js/FormComponent.tsx",
     "./navigate": "./resources/js/navigate.ts",
+    "./router": "./resources/js/router.ts",
     "./useForm": "./resources/js/useForm.ts",
     "./usePathname": "./resources/js/usePathname.ts",
     "./useLinkStatus": "./resources/js/useLinkStatus.ts",
-    "./Form": "./resources/js/FormComponent.tsx"
-  }
+    "./client": "./resources/js/createViteRscApp.ts",
+    "./types": "./resources/types.d.ts"
+  },
+  "version": "0.1.0",
+  "description": "File-based React Server Components routing for Vite \u2014 a router, a build, and a worker that any backend can drive.",
+  "keywords": [
+    "react",
+    "rsc",
+    "react-server-components",
+    "vite",
+    "vite-plugin",
+    "router",
+    "streaming",
+    "ssr"
+  ],
+  "license": "MIT",
+  "files": [
+    "resources/",
+    "!resources/boost",
+    "README.md",
+    "LICENSE"
+  ]
 }

@@ -8,6 +8,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use LaravelRsc\PrerenderService;
 use LaravelRsc\Support\ActionManifest;
+use LaravelRsc\Support\EnginePath;
 use LaravelRsc\Support\InterceptManifest;
 use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
@@ -168,6 +169,16 @@ class RscBuildCommand extends Command
         // global survived a clean build. Always written, actions or not.
         File::ensureDirectoryExists($sourceDir);
         File::put($sourceDir.'/rsc-env.d.ts', ActionManifest::renderTypes($hostGlobal));
+
+        // The engine's own ambient types (Metadata, GenerateMetadata) live with
+        // the engine and are copied where the app's typechecker will see them.
+        // They are deliberately a separate file: this one is the engine's, the
+        // one above is generated from this host's configuration.
+        $engineTypes = EnginePath::script('types.d.ts');
+
+        if ($engineTypes !== null) {
+            File::copy($engineTypes, $sourceDir.'/rsc-types.d.ts');
+        }
 
         if ($actions === []) {
             if (File::exists($target)) {
@@ -412,20 +423,6 @@ class RscBuildCommand extends Command
 
     private function getBuildScript(string $file = 'build-rsc-vite.ts'): string
     {
-        // In a consuming app, the build script is in the vendor directory
-        $vendorPath = base_path("vendor/larabun/lara-bun/resources/{$file}");
-
-        if (file_exists($vendorPath)) {
-            return $vendorPath;
-        }
-
-        // For local development within the package
-        $packagePath = dirname(__DIR__, 2)."/resources/{$file}";
-
-        if (file_exists($packagePath)) {
-            return $packagePath;
-        }
-
-        return $vendorPath;
+        return EnginePath::script($file) ?? $file;
     }
 }

@@ -1,11 +1,10 @@
-/**
- * Call a function registered by the host application from a React Server
- * Component, during RSC rendering.
- *
- * On Laravel the name must be registered in config/bun.php under rsc.callables,
- * or auto-discovered from rsc.callables_dir (e.g. "UserCallable.getUser").
- */
-declare function rpc<T = unknown>(functionName: string, args?: Record<string, unknown>): Promise<T>;
+// Ambient types for an RSC app. Copied into the project's source directory by
+// the host's build, so a page can annotate its metadata without importing
+// anything.
+//
+// The host global (rpc) is NOT declared here: its name is configurable, so the
+// host generates that declaration with the name it actually installed. Two
+// ambient declarations of the same function would conflict.
 
 /**
  * Page metadata for RSC pages.

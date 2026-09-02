@@ -47,3 +47,27 @@ test('every discovered action becomes an exported async function', function () {
 test('no actions renders an empty module rather than broken syntax', function () {
     expect(ActionManifest::render([], 'rpc'))->not->toContain('export async function');
 });
+
+test('the ambient declaration is a script, not a module', function () {
+    // With an import or export the file becomes a module and `declare function`
+    // stops being global — the declaration would exist but reach nothing.
+    $types = ActionManifest::renderTypes('rpc');
+
+    $statements = array_filter(
+        array_map('trim', explode("\n", $types)),
+        fn (string $line) => str_starts_with($line, 'export') || str_starts_with($line, 'import'),
+    );
+
+    expect($types)->toContain('declare function rpc<T = unknown>(name: string, ...args: unknown[]): Promise<T>;')
+        ->and($statements)->toBe([]);
+});
+
+test('the engine ships its own ambient types without redeclaring the host global', function () {
+    // Two ambient declarations of the same function conflict. The engine owns
+    // Metadata; the host owns the global, whose name it alone knows.
+    $engineTypes = file_get_contents(__DIR__.'/../../resources/types.d.ts');
+
+    expect($engineTypes)->toContain('interface Metadata')
+        ->and($engineTypes)->toContain('type GenerateMetadata')
+        ->and($engineTypes)->not->toContain('declare function rpc');
+});

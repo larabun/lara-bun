@@ -3,6 +3,7 @@
 namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
+use LaravelRsc\Support\EnginePath;
 use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
@@ -160,19 +161,7 @@ class DevCommand extends Command
 
     private function getBuildScript(): string
     {
-        $vendorPath = base_path('vendor/larabun/lara-bun/resources/build-rsc-vite.ts');
-
-        if (file_exists($vendorPath)) {
-            return $vendorPath;
-        }
-
-        $packagePath = dirname(__DIR__, 2).'/resources/build-rsc-vite.ts';
-
-        if (file_exists($packagePath)) {
-            return $packagePath;
-        }
-
-        return $vendorPath;
+        return EnginePath::script('build-rsc-vite.ts') ?? 'build-rsc-vite.ts';
     }
 
     /**

@@ -4,6 +4,7 @@ namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
 use LaravelRsc\RuntimeBridge;
+use LaravelRsc\Support\EnginePath;
 use LaravelRsc\Support\RuntimeBinary;
 
 class ServeCommand extends Command
@@ -37,15 +38,15 @@ class ServeCommand extends Command
         $baseSocketPath = $this->option('socket') ?? config('rsc.socket_path', '/tmp/bun-bridge.sock');
         $functionsDir = config('rsc.functions_dir', resource_path('rsc-functions'));
         $workerCount = max(1, (int) config('rsc.workers', 1));
-        $workerPath = realpath(__DIR__.'/../../resources/worker.ts');
+        $workerPath = EnginePath::script('worker.ts');
 
         $this->workerCount = $workerCount;
         $this->transport = config('rsc.transport', 'unix') === 'tcp' ? 'tcp' : 'unix';
         $this->host = (string) config('rsc.host', '127.0.0.1');
         $this->basePort = (int) config('rsc.port', 7940);
 
-        if ($workerPath === false) {
-            $this->error('Worker not found in package resources');
+        if ($workerPath === null) {
+            $this->error('Worker not found. Install the '.EnginePath::PACKAGE.' package, or set RSC_ENGINE_DIR.');
 
             return self::FAILURE;
         }

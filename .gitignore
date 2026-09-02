@@ -12,3 +12,7 @@ bootstrap/rsc/vite-test
 bootstrap/rsc/validate-*
 bootstrap/rsc/cfg-*
 public/build/rsc-vite
+
+# Tailwind fixtures built by tests/js/tailwind.test.ts
+bootstrap/rsc/tw-*
+bootstrap/rsc/icpt-*

@@ -1,31 +1,41 @@
 {
-    "name": "laravel-rsc",
-    "private": true,
-    "type": "module",
-    "peerDependencies": {
-        "react": "^19.0.0",
-        "react-dom": "^19.0.0",
-        "react-server-dom-webpack": "^19.0.0",
-        "vite": "^8.0.0",
-        "@vitejs/plugin-rsc": "^0.5.0"
+  "name": "laravel-rsc",
+  "private": true,
+  "type": "module",
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "vite": "^8.0.0",
+    "@vitejs/plugin-rsc": "^0.5.0"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
     },
-    "peerDependenciesMeta": {
-        "vite": {
-            "optional": true
-        },
-        "@vitejs/plugin-rsc": {
-            "optional": true
-        }
-    },
-    "devDependencies": {
-        "@happy-dom/global-registrator": "^20.12.0",
-        "@vitejs/plugin-rsc": "^0.5.34",
-        "react": "^19.2.7",
-        "react-dom": "^19.2.7",
-        "react-server-dom-webpack": "^19.2.7",
-        "vite": "^8.1.5"
-    },
-    "scripts": {
-        "test": "bun test tests/js"
+    "@vitejs/plugin-rsc": {
+      "optional": true
     }
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "^20.12.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-rsc": "^0.5.34",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-server-dom-webpack": "^19.2.7",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.1.5"
+  },
+  "scripts": {
+    "test": "bun test tests/js"
+  },
+  "exports": {
+    "./vite": "./resources/vite.ts",
+    "./Link": "./resources/js/Link.tsx",
+    "./navigate": "./resources/js/navigate.ts",
+    "./useForm": "./resources/js/useForm.ts",
+    "./usePathname": "./resources/js/usePathname.ts",
+    "./useLinkStatus": "./resources/js/useLinkStatus.ts",
+    "./Form": "./resources/js/FormComponent.tsx"
+  }
 }

@@ -79,6 +79,7 @@ beforeAll(async () => {
         RSC_SOURCE_DIR: fixtureDir,
         RSC_OUT_DIR: outDir,
         RSC_ASSETS_DIR: join(outDir, 'public'),
+        RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -323,6 +324,7 @@ describe('loading.tsx validation', () => {
         RSC_SOURCE_DIR: dir,
         RSC_OUT_DIR: buildDir,
         RSC_ASSETS_DIR: join(buildDir, 'public'),
+        RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -721,6 +723,13 @@ describe('intercept manifest reaches the browser entry', () => {
     const manifestPath = join(buildDir, 'intercept-manifest.json')
     if (manifest !== null) writeFileSync(manifestPath, manifest)
 
+    const configPath = join(buildDir, 'vite.rsc.config.mjs')
+    writeFileSync(
+      configPath,
+      `import { rscRoutes } from ${JSON.stringify(join(packageRoot, 'resources/vite.ts'))}\n` +
+        'export default { plugins: [rscRoutes()] }\n',
+    )
+
     const proc = Bun.spawnSync(['bun', join(packageRoot, 'resources/build-rsc-vite.ts')], {
       cwd: packageRoot,
       env: {
@@ -729,6 +738,7 @@ describe('intercept manifest reaches the browser entry', () => {
         RSC_SOURCE_DIR: app,
         RSC_OUT_DIR: buildDir,
         RSC_ASSETS_DIR: join(buildDir, 'public'),
+        RSC_VITE_CONFIG: configPath,
       },
     })
 

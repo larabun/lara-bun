@@ -150,8 +150,16 @@ class RscBuildCommand extends Command
      */
     private function writeServerActions(): void
     {
-        $target = rtrim((string) config('rsc.source_dir'), '/').'/server-actions.generated.ts';
+        $sourceDir = rtrim((string) config('rsc.source_dir'), '/');
+        $target = $sourceDir.'/server-actions.generated.ts';
+        $hostGlobal = (string) config('rsc.host_global', 'rpc');
         $actions = ActionManifest::discover();
+
+        // The host global is installed at runtime, so nothing in app source
+        // declares it and a typecheck cannot see it — which is how a renamed
+        // global survived a clean build. Always written, actions or not.
+        File::ensureDirectoryExists($sourceDir);
+        File::put($sourceDir.'/rsc-env.d.ts', ActionManifest::renderTypes($hostGlobal));
 
         if ($actions === []) {
             if (File::exists($target)) {
@@ -163,7 +171,7 @@ class RscBuildCommand extends Command
         }
 
         File::ensureDirectoryExists(dirname($target));
-        File::put($target, ActionManifest::render($actions, (string) config('rsc.host_global', 'rpc')));
+        File::put($target, ActionManifest::render($actions, $hostGlobal));
 
         $this->line('Generated '.count($actions).' server action(s) → '.$target);
     }

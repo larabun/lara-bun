@@ -20,3 +20,4 @@ support api endpoints
 test for route generation
 
 document bun and node usage if differ
+there is alot of security vulnerabilty with nextjs and react server functions especially. do we have these issues as well?

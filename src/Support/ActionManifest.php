@@ -101,6 +101,31 @@ class ActionManifest
     }
 
     /**
+     * Ambient declaration for the host global, written beside the actions.
+     *
+     * The global is installed at runtime by the worker, so nothing in the app's
+     * source declares it and a typecheck cannot see it. That is how a renamed
+     * global survived a clean build and only failed in the browser: with this
+     * on disk, `tsc --noEmit` catches the stale name instead.
+     */
+    public static function renderTypes(string $hostGlobal): string
+    {
+        return <<<TS
+        // @generated — do not edit.
+        //
+        // {$hostGlobal}() is installed on globalThis by the RSC worker, so it has no
+        // import to resolve. This declares it for the typechecker; run
+        // `tsc --noEmit` to catch calls to a host global that no longer exists.
+        //
+        // Deliberately not a module — no import/export — so the declaration is
+        // global to the project without every file having to reference it.
+
+        declare function {$hostGlobal}<T = unknown>(name: string, ...args: unknown[]): Promise<T>;
+
+        TS;
+    }
+
+    /**
      * Resolve a fully-qualified class name from a PHP file path.
      */
     private static function resolveClassName(string $filePath): ?string

@@ -18,6 +18,7 @@ const packageRoot = join(import.meta.dir, '../..')
 const fixtureDir = join(packageRoot, 'tests/fixtures/rsc-app')
 const outDir = join(packageRoot, 'bootstrap/rsc/vite-test')
 const bundlePath = join(outDir, 'dist/rsc/index.js')
+const LAYOUTS = [{ component: 'app/layout', props: {} }]
 
 let worker: ReturnType<typeof Bun.spawn> | null = null
 let socketDir = ''
@@ -152,6 +153,97 @@ function actionId(exportName: string): string {
   throw new Error(`no registered server action named "${exportName}"`)
 }
 
+
+interface Timed {
+  at: number
+  frame: Record<string, unknown>
+}
+
+/**
+ * Drive a streaming render the way PHP does: register a callback connection,
+ * send the request on the main socket, and answer host calls as they arrive.
+ *
+ * Both sides are timestamped, because the ordering between them is the
+ * contract — the shell has to be out before a host call is released, or a slow
+ * call holds the whole page.
+ */
+function streamRun(
+  message: Record<string, unknown>,
+  answer: (fn: string, args: unknown[]) => Promise<unknown>,
+  quietMs = 1500,
+): Promise<{ main: Timed[]; calls: Timed[] }> {
+  return new Promise((resolve, reject) => {
+    const callbackId = `cb-test-${Math.floor(performance.now() * 1000)}`
+    const started = performance.now()
+    const main: Timed[] = []
+    const calls: Timed[] = []
+
+    const cb = connect(`${socketPath}.cb`)
+    let cbBuffer = Buffer.alloc(0)
+    let mainSocket: ReturnType<typeof connect> | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const finish = () => {
+      cb.end()
+      mainSocket?.end()
+      resolve({ main, calls })
+    }
+
+    const idle = () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(finish, quietMs)
+    }
+
+    const send = (socket: ReturnType<typeof connect>, payload: unknown) =>
+      socket.write(frame(JSON.stringify(payload)))
+
+    cb.on('error', reject)
+    cb.on('connect', () => {
+      send(cb, { type: 'register', id: callbackId })
+
+      mainSocket = connect(socketPath)
+      mainSocket.on('error', reject)
+      mainSocket.on('connect', () => {
+        send(mainSocket!, { ...message, callbackId })
+        idle()
+      })
+
+      let buffer = Buffer.alloc(0)
+      mainSocket.on('data', (chunk) => {
+        buffer = Buffer.concat([buffer, chunk])
+
+        while (buffer.length >= 4) {
+          const length = buffer.readUInt32BE(0)
+          if (buffer.length < 4 + length) break
+
+          main.push({ at: performance.now() - started, frame: JSON.parse(buffer.subarray(4, 4 + length).toString('utf-8')) })
+          buffer = buffer.subarray(4 + length)
+        }
+
+        idle()
+      })
+    })
+
+    cb.on('data', async (chunk) => {
+      cbBuffer = Buffer.concat([cbBuffer, chunk])
+
+      while (cbBuffer.length >= 4) {
+        const length = cbBuffer.readUInt32BE(0)
+        if (cbBuffer.length < 4 + length) break
+
+        const request = JSON.parse(cbBuffer.subarray(4, 4 + length).toString('utf-8'))
+        cbBuffer = cbBuffer.subarray(4 + length)
+        calls.push({ at: performance.now() - started, frame: request })
+        idle()
+
+        const result = await answer(request.function, request.args ?? [])
+        send(cb, { id: request.id, result })
+        idle()
+      }
+    })
+  })
+}
+
 describe('the frame protocol', () => {
   test('answers a ping', async () => {
     const [reply] = await exchange([frame('{"type":"ping"}')])
@@ -207,4 +299,80 @@ describe('the frame protocol', () => {
     // worker stayed on the protocol and answered rather than desynchronising.
     expect(replies.length).toBeGreaterThan(0)
   })
+})
+
+describe('streaming over the socket', () => {
+  test('a render answers stream-start, then chunks, then stream-end', async () => {
+    const { main } = await streamRun(
+      { type: 'rsc-stream', component: 'app/feed/page', props: {}, layouts: LAYOUTS },
+      async () => null,
+    )
+
+    const types = main.map((f) => f.frame.type)
+
+    expect(types[0]).toBe('stream-start')
+    expect(types.at(-1)).toBe('stream-end')
+    expect(types).toContain('stream-chunk')
+  })
+
+  test('stream-start goes out before anything is rendered', async () => {
+    // PHP flushes its response headers on this frame. Emitting it after the
+    // render would hold the headers behind the slowest host call on the page,
+    // and waiting for it with a blocking read deadlocks both sides.
+    const { main, calls } = await streamRun(
+      { type: 'rsc-stream', component: 'app/slow/page', props: {}, layouts: LAYOUTS },
+      async (_fn, args) => {
+        await new Promise((r) => setTimeout(r, Number(args[0]) || 0))
+
+        return { value: 'done' }
+      },
+      2000,
+    )
+
+    const start = main.find((f) => f.frame.type === 'stream-start')!
+
+    expect(start).toBeDefined()
+    expect(calls.length).toBeGreaterThan(0)
+    expect(start.at).toBeLessThan(calls[0].at)
+  }, 30_000)
+
+  test('the shell is out before any host call is released', async () => {
+    // A host call runs on the thread pumping the socket, so nothing the worker
+    // writes reaches the browser while one is in flight. The whole shell —
+    // every Suspense fallback in it — has to be drained first, or a slow call
+    // strands the page behind it.
+    const { main, calls } = await streamRun(
+      { type: 'rsc-stream', component: 'app/slow/page', props: {}, layouts: LAYOUTS },
+      async (_fn, args) => {
+        await new Promise((r) => setTimeout(r, Number(args[0]) || 0))
+
+        return { value: 'done' }
+      },
+      2000,
+    )
+
+    const firstCall = calls[0]!
+    const shell = main
+      .filter((f) => f.frame.type === 'stream-chunk' && f.at < firstCall.at)
+      .map((f) => String(f.frame.data))
+      .join('')
+
+    expect(shell).toContain('slow-shell')
+    // Both fallbacks, not merely the first chunk React produced.
+    expect(shell).toContain('fast-fallback')
+    expect(shell).toContain('slow-fallback')
+  }, 30_000)
+
+  test('an html render answers html-start through html-end', async () => {
+    const { main } = await streamRun(
+      { type: 'rsc-html-stream', component: 'app/feed/page', props: {}, layouts: LAYOUTS },
+      async () => null,
+    )
+
+    const types = main.map((f) => f.frame.type)
+
+    expect(types[0]).toBe('html-start')
+    expect(types).toContain('html-chunk')
+    expect(types.at(-1)).toBe('html-end')
+  }, 30_000)
 })

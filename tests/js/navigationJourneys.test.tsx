@@ -46,6 +46,9 @@ const ROUTES: Record<string, string[]> = {
   '/other': ['app/layout', 'app/other/layout'],
   // Lives under /deep's layout, and is intercepted into that layout's slot.
   '/deep/item/1': ['app/layout', 'app/docs/layout', 'app/docs/deep/layout'],
+  // Its own root layout, sharing nothing — a route group with separate chrome,
+  // which is how a route escapes the layout that would force a runtime on it.
+  '/marketing': ['app/(marketing)/layout'],
 }
 
 /** The layout that declares the intercepted slot, and so renders it. */
@@ -407,5 +410,35 @@ describe('opening and leaving an intercepted view', () => {
     await go('/deep')
 
     expect(requests.at(-1)!.depth).toBeLessThanOrEqual(SLOT_OWNER_DEPTH)
+  })
+})
+
+describe('a route with its own root layout', () => {
+  test('is sent as a whole document, since nothing is shared', async () => {
+    await boot('/a')
+    await go('/marketing')
+
+    expect(requests.at(-1)).toMatchObject({ url: '/marketing', depth: 0 })
+    expect(visiblePage()).toBe('/marketing')
+  })
+
+  test('renders through the router with no special handling', async () => {
+    // Nothing has to know the route ships no JS of its own: a visitor already
+    // inside the app has the runtime loaded, and a depth-0 payload replaces the
+    // root the way any other whole document would. The saving is for someone
+    // landing on it directly, who downloads none of it.
+    await boot('/a')
+    await go('/marketing')
+
+    expect(container.querySelector('[data-layout="app/(marketing)/layout"]')).not.toBeNull()
+    expect(container.querySelector('[data-layout="app/layout"]')).toBeNull()
+  })
+
+  test('and can be navigated back out of', async () => {
+    await boot('/a')
+    await go('/marketing')
+    await go('/a')
+
+    expect(visiblePage()).toBe('/a')
   })
 })

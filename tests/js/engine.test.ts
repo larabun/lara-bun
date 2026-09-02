@@ -767,7 +767,7 @@ describe('intercept manifest reaches the browser entry', () => {
     )
 
     // Passed to the bootstrap, not merely present in the file.
-    expect(entry).toContain('createViteRscApp(document, [{"urlPattern":"/shop/item/[id]","slot":"modal"}])')
+    expect(entry).toContain('createViteRscApp(document, [{"urlPattern":"/shop/item/[id]","slot":"modal"}], ')
 
     cleanup()
   }, 120_000)
@@ -775,7 +775,7 @@ describe('intercept manifest reaches the browser entry', () => {
   test('an app with no interceptors still boots', () => {
     const { entry, cleanup } = buildApp(null)
 
-    expect(entry).toContain('createViteRscApp(document, [])')
+    expect(entry).toContain('createViteRscApp(document, [], ')
 
     cleanup()
   }, 120_000)
@@ -783,7 +783,7 @@ describe('intercept manifest reaches the browser entry', () => {
   test('an unreadable manifest degrades to no interception, not a failed build', () => {
     const { entry, cleanup } = buildApp('{ not json')
 
-    expect(entry).toContain('createViteRscApp(document, [])')
+    expect(entry).toContain('createViteRscApp(document, [], ')
 
     cleanup()
   }, 120_000)

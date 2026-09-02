@@ -62,6 +62,30 @@ let interceptedAtDepth: number | null = null;
 
 const DEFAULT_PREFETCH_TTL = 30_000;
 
+/**
+ * Where a payload lives when there is no server to negotiate with.
+ *
+ * Normally the payload and the page share a url and are told apart by the
+ * X-RSC header. A static host cannot vary by header — it serves one file per
+ * url — so an exported build gives payloads their own addresses and the client
+ * asks for those instead.
+ */
+let staticPayloadSuffix: string | null = null;
+
+export function setStaticPayloads(suffix: string | null): void {
+  staticPayloadSuffix = suffix;
+}
+
+/** The url to request a payload from, which is the page's own unless exported. */
+export function payloadUrl(url: string): string {
+  if (staticPayloadSuffix === null) return url;
+
+  const parsed = new URL(url, window.location.origin);
+  const path = parsed.pathname.replace(/\/+$/, '');
+
+  return `${path}/${staticPayloadSuffix}${parsed.search}`;
+}
+
 export function setVersion(v: string): void {
   version = v;
 }
@@ -199,7 +223,7 @@ function fetchRscPayload(
   }
 
   // `priority` is not in every lib.dom yet; browsers without it ignore it.
-  const request = fetch(url, { headers, signal, priority } as RequestInit).catch((err: unknown) => {
+  const request = fetch(payloadUrl(url), { headers, signal, priority } as RequestInit).catch((err: unknown) => {
     // Nothing answered at all. An abort is our own doing, not the network's —
     // leaving a link cancels its prefetch, and that must not read as offline.
     if (!(err instanceof DOMException && err.name === "AbortError")) {
@@ -388,8 +412,15 @@ export async function navigate(
 
       const response = await fetchRscPayload(url, controller.signal, interceptSlot ?? undefined, currentUrl, chain);
 
+      // The check is for a host that answered the page instead of the
+      // payload, which is what a server does when it does not recognise the
+      // header. An exported build asks a url that only ever holds a payload,
+      // and a file server labels it by extension — commonly
+      // application/octet-stream — so the check would reject every navigation
+      // and send the browser on a full page load instead.
       const contentType = response.headers.get("Content-Type") ?? "";
-      if (!contentType.includes("text/x-component")) {
+
+      if (staticPayloadSuffix === null && !contentType.includes("text/x-component")) {
         window.location.href = url;
         return;
       }

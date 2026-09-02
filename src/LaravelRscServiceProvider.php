@@ -9,6 +9,7 @@ use LaravelRsc\Console\DevCommand;
 use LaravelRsc\Console\InstallRuntimeCommand;
 use LaravelRsc\Console\RscActionManifestCommand;
 use LaravelRsc\Console\RscBuildCommand;
+use LaravelRsc\Console\RscExportCommand;
 use LaravelRsc\Console\RscPagesCommand;
 use LaravelRsc\Console\RscRouteManifestCommand;
 use LaravelRsc\Console\ServeCommand;
@@ -91,6 +92,7 @@ class LaravelRscServiceProvider extends ServiceProvider
                 ServeCommand::class,
                 RscActionManifestCommand::class,
                 RscBuildCommand::class,
+                RscExportCommand::class,
                 RscPagesCommand::class,
                 RscRouteManifestCommand::class,
             ]);

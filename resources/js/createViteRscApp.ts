@@ -24,6 +24,8 @@ import {
   retentionKey,
   setCallServer,
   setHeldLayouts,
+  setStaticPayloads,
+  payloadUrl,
   setDeserializer,
   setInterceptManifest,
   setNavigateHandler,
@@ -34,7 +36,11 @@ import {
 export async function createViteRscApp(
   container: Document | Element = document,
   interceptEntries: { urlPattern: string; slot: string }[] = [],
+  options: { staticPayloads?: string | null } = {},
 ): Promise<void> {
+  // An exported build has no server to negotiate with, so payloads live at
+  // their own urls rather than behind a header on the page's url.
+  setStaticPayloads(options.staticPayloads ?? null);
   // The router has to recognise an intercepted link before it asks the server,
   // so the patterns are baked into the generated browser entry. Without them
   // every intercepted route falls through to a full-page navigation.
@@ -116,7 +122,7 @@ export async function createViteRscApp(
   let res: Response;
 
   try {
-    res = await fetch(window.location.href, { headers: { "X-RSC": "1" } });
+      res = await fetch(payloadUrl(window.location.href), { headers: { "X-RSC": "1" } });
   } catch (err) {
     // Nothing answered, so the app is offline as far as the router is
     // concerned — see onlineStore.

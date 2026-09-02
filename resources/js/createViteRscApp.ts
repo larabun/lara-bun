@@ -7,13 +7,8 @@ import { createFromReadableStream, encodeReply, setServerCallback } from "@vitej
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { ActivityRoot } from "./ActivityRouter";
-import {
-  ServerRedirectError,
-  reportClientFailure,
-  throwForFailedAction,
-  throwForFailedPayload,
-} from "./errors";
-import { reportReachable } from "./onlineStore";
+import { ServerRedirectError, throwForFailedAction } from "./errors";
+import { fetchPagePayload } from "./pagePayload";
 import { clearSegments, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
@@ -119,28 +114,7 @@ export async function createViteRscApp(
   // the one request with nothing watching it. A page whose shell is already
   // rendered looks fine while this fails, and its fallbacks stay on screen
   // indefinitely with nothing reported anywhere.
-  let res: Response;
-
-  try {
-      res = await fetch(payloadUrl(window.location.href), { headers: { "X-RSC": "1" } });
-  } catch (err) {
-    // Nothing answered, so the app is offline as far as the router is
-    // concerned — see onlineStore.
-    reportReachable(false);
-    reportClientFailure("could not fetch the page payload", err);
-
-    throw err;
-  }
-
-  reportReachable(true);
-
-  try {
-    throwForFailedPayload(res);
-  } catch (err) {
-    reportClientFailure("the server could not render this page", err);
-
-    throw err;
-  }
+  const res = await fetchPagePayload(payloadUrl(window.location.href));
 
   // Seed the SPA engine with the build this page was served from, so a
   // redeploy mid-session is caught on the next navigation. This matters most

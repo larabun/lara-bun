@@ -173,6 +173,13 @@ changed.
 `segmentStart` on the engine covers the way in — widening a render that would
 otherwise skip the owner. This is the way out; both are needed.
 
+The prefetch cache has to be checked against the chain the navigation is about
+to *claim*, not the one currently mounted. A pointer hovers a link before
+clicking it, so hovering Close prefetches against the full chain; reusing that
+entry skips the layout holding the modal and leaves it open over the page
+behind. A scripted `.click()` never hovers, which is why this reproduces with a
+mouse and not in a script.
+
 ### A Prefetched Payload Is Partial Too
 `prefetch` is a real request and goes out with the chain the client holds, so
 the server answers with the page alone. The cache entry therefore stores the

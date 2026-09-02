@@ -301,11 +301,22 @@ export async function navigate(
     const cached = cache.get(cacheKey);
     let treePromise: Promise<ReactNode>;
 
-    // A partial payload only composes against the chain it was rendered for.
+    // Claiming fewer layouts than we hold forces the layout that owns the
+    // intercepted slot to render again, which is what clears it.
+    const chain =
+      !interceptSlot && interceptedAtDepth !== null
+        ? heldLayouts.slice(0, interceptedAtDepth)
+        : heldLayouts;
+
+    // A partial payload only composes against the chain it was rendered for —
+    // the one this navigation is about to claim, not whatever is mounted.
+    // Hovering a link inside a modal prefetches it against the full chain, so
+    // reusing that here would skip the layout holding the modal and leave it
+    // open over the page behind it.
     const usable =
       cached !== undefined &&
       cached.expiresAt > Date.now() &&
-      cached.heldWhenFetched === heldLayouts.join(",");
+      cached.heldWhenFetched === chain.join(",");
 
     if (usable) {
       treePromise = cached!.tree;
@@ -314,12 +325,6 @@ export async function navigate(
       cache.delete(cacheKey);
     } else {
       cache.delete(cacheKey);
-      // Claiming fewer layouts than we hold forces the layout that owns the
-      // intercepted slot to render again, which is what clears it.
-      const chain =
-        !interceptSlot && interceptedAtDepth !== null
-          ? heldLayouts.slice(0, interceptedAtDepth)
-          : heldLayouts;
 
       const response = await fetchRscPayload(url, controller.signal, interceptSlot ?? undefined, currentUrl, chain);
 

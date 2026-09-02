@@ -390,4 +390,22 @@ describe('opening and leaving an intercepted view', () => {
     // The narrowing applies to leaving an interception, not to everything after.
     expect(requests.at(-1)!.held!.split(',').length).toBeLessThanOrEqual(SLOT_OWNER_DEPTH)
   })
+
+  test('a link hovered inside the modal does not defeat the close', async () => {
+    // Hovering prefetches against the whole chain, which is not the chain the
+    // close will claim. Reusing it skips the layout holding the modal, so the
+    // URL changes and the modal stays open over the page behind it — the shape
+    // a real pointer produces and a scripted click never does.
+    await boot('/deep')
+    await go('/deep/item/1')
+
+    await act(async () => {
+      prefetch('/deep')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    await go('/deep')
+
+    expect(requests.at(-1)!.depth).toBeLessThanOrEqual(SLOT_OWNER_DEPTH)
+  })
 })

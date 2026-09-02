@@ -124,18 +124,33 @@ export function seedSegment(depth: number, key: string, tree: Tree): void {
 }
 
 /**
- * Reveal a page every boundary is still holding, without asking the server.
+ * Reveal a page the boundaries are still holding, without asking the server.
  *
- * All-or-nothing: a boundary that cannot show this key means the layouts
- * differ, and revealing only some of them would compose two different pages.
+ * Restoring is anchored on the deepest boundary that can show the page. Deeper
+ * ones than that belonged to the page being left — a section with its own
+ * layout adds a boundary the page you are going back to never had — so they
+ * are dropped, exactly as setSegment drops them. Requiring every boundary to
+ * hold the key instead made any such page refuse to restore.
+ *
+ * Shallower boundaries need no key of their own: their trees contain the
+ * deeper boundary, so they delegate to whatever it is showing. One that does
+ * hold the key is switched to it, since that is a real change at its level.
  */
 export function restoreSegments(key: string): boolean {
-  const all = [...depths.keys()]
+  const holding = [...depths.keys()].filter((d) =>
+    depths.get(d)!.entries.some((entry) => entry.key === key),
+  )
 
-  if (all.length === 0) return false
-  if (!all.every((d) => depths.get(d)!.entries.some((entry) => entry.key === key))) return false
+  if (holding.length === 0) return false
 
-  for (const d of all) {
+  const anchor = Math.max(...holding)
+
+  for (const d of [...depths.keys()].filter((d) => d > anchor)) {
+    depths.delete(d)
+    notify(d)
+  }
+
+  for (const d of holding) {
     const state = depths.get(d)!
 
     depths.set(d, retain(state.entries, [...state.order.filter((k) => k !== key), key], key))

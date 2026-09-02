@@ -176,9 +176,12 @@ Metadata always resolves against the FULL chain — a title template lives on an
 outer layout, and a partial render still has to produce the same `<title>`.
 
 Prerendered routes answer partially too. Alongside `{path}.flight` the build
-writes `{path}.seg.flight` — the same page with the layouts left out — and
-`ServeStaticRsc` serves it when the client's chain matches the one in
-`{path}.meta.json`. Without it every navigation to a prerendered route is a
+writes one variant per depth — `{path}.seg1.flight`, `{path}.seg2.flight`, … —
+each rendered with that many layouts left out, and `ServeStaticRsc` serves the
+one matching the depth this client shares. One variant is not enough: a section
+with its own layout has a longer chain than the page you came from, so the
+shared depth is less than the whole chain and only the variant for that depth
+fits. Without it every navigation to a prerendered route is a
 whole document, which replaces the root and unmounts the pages retained behind
 it: the form you were filling in does not survive going back. Most routes in a
 real app are prerendered, so that is the common path, not an edge case.

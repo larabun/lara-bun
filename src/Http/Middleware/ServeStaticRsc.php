@@ -30,15 +30,18 @@ class ServeStaticRsc
                 // on its own. Sending the whole document instead would replace
                 // the root, and replacing the root unmounts the pages retained
                 // behind it — losing the form state going back should restore.
-                $segmentFile = "{$basePath}/{$path}.seg.flight";
                 $held = $request->header(Header::X_RSC_SEGMENTS);
+                $shared = $chain === [] ? 0 : RscResponse::commonLayoutDepth($held, $chain);
+                $segmentFile = "{$basePath}/{$path}.seg{$shared}.flight";
                 $depth = 0;
                 $payload = $flightFile;
 
-                if ($chain !== [] && $held !== null && file_exists($segmentFile)
-                    && RscResponse::commonLayoutDepth($held, $chain) === count($chain)) {
+                // Serve the variant for exactly the depth this client shares.
+                // Anything else — no shared layouts, or a build without that
+                // variant — is the whole document.
+                if ($shared > 0 && file_exists($segmentFile)) {
                     $payload = $segmentFile;
-                    $depth = count($chain);
+                    $depth = $shared;
                 }
 
                 // Like the live SPA response, the prerendered Flight payload is

@@ -72,13 +72,18 @@ describe('returning to a page', () => {
     expect(restoreSegments('/never-seen')).toBe(false)
   })
 
-  test('refuses unless every boundary can show it', () => {
-    // Depth 1 only ever saw /docs. Revealing /a at depth 2 while depth 1
-    // showed something else would compose two different pages.
+  test('a shallower boundary holding another key does not block it', () => {
+    // Depth 1 holds the section, depth 2 the page within it. Depth 1's tree
+    // contains the depth-2 boundary, so it shows whatever that one shows —
+    // it does not need a key of its own.
     setSegment(1, '/docs', 'section')
     setSegment(2, '/docs/a', 'page-a')
+    setSegment(2, '/docs/b', 'page-b')
 
-    expect(restoreSegments('/docs/a')).toBe(false)
+    expect(restoreSegments('/docs/a')).toBe(true)
+    expect(getSegmentState(2)!.activeKey).toBe('/docs/a')
+    // Untouched: the section around both pages is the same.
+    expect(getSegmentState(1)!.activeKey).toBe('/docs')
   })
 
   test('refuses when nothing has been stored at all', () => {
@@ -171,5 +176,60 @@ describe('what a cached navigation has to remember', () => {
     const source = await Bun.file(new URL('../../resources/js/navigate.ts', import.meta.url)).text()
 
     expect(source).toContain('cached.heldWhenFetched === heldLayouts.join(",")')
+  })
+})
+
+/**
+ * Going back to a page from a section that has its own layout.
+ *
+ * /docs/intercept-demo has a layout /docs/action-demo does not, so visiting it
+ * adds a boundary one level deeper than anything action-demo ever had.
+ * Requiring every boundary to hold the key made the return refuse to restore
+ * and refetch instead — which rebuilt the page and cleared the form.
+ */
+describe('returning from a deeper section', () => {
+  function visitActionDemo() {
+    // A hard load seeds every boundary in the chain with the page it rendered.
+    seedSegment(1, '/docs/action-demo', 'a1')
+    seedSegment(2, '/docs/action-demo', 'a2')
+  }
+
+  function goToInterceptDemo() {
+    // Shared depth is 2; the extra layout brings its own boundary below it.
+    setSegment(2, '/docs/intercept-demo', 'i2')
+    seedSegment(3, '/docs/intercept-demo', 'i3')
+  }
+
+  test('restores the page you came from', () => {
+    visitActionDemo()
+    goToInterceptDemo()
+
+    expect(restoreSegments('/docs/action-demo')).toBe(true)
+    expect(getSegmentState(2)!.activeKey).toBe('/docs/action-demo')
+  })
+
+  test('drops the deeper boundary, which belonged to the section being left', () => {
+    visitActionDemo()
+    goToInterceptDemo()
+    restoreSegments('/docs/action-demo')
+
+    // Keeping it would render the intercept-demo subtree inside action-demo.
+    expect(getSegmentState(3)).toBeNull()
+  })
+
+  test('can go forward into the deeper section again', () => {
+    visitActionDemo()
+    goToInterceptDemo()
+    restoreSegments('/docs/action-demo')
+
+    expect(restoreSegments('/docs/intercept-demo')).toBe(true)
+    expect(getSegmentState(2)!.activeKey).toBe('/docs/intercept-demo')
+  })
+
+  test('still refuses a page nothing is holding', () => {
+    visitActionDemo()
+    goToInterceptDemo()
+
+    expect(restoreSegments('/docs/never-visited')).toBe(false)
   })
 })

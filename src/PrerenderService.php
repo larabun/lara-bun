@@ -115,23 +115,27 @@ class PrerenderService
         File::put("{$outputPath}/{$path}.html", $html);
         File::put("{$outputPath}/{$path}.flight", $result['rscPayload']);
 
-        // A second payload with the layouts left out, for a client that already
-        // has them mounted. Without it every navigation to a prerendered page
-        // is a whole document, which replaces the root and throws away the
-        // pages being retained behind it — so a form you were filling in on the
-        // page you came from does not survive going back.
+        // A payload for each depth a client might arrive holding, with the
+        // layouts it already has left out. Without them every navigation to a
+        // prerendered page is a whole document, which replaces the root and
+        // throws away the pages retained behind it — so a form you were
+        // filling in on the page you came from does not survive going back.
+        //
+        // One variant is not enough: a section with its own layout has a
+        // longer chain than the page you came from, so the shared depth is
+        // less than the whole chain and only a variant for THAT depth fits.
         $chain = array_column($rscResponse->getLayouts(), 'component');
 
-        if ($chain !== []) {
+        for ($depth = 1; $depth <= count($chain); $depth++) {
             $segment = app(RuntimeBridge::class)->rscPayload(
                 $rscResponse->getComponent(),
                 $rscResponse->getProps(),
                 $rscResponse->getLayouts(),
-                count($chain),
+                $depth,
                 '/'.ltrim($url, '/'),
             );
 
-            File::put("{$outputPath}/{$path}.seg.flight", $segment['rscPayload']);
+            File::put("{$outputPath}/{$path}.seg{$depth}.flight", $segment['rscPayload']);
         }
 
         $meta = [

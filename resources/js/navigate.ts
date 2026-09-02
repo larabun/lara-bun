@@ -40,6 +40,8 @@ let flightDeserializer: Deserializer | null = null;
 let callServerFn: CallServerFn | null = null;
 let activeController: AbortController | null = null;
 const cache = new Map<string, CacheEntry>();
+/** In-flight prefetches, so one the pointer moved away from can be dropped. */
+const prefetchControllers = new Map<string, AbortController>();
 let interceptManifest: InterceptEntry[] = [];
 
 // The layout chain currently mounted, outermost first. Sent so the server can
@@ -171,6 +173,11 @@ function fetchRscPayload(
   interceptSlot?: string,
   refererUrl?: string,
   chain: string[] = heldLayouts,
+  // A prefetch is speculative and a navigation is not, but on the wire they
+  // were identical — so a click could queue behind several prefetches the user
+  // had already moved past. Over HTTP/1.1 a browser opens ~6 connections per
+  // origin, which a sweep across a nav bar fills on its own.
+  priority: "high" | "low" = "high",
 ): Promise<Response> {
   const headers: Record<string, string> = {
     "X-RSC": "true",
@@ -189,7 +196,8 @@ function fetchRscPayload(
     headers["X-RSC-Referer"] = refererUrl;
   }
 
-  return fetch(url, { headers, signal }).then(async (response) => {
+  // `priority` is not in every lib.dom yet; browsers without it ignore it.
+  return fetch(url, { headers, signal, priority } as RequestInit).then(async (response) => {
     // Adopt the server's build version from the first response that carries
     // one. Until we know it we send an empty version, which the middleware
     // treats as "no opinion"; afterwards a redeploy mid-session answers 409.
@@ -408,6 +416,9 @@ function prefetchUrl(
 
   cache.delete(cacheKey);
 
+  const controller = new AbortController();
+  prefetchControllers.set(cacheKey, controller);
+
   const entry: CacheEntry = {
     tree: Promise.resolve(null),
     expiresAt: Date.now() + ttl,
@@ -416,7 +427,9 @@ function prefetchUrl(
     heldWhenFetched: heldLayouts.join(","),
   };
 
-  entry.tree = fetchRscPayload(url, undefined, interceptSlot, refererUrl)
+  // Low priority: the browser then lets a real navigation overtake a queue of
+  // speculative requests instead of serving them in the order they were made.
+  entry.tree = fetchRscPayload(url, controller.signal, interceptSlot, refererUrl, heldLayouts, "low")
     .then((response) => {
       entry.segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? 0) || 0;
 
@@ -428,7 +441,37 @@ function prefetchUrl(
     .catch(() => {
       cache.delete(cacheKey);
       return null;
+    })
+    .finally(() => {
+      // Settled, so there is nothing left to abort. A completed prefetch stays
+      // in the cache — only an in-flight one is ever dropped.
+      if (prefetchControllers.get(cacheKey) === controller) {
+        prefetchControllers.delete(cacheKey);
+      }
     });
 
   cache.set(cacheKey, entry);
+}
+
+/**
+ * Drop a prefetch that is still in flight — the pointer left the link.
+ *
+ * The cache entry goes synchronously rather than in the abort's catch: the
+ * rejection lands a tick later, and a click in between would find an entry
+ * whose tree resolves to null and navigate to a blank page. A prefetch that
+ * has already completed is kept; there is no request left to cancel and the
+ * payload is still good.
+ */
+export function cancelPrefetch(url: string): void {
+  if (isExternalUrl(url)) return;
+
+  const interceptSlot = matchIntercept(url);
+  const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
+  const controller = prefetchControllers.get(cacheKey);
+
+  if (!controller) return;
+
+  prefetchControllers.delete(cacheKey);
+  cache.delete(cacheKey);
+  controller.abort();
 }

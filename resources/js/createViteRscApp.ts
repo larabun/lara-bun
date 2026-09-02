@@ -10,6 +10,7 @@ import { ActivityRoot } from "./ActivityRouter";
 import { clearSegments, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
+  cancelPrefetch,
   navigate,
   prefetch,
   retentionKey,
@@ -77,6 +78,8 @@ export async function createViteRscApp(
   // engine through these globals.
   (window as unknown as { __rsc_navigate: typeof navigate }).__rsc_navigate = navigate;
   (window as unknown as { __rsc_prefetch: typeof prefetch }).__rsc_prefetch = prefetch;
+  (window as unknown as { __rsc_cancel_prefetch: typeof cancelPrefetch }).__rsc_cancel_prefetch =
+    cancelPrefetch;
 
   // Hydrate from the RSC endpoint (same url + X-RSC, no version header).
   const res = await fetch(window.location.href, { headers: { "X-RSC": "1" } });

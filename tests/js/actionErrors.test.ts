@@ -13,7 +13,9 @@ import { describe, expect, test } from 'bun:test'
 import {
   ServerRedirectError,
   ServerValidationError,
+  reportClientFailure,
   throwForFailedAction,
+  throwForFailedPayload,
 } from '../../resources/js/errors.ts'
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
@@ -69,5 +71,46 @@ describe('a failed action response', () => {
 
     expect(err).toBeInstanceOf(ServerValidationError)
     expect((err as ServerValidationError).errors).toEqual({})
+  })
+})
+
+describe('a failed page payload', () => {
+  test('a good response is left to be decoded', () => {
+    expect(() => throwForFailedPayload(new Response('flight', { status: 200 }))).not.toThrow()
+  })
+
+  test('a failure says what the status was', () => {
+    // A PPR route's shell is real HTML with a 200, and everything below its
+    // Suspense boundaries arrives in a second request. When that one fails
+    // there is nothing on screen to say so: the skeletons just stay.
+    expect(() => throwForFailedPayload(new Response('', { status: 500 }))).toThrow('500')
+  })
+})
+
+describe('reporting a failure nothing else will', () => {
+  test('is announced as well as logged', async () => {
+    // An app that wants to replace a stuck skeleton with something honest has
+    // no other way to find out.
+    const { registerDom } = await import('./dom')
+    registerDom()
+
+    const seen: unknown[] = []
+    const listener = (e: Event) => seen.push((e as CustomEvent).detail)
+    window.addEventListener('rsc-client-error', listener)
+
+    const original = console.error
+    const logged: unknown[] = []
+    console.error = (...args: unknown[]) => logged.push(args)
+
+    try {
+      reportClientFailure('the server could not render this page', new Error('boom'))
+    } finally {
+      console.error = original
+      window.removeEventListener('rsc-client-error', listener)
+    }
+
+    expect(seen).toHaveLength(1)
+    expect((seen[0] as { scope: string }).scope).toBe('the server could not render this page')
+    expect(logged).toHaveLength(1)
   })
 })

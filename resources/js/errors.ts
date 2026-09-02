@@ -74,3 +74,32 @@ export async function throwForFailedAction(response: Response): Promise<void> {
 
   throw new Error(`Server action failed with ${response.status}`);
 }
+
+/**
+ * Reject a payload response that is not one.
+ *
+ * The page a PPR route serves is a static shell: real HTML, status 200, with
+ * its Suspense fallbacks showing. Everything below them arrives in a second
+ * request. If that request fails there is nothing on screen to say so — the
+ * skeletons simply stay, for ever — and handing the failure body to the Flight
+ * decoder reports the decoder's confusion rather than the status.
+ */
+export function throwForFailedPayload(response: Response): void {
+  if (response.ok) return;
+
+  throw new Error(`RSC payload request failed with ${response.status}`);
+}
+
+/**
+ * Announce a failure that nothing else will.
+ *
+ * Dispatched as well as logged: an app that wants to replace a stuck skeleton
+ * with something honest has no other way to find out.
+ */
+export function reportClientFailure(scope: string, error: unknown): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("rsc-client-error", { detail: { scope, error } }));
+  }
+
+  console.error(`[rsc-router] ${scope}`, error);
+}

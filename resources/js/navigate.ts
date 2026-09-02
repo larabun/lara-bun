@@ -6,6 +6,8 @@
  * duplicate bundling of react-server-dom-webpack.
  */
 
+import { reportReachable } from "./onlineStore";
+
 type ReactNode = unknown;
 type Deserializer = (stream: ReadableStream, options: Record<string, unknown>) => Promise<ReactNode>;
 type CallServerFn = (id: string, args: unknown[]) => Promise<unknown>;
@@ -197,7 +199,19 @@ function fetchRscPayload(
   }
 
   // `priority` is not in every lib.dom yet; browsers without it ignore it.
-  return fetch(url, { headers, signal, priority } as RequestInit).then(async (response) => {
+  const request = fetch(url, { headers, signal, priority } as RequestInit).catch((err: unknown) => {
+    // Nothing answered at all. An abort is our own doing, not the network's —
+    // leaving a link cancels its prefetch, and that must not read as offline.
+    if (!(err instanceof DOMException && err.name === "AbortError")) {
+      reportReachable(false);
+    }
+
+    throw err;
+  });
+
+  return request.then(async (response) => {
+    // Something answered, whatever it said. A 500 is a reachable server.
+    reportReachable(true);
     // Adopt the server's build version from the first response that carries
     // one. Until we know it we send an empty version, which the middleware
     // treats as "no opinion"; afterwards a redeploy mid-session answers 409.
@@ -387,6 +401,15 @@ export async function navigate(
     window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") return;
+
+    // Without this a navigation that fails does nothing observable: the click
+    // clears its own pending state and the page stays as it was, with no
+    // error, no fallback and nothing for an app to react to. Dispatched before
+    // rethrowing, so a programmatic caller still sees the failure.
+    window.dispatchEvent(
+      new CustomEvent("rsc-navigate-error", { detail: { url, error: err } })
+    );
+
     throw err;
   } finally {
     if (activeController === controller) {

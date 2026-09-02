@@ -44,7 +44,8 @@
     "./usePathname": "./resources/js/usePathname.ts",
     "./useLinkStatus": "./resources/js/useLinkStatus.ts",
     "./client": "./resources/js/createViteRscApp.ts",
-    "./types": "./resources/types.d.ts"
+    "./types": "./resources/types.d.ts",
+    "./useOnline": "./resources/js/useOnline.ts"
   },
   "version": "0.1.0",
   "description": "File-based React Server Components routing for Vite \u2014 a router, a build, and a worker that any backend can drive.",

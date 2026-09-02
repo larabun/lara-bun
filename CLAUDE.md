@@ -135,6 +135,20 @@ through to a full-page navigation. Neither failure is visible at build time, so
 `rsc.host_global` and reaches the plugin as `RSC_HOST_GLOBAL`, so the codegen and
 the plugin cannot disagree about what it is called.
 
+### Test Navigation as a Journey
+`tests/js/navigationJourneys.test.tsx` drives the real router — its prefetch
+cache, history handling and restore path — against a stand-in server that
+answers the segment protocol. Every navigation bug this feature produced lived
+in a journey rather than a unit, and the store, boundary and depth arithmetic
+each passed their own tests throughout: hover-then-click, a section with its
+own layout, forward-then-back. Add a journey there when changing navigation,
+not another unit test.
+
+Two things it has to do that a browser would not. Retained pages stay in the
+DOM, so assert on visibility rather than presence — and happy-dom has no layout
+engine and reports client rects for hidden elements, so read the inline
+`display` Activity sets instead of geometry.
+
 ### A Prefetched Payload Is Partial Too
 `prefetch` is a real request and goes out with the chain the client holds, so
 the server answers with the page alone. The cache entry therefore stores the

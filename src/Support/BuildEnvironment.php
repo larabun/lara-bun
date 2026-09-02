@@ -28,6 +28,11 @@ class BuildEnvironment
             'RSC_ASSETS_URL' => config('rsc.assets_url'),
             'RSC_HOST_GLOBAL' => config('rsc.host_global', 'rpc'),
             'RSC_PACKAGE_ALIAS' => config('rsc.package_alias', 'rsc-router'),
+            // Set only for an export, where the client has to ask for a
+            // payload by url because there is no server to read a header.
+            'RSC_STATIC_PAYLOADS' => config('rsc.output') === 'export'
+                ? (string) config('rsc.export_payload_name', 'index.rsc')
+                : '',
             'RSC_ROUTE_CONFIG_FILE' => 'route.php',
             'RSC_ROUTE_CONFIG_PATTERN' => 'props\s*\(\s*(fn|function)\s*\(',
         ], $extra);

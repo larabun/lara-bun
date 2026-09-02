@@ -55,6 +55,23 @@ return [
     // installed from npm, where the name resolves on its own.
     'package_alias' => env('RSC_PACKAGE_ALIAS', 'rsc-router'),
 
+    // What `rsc:build` produces.
+    //
+    //   'server' — the default: pages are served by this app, and a payload is
+    //              asked for with the X-RSC header on the page's own url.
+    //   'export' — a directory of files any static host can serve. Payloads
+    //              get addresses of their own, because a host that serves
+    //              files cannot act on a header. Routes that still need a
+    //              server at request time are refused by name rather than
+    //              exported half-working.
+    'output' => env('RSC_OUTPUT', 'server'),
+
+    // Where an exported site is written, relative to the project root.
+    'export_path' => env('RSC_EXPORT_PATH', 'dist'),
+
+    // Filename an exported payload sits under, beside its page's index.html.
+    'export_payload_name' => env('RSC_EXPORT_PAYLOAD', 'index.rsc'),
+
     // Public dir + URL for the browser-facing client bundle. Served directly by
     // the web server (never through PHP); `assets_url` is the Vite base.
     'assets_dir' => env('RSC_ASSETS_DIR', public_path('build/rsc-vite')),

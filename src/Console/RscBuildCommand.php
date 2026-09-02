@@ -116,6 +116,19 @@ class RscBuildCommand extends Command
             return self::FAILURE;
         }
 
+        // Step 8: With output set to export, the build is not finished until
+        // the site is on disk — the same way `next build` produces the out
+        // directory when configured to. The client was already built to ask
+        // for payloads by url, so stopping here would leave a build that only
+        // works behind this app.
+        if (config('rsc.output') === 'export') {
+            $this->newLine();
+
+            return $this->call('rsc:export', [
+                '--out' => config('rsc.export_path', 'dist'),
+            ]);
+        }
+
         return self::SUCCESS;
     }
 

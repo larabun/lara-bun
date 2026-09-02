@@ -101,3 +101,17 @@ test('it says so when nothing has been prerendered', function () {
         ->expectsOutputToContain('rsc:build')
         ->assertFailed();
 });
+
+test('the output directory defaults to the configured one', function () {
+    // So `output => export` is the only thing an app has to declare, the way
+    // next.config declares it rather than the build command carrying it.
+    $source = prerendered(['docs/rsc.html' => '<html>rsc</html>']);
+
+    Config::set('rsc.export_path', 'dist-test');
+
+    $this->artisan('rsc:export')->assertSuccessful();
+
+    expect(is_file(base_path('dist-test/docs/rsc/index.html')))->toBeTrue();
+
+    File::deleteDirectory($source);
+});

@@ -63,3 +63,18 @@ test('the dev watcher and the build command agree on everything else', function 
         }
     }
 });
+
+test('an export build tells the client to ask for payloads by url', function () {
+    // There is no server to read the X-RSC header on a static host, so the
+    // client has to know before it is built that payloads live somewhere else.
+    Config::set('rsc.output', 'export');
+    Config::set('rsc.export_payload_name', 'index.rsc');
+
+    expect(BuildEnvironment::forVite()['RSC_STATIC_PAYLOADS'])->toBe('index.rsc');
+});
+
+test('an ordinary build leaves the header doing the work', function () {
+    Config::set('rsc.output', 'server');
+
+    expect(BuildEnvironment::forVite()['RSC_STATIC_PAYLOADS'])->toBe('');
+});

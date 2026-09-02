@@ -24,7 +24,7 @@ use Illuminate\Support\Facades\File;
 class RscExportCommand extends Command
 {
     protected $signature = 'rsc:export
-        {--out=dist : Directory to write the static site into}
+        {--out= : Directory to write the static site into, defaulting to rsc.export_path}
         {--force : Export anyway, leaving routes that need a server broken}';
 
     protected $description = 'Write the prerendered site out for a static host';
@@ -39,7 +39,7 @@ class RscExportCommand extends Command
             return self::FAILURE;
         }
 
-        $out = $this->option('out');
+        $out = $this->option('out') ?: (string) config('rsc.export_path', 'dist');
         $out = str_starts_with($out, '/') ? $out : base_path($out);
 
         $needsServer = $this->routesNeedingServer($source);

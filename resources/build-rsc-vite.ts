@@ -7,7 +7,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { isBun } from './runtime.ts'
 
 const projectRoot = resolve(process.env.RSC_PROJECT_ROOT || process.cwd())
@@ -61,6 +61,39 @@ export function findUserViteConfig(root: string): string | null {
   return null
 }
 
+/**
+ * Packages the generated entries import directly, which the project must have.
+ *
+ * Without this the build fails deep inside the bundler — a missing
+ * @vitejs/plugin-rsc surfaces as `Rolldown failed to resolve import
+ * "@vitejs/plugin-rsc/rsc"` from a generated file the user never wrote.
+ */
+export const REQUIRED_PEERS = ['@vitejs/plugin-rsc', 'vite', 'react', 'react-dom'] as const
+
+/**
+ * Whether a package is installed in the project's node_modules, or a parent's.
+ *
+ * A plain directory walk rather than require.resolve: Bun resolves packages
+ * from its global cache when a project has no node_modules at all, so the
+ * resolver reports success for something the build will not find.
+ */
+export function isInstalled(root: string, name: string): boolean {
+  let dir = resolve(root)
+
+  while (true) {
+    if (existsSync(join(dir, 'node_modules', name, 'package.json'))) return true
+
+    const parent = dirname(dir)
+    if (parent === dir) return false
+    dir = parent
+  }
+}
+
+/** Required packages the project does not have, in declaration order. */
+export function missingPeers(root: string): string[] {
+  return REQUIRED_PEERS.filter((name) => !isInstalled(root, name))
+}
+
 /** Shown when a project has no Vite config at all. */
 export function missingConfigMessage(root: string): string {
   return [
@@ -84,6 +117,19 @@ function packageDir(): string {
 }
 
 function main(): void {
+  const missing = missingPeers(projectRoot)
+
+  if (missing.length > 0) {
+    log(`Missing required package(s): ${missing.join(', ')}`)
+    log(`Install them in ${projectRoot}:`)
+    log('')
+    log(`  npm install ${missing.join(' ')}`)
+    log('')
+    log('rscRoutes() composes @vitejs/plugin-rsc itself — it only has to be installed,')
+    log('not added to your Vite config.')
+    process.exit(1)
+  }
+
   const configPath = findUserViteConfig(projectRoot)
 
   if (!configPath) {

@@ -11,6 +11,9 @@
  */
 
 import { describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createDeferredHost, drainQueuedChunks, streamWithDeferredRelease } from '../../resources/streaming.ts'
 
 /** A reader whose chunks are already queued, then goes quiet forever. */
@@ -313,5 +316,40 @@ describe('streamWithDeferredRelease', () => {
     )
 
     expect(events).toEqual(['chunk:only', 'RELEASE'])
+  })
+})
+
+/**
+ * The generated entries import @vitejs/plugin-rsc subpaths, so the project must
+ * have it installed even though rscRoutes() composes it and the app never names
+ * it in a config. When it is absent the bundler fails on a generated file the
+ * user never wrote — `Rolldown failed to resolve import
+ * "@vitejs/plugin-rsc/rsc"` — so the build checks first and says what to run.
+ */
+describe('required package preflight', () => {
+  test('reports every missing package, in install order', async () => {
+    const { missingPeers, REQUIRED_PEERS } = await import('../../resources/build-rsc-vite.ts')
+    const empty = mkdtempSync(join(tmpdir(), 'larabun-peers-'))
+
+    // A bare directory: nothing installed anywhere above it.
+    expect(missingPeers(empty)).toEqual([...REQUIRED_PEERS])
+
+    rmSync(empty, { recursive: true, force: true })
+  })
+
+  test('a project with the packages installed reports nothing', async () => {
+    const { missingPeers } = await import('../../resources/build-rsc-vite.ts')
+
+    // This package has all four in its own node_modules.
+    expect(missingPeers(join(import.meta.dir, '../..'))).toEqual([])
+  })
+
+  test('finds packages hoisted to a parent directory', async () => {
+    const { isInstalled } = await import('../../resources/build-rsc-vite.ts')
+    const nested = join(import.meta.dir, '../../tests/fixtures')
+
+    // Resolution walks up, the way a bundler does.
+    expect(isInstalled(nested, 'vite')).toBe(true)
+    expect(isInstalled(nested, 'definitely-not-a-real-package')).toBe(false)
   })
 })

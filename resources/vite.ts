@@ -525,20 +525,18 @@ export async function handleRscHtmlStream(
 // Server action (worker: rsc-action).
 export async function handleAction(
   actionId: string,
-  body: string | FormData,
+  body: string | FormData | Uint8Array,
   contentType = 'text/plain',
 ): Promise<{ stream: ReadableStream }> {
   applyHost()
 
-  let decodable: string | FormData = body
+  let decodable: string | FormData = typeof body === 'string' ? body : ''
 
-  // A multipart body reaches us as a latin1 string — PHP base64s the raw bytes
-  // over the socket and the worker decodes them byte-for-byte. Rebuild the
-  // bytes so FormData parses, or any File argument is lost.
-  if (typeof body === 'string' && contentType.includes('multipart/form-data')) {
-    const bytes = new Uint8Array(body.length)
-    for (let i = 0; i < body.length; i++) bytes[i] = body.charCodeAt(i)
-    decodable = await new Response(bytes, { headers: { 'Content-Type': contentType } }).formData()
+  // A multipart body arrives as bytes, on its own socket frame. It used to be
+  // base64'd into the JSON frame and rebuilt from a latin1 string here, which
+  // cost a third of the size in transit and two copies on each side.
+  if (typeof body !== 'string' && contentType.includes('multipart/form-data')) {
+    decodable = await new Response(body, { headers: { 'Content-Type': contentType } }).formData()
   }
 
   const args = (await decodeReply(decodable)) as unknown[]

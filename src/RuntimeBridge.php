@@ -639,16 +639,26 @@ class RuntimeBridge
                 $callbackSocket = $this->checkoutCallback($index, $callbackId);
             }
 
-            // Base64-encode the body to safely pass binary data (file uploads)
-            // through the JSON socket protocol.
+            // The body travels as its own frame rather than inside the JSON
+            // one. Frames are length-prefixed bytes, so a body needs no
+            // encoding to survive; it was base64'd only because it used to
+            // ride inside JSON, which cannot carry bytes that are not valid
+            // UTF-8. That cost a third of the size in transit, two full copies
+            // on each side, and made the frame limit measure the encoded
+            // length — so a 900kB upload failed a 1MB limit.
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc-action',
                 'actionId' => $actionId,
-                'body' => base64_encode($body),
-                'bodyEncoding' => 'base64',
+                'bodyEncoding' => 'binary',
+                'bodyLength' => strlen($body),
                 'contentType' => $contentType,
                 'callbackId' => $callbackId,
             ], JSON_THROW_ON_ERROR));
+
+            // Only when there is one: a zero-length frame is not a frame.
+            if ($body !== '') {
+                $this->writeFrame($mainSocket, $body);
+            }
 
             $idleTimeout = $this->streamIdleTimeout();
 
@@ -879,9 +889,16 @@ class RuntimeBridge
         throw ValidationException::withMessages($frame['validation_errors']);
     }
 
-    private function writeFrame(Socket $socket, string $json): void
+    /**
+     * Write one length-prefixed frame.
+     *
+     * The payload is bytes, not text — strlen counts bytes and sockets carry
+     * them — which is what lets an upload body travel as its own frame with no
+     * encoding.
+     */
+    private function writeFrame(Socket $socket, string $payload): void
     {
-        $frame = pack('N', strlen($json)).$json;
+        $frame = pack('N', strlen($payload)).$payload;
         $frameLen = strlen($frame);
         $written = socket_write($socket, $frame, $frameLen);
 

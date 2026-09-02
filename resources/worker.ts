@@ -39,7 +39,14 @@ interface IncomingMessage {
   bootstrap?: boolean;
   nonce?: string;
   actionId?: string;
-  body?: string;
+  /**
+   * Bytes when the body arrived on its own frame, which is how an upload
+   * travels — frames carry bytes, so nothing has to be encoded to fit.
+   */
+  body?: string | Uint8Array;
+  /** "binary" means the body is the frame after this one. */
+  bodyEncoding?: string;
+  bodyLength?: number;
   contentType?: string;
 }
 
@@ -265,7 +272,7 @@ type RscHandlerModule = {
   ) => Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: BrowserManifest }>;
   handleAction: (
     actionId: string,
-    body: string,
+    body: string | Uint8Array,
     contentType: string,
   ) => Promise<{ stream: ReadableStream }>;
   handleRscPprShell: (
@@ -502,14 +509,9 @@ async function handleRscActionMessage(
       cleanupPhp = rscHandler.installHostFn(createPhpFn(cbConn));
     }
 
-    // Decode base64 body if encoded by PHP (binary-safe transport for file uploads)
-    let actionBody = message.body ?? "";
-    if ((message as any).bodyEncoding === "base64" && actionBody) {
-      // Convert base64 back to raw bytes as a latin1 string
-      // (preserves byte values for multipart/form-data reconstruction)
-      const buf = Buffer.from(actionBody, "base64");
-      actionBody = buf.toString("latin1");
-    }
+    // Already bytes when a body arrived on its own frame; there is nothing to
+    // decode and nothing to reinterpret.
+    const actionBody = message.body ?? "";
 
     const { stream } = await rscHandler.handleAction(
       message.actionId,
@@ -619,6 +621,15 @@ function writeFrame(socket: SocketLike, json: string): void {
 
 const MAX_FRAME_SIZE = parseInt(process.env.RSC_MAX_FRAME_SIZE || "1048576", 10); // 1MB default
 
+/**
+ * Messages whose body is arriving as the next frame.
+ *
+ * An upload body is bytes, and frames are bytes, so it travels as its own
+ * frame instead of being encoded to fit inside the JSON one. The frame after
+ * such a header is that body and must not be parsed as JSON.
+ */
+const pendingBody = new Map<SocketLike, IncomingMessage>();
+
 // Create the socket files owner-only. Without this, any local user could
 // connect to the predictable socket path and drive the bridge (invoke server
 // actions / php() callables) with no authenticated session. PHP-FPM must run
@@ -654,11 +665,26 @@ const server = listen(
           break;
         }
 
-        const jsonBytes = buf.subarray(4, 4 + frameLength);
+        const payload = buf.subarray(4, 4 + frameLength);
         buf = buf.subarray(4 + frameLength);
 
+        const awaiting = pendingBody.get(socket);
+
+        if (awaiting) {
+          pendingBody.delete(socket);
+          // Copied because the read buffer is reused for the frames after it.
+          awaiting.body = Buffer.from(payload);
+          setTimeout(() => handleRscActionMessage(socket, awaiting), 0);
+          continue;
+        }
+
         try {
-          const message = JSON.parse(jsonBytes.toString("utf-8")) as IncomingMessage;
+          const message = JSON.parse(payload.toString("utf-8")) as IncomingMessage;
+
+          if (message.bodyEncoding === "binary" && (message.bodyLength ?? 0) > 0) {
+            pendingBody.set(socket, message);
+            continue;
+          }
 
           if (message.type === "rsc-stream" || message.type === "rsc-html-stream" || message.type === "rsc-action" || message.type === "rsc-ppr-shell") {
             // Run outside the data handler so socket writes are not corked

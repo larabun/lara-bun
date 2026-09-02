@@ -638,19 +638,16 @@ describe('file uploads through a server action', () => {
   /**
    * The full client→PHP→worker shape for an upload: encodeReply produces
    * FormData, the client serializes it to bytes under an opaque content-type,
-   * PHP base64s those bytes over the socket, and the worker hands back a
-   * latin1 string that handleAction must turn into FormData again.
+   * and PHP forwards those bytes on their own socket frame.
+   *
+   * Bytes the whole way. They used to be base64'd into the JSON frame and
+   * rebuilt here from a latin1 string, which is what this fixture modelled.
    */
-  async function latin1MultipartBody(form: FormData) {
+  async function multipartBody(form: FormData) {
     const serialized = new Response(form)
     const contentType = serialized.headers.get('content-type')!
-    const bytes = new Uint8Array(await serialized.arrayBuffer())
 
-    // PHP transports raw bytes; the worker decodes base64 to a latin1 string.
-    let latin1 = ''
-    for (const byte of bytes) latin1 += String.fromCharCode(byte)
-
-    return { body: latin1, contentType }
+    return { body: new Uint8Array(await serialized.arrayBuffer()), contentType }
   }
 
   test('reconstructs a File from a multipart body', async () => {
@@ -661,7 +658,7 @@ describe('file uploads through a server action', () => {
     const encoded = await encodeReply([file, 'profile picture'])
     expect(encoded).toBeInstanceOf(FormData)
 
-    const { body, contentType } = await latin1MultipartBody(encoded as FormData)
+    const { body, contentType } = await multipartBody(encoded as FormData)
     const { stream } = await engine.handleAction(serverActionId('upload'), body, contentType)
     const payload = await text(stream)
 
@@ -677,7 +674,7 @@ describe('file uploads through a server action', () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff])
     const encoded = await encodeReply([new File([png], 'a.png', { type: 'image/png' }), 'x'])
 
-    const { body, contentType } = await latin1MultipartBody(encoded as FormData)
+    const { body, contentType } = await multipartBody(encoded as FormData)
     const { stream } = await engine.handleAction(serverActionId('upload'), body, contentType)
     const payload = await text(stream)
 

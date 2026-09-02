@@ -144,3 +144,32 @@ describe('clearing', () => {
     expect(getSegmentState(2)).toBeNull()
   })
 })
+
+/**
+ * A prefetched payload carries a segment depth like any other response.
+ *
+ * The prefetch is a real request and goes out with the chain the client holds,
+ * so the server answers with the page alone. Losing that on a cache hit and
+ * treating it as a whole document replaces the root with a page that has no
+ * layouts — which is what a hover-then-click produced: content on a blank
+ * page, no nav, no sidebar, no stylesheet.
+ */
+describe('what a cached navigation has to remember', () => {
+  test('the shape a cache entry needs', async () => {
+    const source = await Bun.file(new URL('../../resources/js/navigate.ts', import.meta.url)).text()
+
+    // Depth and chain travel with the tree, not just alongside the fetch.
+    expect(source).toContain('segmentDepth: number')
+    expect(source).toContain('layouts: string[] | null')
+
+    // And the chain it was fetched against, since a partial only composes
+    // against that one.
+    expect(source).toContain('heldWhenFetched')
+  })
+
+  test('a cache hit is only used when the held chain still matches', async () => {
+    const source = await Bun.file(new URL('../../resources/js/navigate.ts', import.meta.url)).text()
+
+    expect(source).toContain('cached.heldWhenFetched === heldLayouts.join(",")')
+  })
+})

@@ -19,7 +19,7 @@ interface SlotOverride {
 }
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell";
+  type: "ping" | "call" | "list" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell" | "rsc-payload";
   function?: string;
   args?: Record<string, unknown>;
   page?: Record<string, unknown>;
@@ -120,6 +120,28 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
         return JSON.stringify({
           error: err instanceof Error ? err.message : String(err),
         });
+      }
+    }
+
+    case "rsc-payload": {
+      if (!rscHandler) {
+        return '{"error":"RSC not enabled."}';
+      }
+      if (!message.component) {
+        return '{"error":"Missing component in RSC message"}';
+      }
+      try {
+        const result = await rscHandler.handleRscPayload(
+          message.component,
+          message.props ?? {},
+          message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
+          message.from ?? 0,
+          message.pageKey ?? ""
+        );
+
+        return JSON.stringify({ result });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
       }
     }
 

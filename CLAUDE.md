@@ -135,6 +135,16 @@ through to a full-page navigation. Neither failure is visible at build time, so
 `rsc.host_global` and reaches the plugin as `RSC_HOST_GLOBAL`, so the codegen and
 the plugin cannot disagree about what it is called.
 
+### A Prefetched Payload Is Partial Too
+`prefetch` is a real request and goes out with the chain the client holds, so
+the server answers with the page alone. The cache entry therefore stores the
+segment depth and layout chain beside the tree, and the chain it was fetched
+against — a partial only composes against that one, so an entry whose
+`heldWhenFetched` no longer matches is discarded rather than used. Dropping the
+depth on a cache hit makes the client treat a segment as a whole document and
+replace the root with a page that has no layouts: content on a blank page, no
+nav, no stylesheet, only after a hover.
+
 ### Retained Pages Are Still in the DOM
 A boundary keeps recently shown pages mounted behind `<Activity mode="hidden">`,
 which is what makes returning restore a half-typed form: hidden tears down

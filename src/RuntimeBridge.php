@@ -164,6 +164,35 @@ class RuntimeBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
+    /**
+     * Flight payload only, with no HTML pass.
+     *
+     * The segment variant of a prerendered route needs the payload and nothing
+     * else; rscWithoutCallbacks would render the HTML too and discard it.
+     *
+     * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
+     * @return array{rscPayload: string}
+     */
+    public function rscPayload(string $component, array $props, array $layouts, int $from, string $pageKey): array
+    {
+        $response = $this->send(json_encode([
+            'type' => 'rsc-payload',
+            'component' => $component,
+            'props' => $props,
+            'layouts' => $layouts,
+            'loadings' => [],
+            'parallelSlots' => [],
+            'from' => $from,
+            'pageKey' => $pageKey,
+        ], JSON_THROW_ON_ERROR));
+
+        if (isset($response['error'])) {
+            throw new RuntimeException("Bun RSC error: {$response['error']}");
+        }
+
+        return $response['result'];
+    }
+
     public function rscWithoutCallbacks(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], int $from = 0, string $pageKey = ''): array
     {
         $response = $this->send(json_encode([

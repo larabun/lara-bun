@@ -123,12 +123,10 @@ class PrerenderService
         $chain = array_column($rscResponse->getLayouts(), 'component');
 
         if ($chain !== []) {
-            $segment = app(RuntimeBridge::class)->rscWithoutCallbacks(
+            $segment = app(RuntimeBridge::class)->rscPayload(
                 $rscResponse->getComponent(),
                 $rscResponse->getProps(),
                 $rscResponse->getLayouts(),
-                [],
-                [],
                 count($chain),
                 '/'.ltrim($url, '/'),
             );

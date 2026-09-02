@@ -13,6 +13,19 @@ type CallServerFn = (id: string, args: unknown[]) => Promise<unknown>;
 interface CacheEntry {
   tree: Promise<ReactNode>;
   expiresAt: number;
+  /**
+   * What the server said about the payload. A prefetch is a real request, so
+   * it comes back partial like any other — losing that and treating it as a
+   * whole document replaces the root with a page that has no layouts.
+   */
+  segmentDepth: number;
+  layouts: string[] | null;
+  /**
+   * The chain held when this was prefetched. A partial payload is only valid
+   * against the chain it was rendered for; navigate somewhere else first and
+   * it no longer composes.
+   */
+  heldWhenFetched: string;
 }
 
 interface InterceptEntry {
@@ -268,8 +281,16 @@ export async function navigate(
     const cached = cache.get(cacheKey);
     let treePromise: Promise<ReactNode>;
 
-    if (cached && cached.expiresAt > Date.now()) {
-      treePromise = cached.tree;
+    // A partial payload only composes against the chain it was rendered for.
+    const usable =
+      cached !== undefined &&
+      cached.expiresAt > Date.now() &&
+      cached.heldWhenFetched === heldLayouts.join(",");
+
+    if (usable) {
+      treePromise = cached!.tree;
+      segmentDepth = cached!.segmentDepth;
+      nextLayouts = cached!.layouts;
       cache.delete(cacheKey);
     } else {
       cache.delete(cacheKey);
@@ -353,15 +374,27 @@ function prefetchUrl(
 
   cache.delete(cacheKey);
 
-  const tree = fetchRscPayload(url, undefined, interceptSlot, refererUrl)
-    .then((response) => deserializeResponse(response))
+  const entry: CacheEntry = {
+    tree: Promise.resolve(null),
+    expiresAt: Date.now() + ttl,
+    segmentDepth: 0,
+    layouts: null,
+    heldWhenFetched: heldLayouts.join(","),
+  };
+
+  entry.tree = fetchRscPayload(url, undefined, interceptSlot, refererUrl)
+    .then((response) => {
+      entry.segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? 0) || 0;
+
+      const served = response.headers.get("X-RSC-Layouts");
+      if (served !== null) entry.layouts = served === "" ? [] : served.split(",");
+
+      return deserializeResponse(response);
+    })
     .catch(() => {
       cache.delete(cacheKey);
       return null;
     });
 
-  cache.set(cacheKey, {
-    tree,
-    expiresAt: Date.now() + ttl,
-  });
+  cache.set(cacheKey, entry);
 }

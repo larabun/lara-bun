@@ -531,6 +531,29 @@ export async function handleRsc(
   return { body, rscPayload, clientChunks: {}, usedDynamicApis: false }
 }
 
+// Flight payload only (worker: rsc-payload — build-time).
+//
+// The segment variant of a prerendered route needs the payload and nothing
+// else. handleRsc also renders the HTML, which for that variant is built and
+// thrown away — a whole SSR pass per route for output nobody reads.
+export async function handleRscPayload(
+  component: string,
+  props: Record<string, unknown> = {},
+  layouts: LayoutEntry[] = [],
+  loadings: string[] = [],
+  parallelSlots: Record<string, string> = {},
+  from = 0,
+  pageKey = '',
+): Promise<{ rscPayload: string }> {
+  applyHost()
+
+  const flight = renderToReadableStream(
+    await renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey),
+  )
+
+  return { rscPayload: await new Response(flight).text() }
+}
+
 // PPR shell + classification (worker: rsc-ppr-shell — build-time).
 //
 // php() is replaced by a probe that records the call and never resolves, so

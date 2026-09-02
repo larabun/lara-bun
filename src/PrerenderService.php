@@ -176,6 +176,35 @@ class PrerenderService
         return ['type' => 'static', 'reason' => null];
     }
 
+    /**
+     * Remove every artifact previously written for a url.
+     *
+     * A route's classification is not fixed: making a static page read the
+     * request turns it into PPR, and the two write different files —
+     * `.html`/`.flight` versus `.ppr.html`. Nothing removed the old set, and
+     * ServeStaticRsc prefers `.flight`, so the page went on serving a build
+     * from before the change. Every query returned the same frozen copy, with
+     * nothing to say it had happened. `--clean` fixed it, once you knew.
+     *
+     * Called before writing, so each build leaves exactly the artifacts that
+     * belong to what the route is now.
+     */
+    public function purgeArtifacts(string $outputPath, string $url): void
+    {
+        $path = trim($url, '/') ?: 'index';
+        $base = "{$outputPath}/{$path}";
+
+        foreach (['.html', '.flight', '.meta.json', '.ppr.html', '.ppr-meta.json'] as $suffix) {
+            File::delete($base.$suffix);
+        }
+
+        // One per layout depth, and how many there are is a property of the
+        // build being replaced rather than of this one.
+        foreach (File::glob($base.'.seg*.flight') ?: [] as $segment) {
+            File::delete($segment);
+        }
+    }
+
     public function resolveRscResponse(Route $route, string $url): mixed
     {
         $params = $this->extractParams($route, $url);

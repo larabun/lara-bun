@@ -248,6 +248,12 @@ class RscBuildCommand extends Command
      */
     private function prerenderSingleUrl(string $url, Route $route, string $outputPath, PrerenderService $prerender): array
     {
+        // Whatever this route was last build, its artifacts are replaced by the
+        // ones it produces now. A route that changes classification otherwise
+        // keeps serving the old set, since ServeStaticRsc prefers .flight and
+        // PPR never overwrites it.
+        $prerender->purgeArtifacts($outputPath, $url);
+
         $result = $prerender->prerenderUrl($url, $route, $outputPath);
 
         // No dynamic APIs → fully static, already saved

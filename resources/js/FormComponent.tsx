@@ -151,7 +151,30 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
         }
 
         const path = url.pathname + url.search;
+        const shell = action as string;
         const nav = (window as any).__rsc_navigate;
+        const prefetched = (window as any).__rsc_is_prefetched;
+
+        // The route without its query is that route's shell: the layout, the
+        // chrome, and whatever it renders with nothing to show yet. Prefetching
+        // on hover put it in the cache, so going there first costs no request
+        // and puts the page on screen while the real query is still running.
+        //
+        // The query itself is never prefetched. It is the expensive half, and
+        // hovering a search button is not a reason to run someone's search.
+        if (path !== shell && prefetched?.(shell)) {
+          // Awaited rather than raced: navigate() aborts whatever is in flight,
+          // so starting the real one first would cancel the shell before it
+          // could render. It is a cache hit, so this is a render, not a wait.
+          Promise.resolve(nav?.(shell, { replace, preserveScroll })).then(() =>
+            // Replaces, so the shell does not become a back-button stop of its
+            // own — the pair leaves exactly one entry behind.
+            nav?.(path, { replace: true, preserveScroll })
+          );
+
+          return;
+        }
+
         nav?.(path, { replace, preserveScroll });
         return;
       }

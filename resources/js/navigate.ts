@@ -256,6 +256,37 @@ function isExternalUrl(url: string): boolean {
 }
 
 /**
+ * Whether a cached payload can be used for a navigation claiming this chain.
+ *
+ * A partial payload only composes against the chain it was rendered for, so
+ * the chain it was fetched against has to be the one the navigation is about
+ * to claim — not whatever happens to be mounted.
+ */
+function isUsable(cached: CacheEntry | undefined, chain: string[]): boolean {
+  return (
+    cached !== undefined &&
+    cached.expiresAt > Date.now() &&
+    cached.heldWhenFetched === chain.join(",")
+  );
+}
+
+/**
+ * Whether a navigation to this url would be served from the prefetch cache.
+ *
+ * Lets a caller decide whether showing an already-fetched page is free. A form
+ * uses it to put its target route's shell on screen while the real query runs:
+ * worth doing when the shell is in hand, never worth an extra request.
+ */
+export function isPrefetched(url: string): boolean {
+  if (isExternalUrl(url)) return false;
+
+  const interceptSlot = matchIntercept(url);
+  const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
+
+  return isUsable(cache.get(cacheKey), claimedChain(interceptSlot));
+}
+
+/**
  * The layout chain a navigation to a url will claim.
  *
  * Leaving an interception claims fewer layouts than are held, which is what
@@ -345,10 +376,7 @@ export async function navigate(
     // Hovering a link inside a modal prefetches it against the full chain, so
     // reusing that here would skip the layout holding the modal and leave it
     // open over the page behind it.
-    const usable =
-      cached !== undefined &&
-      cached.expiresAt > Date.now() &&
-      cached.heldWhenFetched === chain.join(",");
+    const usable = isUsable(cached, chain);
 
     if (usable) {
       treePromise = cached!.tree;

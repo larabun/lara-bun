@@ -13,7 +13,10 @@ export function registerDom(): void {
   if (registered) return
 
   registered = true
-  GlobalRegistrator.register()
+  // With no url the document is about:blank, whose origin is the string
+  // "null" — enough for history.replaceState to set a path, but `new URL(path,
+  // origin)` throws, so any code resolving a relative URL cannot be tested.
+  GlobalRegistrator.register({ url: 'https://example.test/' })
 
   // Tells React it is inside a test renderer, so act() flushes effects and
   // state updates synchronously instead of warning and deferring.

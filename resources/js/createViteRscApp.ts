@@ -11,6 +11,7 @@ import { clearSegments, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
   cancelPrefetch,
+  isPrefetched,
   navigate,
   prefetch,
   retentionKey,
@@ -80,6 +81,8 @@ export async function createViteRscApp(
   (window as unknown as { __rsc_prefetch: typeof prefetch }).__rsc_prefetch = prefetch;
   (window as unknown as { __rsc_cancel_prefetch: typeof cancelPrefetch }).__rsc_cancel_prefetch =
     cancelPrefetch;
+  (window as unknown as { __rsc_is_prefetched: typeof isPrefetched }).__rsc_is_prefetched =
+    isPrefetched;
 
   // Hydrate from the RSC endpoint (same url + X-RSC, no version header).
   const res = await fetch(window.location.href, { headers: { "X-RSC": "1" } });

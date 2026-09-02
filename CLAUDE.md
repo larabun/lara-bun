@@ -135,6 +135,21 @@ through to a full-page navigation. Neither failure is visible at build time, so
 `rsc.host_global` and reaches the plugin as `RSC_HOST_GLOBAL`, so the codegen and
 the plugin cannot disagree about what it is called.
 
+### Retained Pages Are Still in the DOM
+A boundary keeps recently shown pages mounted behind `<Activity mode="hidden">`,
+which is what makes returning restore a half-typed form: hidden tears down
+effects but keeps state, where unmounting throws it away. They stay in the
+document, so `document.querySelector` can reach a retained page — check
+visibility, not presence, when asserting on the current one. React sets
+`display: none`, so they are out of the accessibility tree.
+
+Retention is bounded (`RETENTION`) because hidden trees keep their DOM, and
+ordered by visit rather than insertion so bouncing between two pages evicts
+neither. The store's state objects are immutable: `useSyncExternalStore`
+compares snapshots by identity, and building a fresh one per read reads as
+"changed every render" — it loops until React throws #185, which reaches the
+browser as a blank page.
+
 ### Partial Navigation Payloads
 A navigation sends `X-RSC-Segments` — the layout chain the client has mounted,
 outermost first. The host compares it with the route's chain

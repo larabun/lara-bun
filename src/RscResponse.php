@@ -192,7 +192,7 @@ class RscResponse implements Responsable
         $chain = array_column($this->layouts, 'component');
         $from = self::commonLayoutDepth(request()->header(Header::X_RSC_SEGMENTS), $chain);
 
-        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $from);
+        $generator = $bridge->rscStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $from, self::pageKey(request()));
 
         // First yield is the stream-start frame — read it eagerly so headers
         // are settled before the body starts streaming. Page metadata lands in
@@ -239,7 +239,7 @@ class RscResponse implements Responsable
     {
         $bridge = app(RuntimeBridge::class);
         $nonce = LaravelRscServiceProvider::cspNonce();
-        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $nonce);
+        $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $nonce, self::pageKey(request()));
 
         // First yield: {clientChunks, metadata}
         $meta = $generator->current();
@@ -282,6 +282,20 @@ class RscResponse implements Responsable
      *
      * @param  list<string>  $chain
      */
+    /**
+     * Identifies the page a payload is for, matching what the client computes.
+     *
+     * Boundaries retain by this, and an intercepted route is a different
+     * rendering of the same URL, so it retains separately from the full page.
+     */
+    public static function pageKey(Request $request): string
+    {
+        $path = $request->getRequestUri();
+        $slot = $request->header(Header::X_RSC_INTERCEPT);
+
+        return $slot ? "__intercept:{$slot}:{$path}" : $path;
+    }
+
     public static function commonLayoutDepth(?string $held, array $chain): int
     {
         if ($held === null || $held === '') {

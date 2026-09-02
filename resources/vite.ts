@@ -273,6 +273,7 @@ function buildElement(
   slotOverrides: Record<string, SlotOverride>,
   head: unknown[] = [],
   from = 0,
+  pageKey = '',
 ) {
   const Component = components[component]
   if (!Component) throw new Error('Unknown RSC component: ' + component)
@@ -327,7 +328,7 @@ function buildElement(
     // outermost layout, so depth 1 is everything below the root layout and the
     // deepest boundary wraps the page alone. With nothing in the client store
     // these render their children unchanged.
-    element = createElement(SegmentBoundary, { depth: i + 1 }, element)
+    element = createElement(SegmentBoundary, { depth: i + 1, pageKey }, element)
 
     element = createElement(Layout, {
       ...(layouts[i].props ?? {}),
@@ -350,6 +351,7 @@ async function renderTree(
   parallelSlots: Record<string, string>,
   slotOverrides: Record<string, SlotOverride>,
   from = 0,
+  pageKey = '',
 ) {
   // The FULL chain, always: a title template lives on an outer layout, and a
   // partial render still has to produce the same <title> the whole document
@@ -368,7 +370,7 @@ async function renderTree(
 
   // Metadata elements are rendered INSIDE the document tree so React 19 hoists
   // <title>/<meta> into <head> (hoisting only works from within the tree).
-  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from)
+  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from, pageKey)
 }
 
 /**
@@ -406,6 +408,7 @@ export async function handleRscStream(
   parallelSlots: Record<string, string> = {},
   slotOverrides: Record<string, SlotOverride> = {},
   from = 0,
+  pageKey = '',
 ): Promise<{ stream: ReadableStream; clientChunks: unknown; segmentDepth: number }> {
   applyHost()
 
@@ -415,7 +418,7 @@ export async function handleRscStream(
 
   return {
     stream: renderToReadableStream(
-      await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, start),
+      await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, start, pageKey),
     ),
     clientChunks: {},
     segmentDepth: start,
@@ -431,9 +434,12 @@ export async function handleRscHtmlStream(
   parallelSlots: Record<string, string> = {},
   slotOverrides: Record<string, SlotOverride> = {},
   nonce?: string,
+  pageKey = '',
 ): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: unknown }> {
   applyHost()
-  const flight = renderToReadableStream(await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides))
+  const flight = renderToReadableStream(
+    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey),
+  )
   const [forHtml, forPayload] = flight.tee()
   const rscPayloadPromise = new Response(forPayload).text()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')

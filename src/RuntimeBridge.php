@@ -279,7 +279,7 @@ class RuntimeBridge
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      */
-    public function rscStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = [], int $from = 0): \Generator
+    public function rscStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = [], int $from = 0, string $pageKey = ''): \Generator
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -304,6 +304,7 @@ class RuntimeBridge
                 'slotOverrides' => $slotOverrides !== [] ? $slotOverrides : null,
                 'callbackId' => $callbackId,
                 'from' => $from,
+                'pageKey' => $pageKey,
             ], JSON_THROW_ON_ERROR));
 
             // Read stream-start before the main loop so HTTP headers flush
@@ -440,7 +441,7 @@ class RuntimeBridge
     /**
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      */
-    public function rscHtmlStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = [], ?string $nonce = null): \Generator
+    public function rscHtmlStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = [], ?string $nonce = null, string $pageKey = ''): \Generator
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -465,6 +466,7 @@ class RuntimeBridge
                 'slotOverrides' => $slotOverrides !== [] ? $slotOverrides : null,
                 'callbackId' => $callbackId,
                 'nonce' => $nonce,
+                'pageKey' => $pageKey,
             ], JSON_THROW_ON_ERROR));
 
             // Read html-start before the main loop so HTTP headers flush

@@ -7,7 +7,7 @@ import { createFromReadableStream, encodeReply, setServerCallback } from "@vitej
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { ActivityRoot } from "./ActivityRouter";
-import { clearSegments, setSegment } from "./segmentStore";
+import { clearSegments, restoreSegments, setSegment } from "./segmentStore";
 import type { ReactNode } from "react";
 import {
   navigate,
@@ -133,9 +133,9 @@ export async function createViteRscApp(
   // Depth 0 is a whole document and replaces the root. Anything deeper is one
   // segment: handing it to the boundary at that depth leaves the layouts above
   // it mounted, which is the point of asking for a partial render at all.
-  setNavigateHandler((newTree: ReactNode, _key: string, segmentDepth: number) => {
+  setNavigateHandler((newTree: ReactNode, key: string, segmentDepth: number) => {
     if (segmentDepth > 0) {
-      setSegment(segmentDepth, newTree);
+      setSegment(segmentDepth, key, newTree);
 
       return;
     }
@@ -143,6 +143,10 @@ export async function createViteRscApp(
     clearSegments();
     root.render(newTree);
   });
+
+  // Back and forward reveal a page the boundaries are still holding, with the
+  // form you were filling in still filled in, and without asking the server.
+  setRestoreHandler((key: string) => restoreSegments(key));
 
   window.addEventListener("popstate", () => {
     // restore: back and forward reveal the page you were on, with its state.

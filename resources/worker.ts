@@ -33,6 +33,8 @@ interface IncomingMessage {
   callbackId?: string;
   /** How many layouts the client already has mounted; the render starts there. */
   from?: number;
+  /** Identifies the page, so boundaries can retain it for a later return. */
+  pageKey?: string;
   nonce?: string;
   actionId?: string;
   body?: string;
@@ -315,7 +317,8 @@ async function handleRscStreamMessage(
       message.props ?? {},
       message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
       message.slotOverrides ?? undefined,
-      message.from ?? 0
+      message.from ?? 0,
+      message.pageKey ?? ""
     );
 
     const reader = stream.getReader();
@@ -390,7 +393,8 @@ async function handleRscHtmlStreamMessage(
         message.props ?? {},
         message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
         message.slotOverrides ?? undefined,
-        message.nonce ?? undefined
+        message.nonce ?? undefined,
+        message.pageKey ?? ""
       );
 
     const reader = htmlStream.getReader();

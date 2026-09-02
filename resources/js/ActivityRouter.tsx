@@ -118,7 +118,7 @@ export function ActivityRoot({ initialKey, initialTree }: { initialKey: string; 
       // A partial payload replaces one segment inside the page that is already
       // showing; only a whole document is a new page to retain.
       if (segmentDepth > 0) {
-        setSegment(segmentDepth, tree as ReactNode)
+        setSegment(segmentDepth, key, tree as ReactNode)
 
         return
       }

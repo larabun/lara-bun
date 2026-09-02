@@ -1,16 +1,18 @@
 /**
- * The store a segment boundary reads from.
+ * What each boundary is showing, and what it keeps alive behind it.
  *
- * Its default matters as much as its behaviour: with nothing stored, every
- * boundary renders the children the server sent, which is exactly the
- * behaviour that existed before boundaries did. That is what lets them be
- * introduced before anything sends partial responses.
+ * Its default matters as much as its behaviour: with nothing stored, a
+ * boundary renders the children the server sent — the behaviour that existed
+ * before boundaries did.
  */
 
 import { afterEach, describe, expect, test } from 'bun:test'
 import {
+  RETENTION,
   clearSegments,
-  getSegment,
+  getSegmentState,
+  restoreSegments,
+  seedSegment,
   setSegment,
   subscribeToSegment,
 } from '../../resources/js/segmentStore'
@@ -18,90 +20,127 @@ import {
 afterEach(() => clearSegments())
 
 describe('defaults', () => {
-  test('an unset depth is undefined, which means "render the server tree"', () => {
-    expect(getSegment(1)).toBeUndefined()
-  })
-
-  test('null is a value, not an absence', () => {
-    // A segment can legitimately render nothing; that must not fall back to
-    // the stale server children.
-    setSegment(1, null)
-
-    expect(getSegment(1)).toBeNull()
+  test('an untouched depth has no state, meaning "render the server tree"', () => {
+    expect(getSegmentState(1)).toBeNull()
   })
 })
 
 describe('replacing a segment', () => {
-  test('notifies only the boundary at that depth', () => {
-    const seen: number[] = []
-    subscribeToSegment(1, () => seen.push(1))
-    subscribeToSegment(2, () => seen.push(2))
+  test('shows the new page and keeps the old one mounted', () => {
+    setSegment(2, '/a', 'tree-a')
+    setSegment(2, '/b', 'tree-b')
 
-    setSegment(1, 'a')
+    const state = getSegmentState(2)!
 
-    expect(seen).toEqual([1])
+    expect(state.activeKey).toBe('/b')
+    // /a is still there — hidden, not unmounted, so its state survives.
+    expect(state.entries.map((e) => e.key)).toEqual(['/a', '/b'])
   })
 
   test('discards deeper segments, which belonged to the replaced page', () => {
-    setSegment(1, 'old-section')
-    setSegment(2, 'old-page')
+    setSegment(1, '/docs', 'section')
+    setSegment(2, '/docs/a', 'page')
 
-    setSegment(1, 'new-section')
+    setSegment(1, '/blog', 'other-section')
 
-    // Leaving depth 2 would render the previous page inside the new section.
-    expect(getSegment(2)).toBeUndefined()
+    expect(getSegmentState(2)).toBeNull()
   })
 
-  test('tells the deeper boundary it was discarded', () => {
-    setSegment(2, 'old-page')
-
+  test('notifies the deeper boundary it was discarded', () => {
+    setSegment(2, '/docs/a', 'page')
     let notified = 0
     subscribeToSegment(2, () => notified++)
 
-    setSegment(1, 'new-section')
+    setSegment(1, '/blog', 'other')
 
     expect(notified).toBe(1)
   })
+})
 
-  test('leaves shallower segments alone', () => {
-    setSegment(1, 'section')
-    setSegment(2, 'page')
+describe('returning to a page', () => {
+  test('reveals it without a new tree', () => {
+    setSegment(2, '/a', 'tree-a')
+    setSegment(2, '/b', 'tree-b')
 
-    expect(getSegment(1)).toBe('section')
+    expect(restoreSegments('/a')).toBe(true)
+    expect(getSegmentState(2)!.activeKey).toBe('/a')
+  })
+
+  test('refuses a page no boundary is holding, so the router fetches', () => {
+    setSegment(2, '/a', 'tree-a')
+
+    expect(restoreSegments('/never-seen')).toBe(false)
+  })
+
+  test('refuses unless every boundary can show it', () => {
+    // Depth 1 only ever saw /docs. Revealing /a at depth 2 while depth 1
+    // showed something else would compose two different pages.
+    setSegment(1, '/docs', 'section')
+    setSegment(2, '/docs/a', 'page-a')
+
+    expect(restoreSegments('/docs/a')).toBe(false)
+  })
+
+  test('refuses when nothing has been stored at all', () => {
+    expect(restoreSegments('/a')).toBe(false)
   })
 })
 
-describe('unsubscribing', () => {
-  test('stops delivering', () => {
-    let calls = 0
-    const off = subscribeToSegment(1, () => calls++)
+describe('the page you arrived on', () => {
+  test('is retained, so you can come back to it', () => {
+    // Seeded from the server-rendered children; without this the first page is
+    // the one page that cannot be returned to.
+    seedSegment(2, '/a', 'server-children')
+    setSegment(2, '/b', 'tree-b')
 
-    setSegment(1, 'a')
-    off()
-    setSegment(1, 'b')
+    expect(restoreSegments('/a')).toBe(true)
+  })
 
-    expect(calls).toBe(1)
+  test('does not change what is showing', () => {
+    setSegment(2, '/b', 'tree-b')
+    seedSegment(2, '/a', 'server-children')
+
+    expect(getSegmentState(2)!.activeKey).toBe('/b')
+  })
+
+  test('is ignored once that page is already held', () => {
+    setSegment(2, '/a', 'navigated')
+    seedSegment(2, '/a', 'stale-children')
+
+    expect(getSegmentState(2)!.entries).toHaveLength(1)
+    expect(getSegmentState(2)!.entries[0].tree).toBe('navigated')
+  })
+})
+
+describe('retention', () => {
+  test('drops the least recently shown past the limit', () => {
+    setSegment(2, '/first', 'a')
+
+    for (let i = 0; i < RETENTION; i++) setSegment(2, `/p${i}`, i)
+
+    // Hidden trees keep their DOM, so the window has to be bounded.
+    expect(restoreSegments('/first')).toBe(false)
+    expect(getSegmentState(2)!.entries).toHaveLength(RETENTION)
+  })
+
+  test('revisiting a page keeps it alive', () => {
+    setSegment(2, '/keep', 'a')
+
+    for (let i = 0; i < RETENTION + 2; i++) {
+      setSegment(2, '/other', i)
+      expect(restoreSegments('/keep')).toBe(true)
+    }
   })
 })
 
 describe('clearing', () => {
   test('returns every boundary to its server-given children', () => {
-    setSegment(1, 'a')
-    setSegment(2, 'b')
+    setSegment(1, '/a', 'x')
+    setSegment(2, '/a/b', 'y')
 
     clearSegments()
 
-    expect(getSegment(1)).toBeUndefined()
-    expect(getSegment(2)).toBeUndefined()
-  })
-
-  test('notifies the boundaries that were showing something', () => {
-    setSegment(1, 'a')
-    let notified = 0
-    subscribeToSegment(1, () => notified++)
-
-    clearSegments()
-
-    expect(notified).toBe(1)
+    expect(getSegmentState(1)).toBeNull()
+    expect(getSegmentState(2)).toBeNull()
   })
 })

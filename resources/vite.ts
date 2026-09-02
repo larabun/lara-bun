@@ -15,6 +15,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import rsc from '@vitejs/plugin-rsc'
 import type { Plugin, ResolvedConfig } from 'vite'
 
@@ -100,6 +101,19 @@ let packageAlias: string | null
 let devOrigin: string
 let routeConfig: { file: string; dynamicPattern: RegExp } | null
 
+/**
+ * This file's directory.
+ *
+ * Not `import.meta.dir`, which is Bun-only: Vite bundles the config and runs it
+ * under Node, where that is undefined and the path resolution below throws
+ * before the build starts. Reached whenever RSC_PACKAGE_DIR is unset — which is
+ * the ordinary case for an app that installs the engine from npm and runs
+ * `vite build` itself.
+ */
+function thisDir(): string {
+  return dirname(fileURLToPath(import.meta.url))
+}
+
 /** routeConfig supplied through the environment, for out-of-process hosts. */
 function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
   const file = process.env.RSC_ROUTE_CONFIG_FILE
@@ -124,7 +138,7 @@ function resolvePaths(options: RscRoutesOptions): void {
   // bundles are SERVER code and stay under outDir, which must never be public.
   publicAssetsDir = resolve(options.assetsDir || process.env.RSC_ASSETS_DIR || join(projectRoot, 'dist/client'))
   assetsBaseUrl = options.assetsUrl || process.env.RSC_ASSETS_URL || '/'
-  packageDir = resolve(options.packageDir || process.env.RSC_PACKAGE_DIR || import.meta.dir)
+  packageDir = resolve(options.packageDir || process.env.RSC_PACKAGE_DIR || thisDir())
   hostGlobal = options.hostGlobal || process.env.RSC_HOST_GLOBAL || 'rpc'
   interceptManifestFile = resolve(
     options.interceptManifestFile || process.env.RSC_INTERCEPT_MANIFEST || join(outDir, 'intercept-manifest.json'),

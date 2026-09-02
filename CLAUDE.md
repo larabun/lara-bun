@@ -135,6 +135,18 @@ through to a full-page navigation. Neither failure is visible at build time, so
 `rsc.host_global` and reaches the plugin as `RSC_HOST_GLOBAL`, so the codegen and
 the plugin cannot disagree about what it is called.
 
+### Development Builds Keep React's Real Errors
+`rsc:dev` and `rsc:build --dev` build against React's development bundle, so a
+failure reads as "Maximum update depth exceeded" rather than "Minified React
+error #185" and a link. Setting NODE_ENV is not enough on its own — `vite build`
+is production mode unless passed `--mode development`, and without that the dev
+build still resolves React's production entry.
+
+Both commands take their environment from `BuildEnvironment::forVite`. They used
+to write it out separately and had already drifted: the watcher was missing the
+import alias and the route.php marker, so `rsc:dev` produced a different build
+from `rsc:build`.
+
 ### Test Navigation as a Journey
 `tests/js/navigationJourneys.test.tsx` drives the real router — its prefetch
 cache, history handling and restore path — against a stand-in server that

@@ -142,8 +142,19 @@ function main(): void {
   log(`Using Vite config: ${configPath}`)
 
   const watch = process.env.RSC_WATCH === '1'
+
+  // A development build keeps React's development bundle, so a failure reads
+  // as "Maximum update depth exceeded" rather than "Minified React error #185"
+  // and a link to look it up. Implied by watching, and available on its own for
+  // reproducing something a production build only reports by number.
+  const dev = watch || process.env.RSC_DEV === '1'
+
   const viteArgs = ['build', '--config', configPath]
   if (watch) viteArgs.push('--watch')
+  // Vite's build command is production mode unless told otherwise, whatever
+  // NODE_ENV says — without this the dev build still resolves React's
+  // production entry.
+  if (dev) viteArgs.push('--mode', 'development')
 
   // Under Bun, `bun x --bun vite` keeps Vite itself on the Bun runtime. Under
   // Node there is no such wrapper, so invoke the locally installed binary.
@@ -151,13 +162,13 @@ function main(): void {
     ? [process.execPath, ['x', '--bun', 'vite', ...viteArgs]]
     : [join(projectRoot, 'node_modules/.bin/vite'), viteArgs]
 
-  log(`Running vite build${watch ? ' --watch' : ''}...`)
+  log(`Running vite build${watch ? ' --watch' : ''}${dev ? ' (development)' : ''}...`)
 
   const proc = spawnSync(command, args, {
     cwd: projectRoot,
     env: {
       ...process.env,
-      NODE_ENV: watch ? 'development' : 'production',
+      NODE_ENV: dev ? 'development' : 'production',
       // Vite stages the config through node_modules/.vite-temp, so the plugin
       // cannot locate this package from its own import.meta. Pass it through.
       RSC_PACKAGE_DIR: packageDir(),

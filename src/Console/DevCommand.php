@@ -3,6 +3,7 @@
 namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
+use LaravelRsc\Support\BuildEnvironment;
 use LaravelRsc\Support\EnginePath;
 use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
@@ -170,15 +171,16 @@ class DevCommand extends Command
      * @param  array<string, string>  $extra
      * @return array<string, string>
      */
+    /**
+     * Always a development build: the watcher exists for the moment something
+     * breaks, and a production bundle reports that as a minified error code.
+     *
+     * @param  array<string, string>  $extra
+     * @return array<string, string>
+     */
     private function viteBuildEnv(array $extra = []): array
     {
-        return array_merge(getenv(), [
-            'RSC_PROJECT_ROOT' => base_path(),
-            'RSC_SOURCE_DIR' => config('rsc.source_dir'),
-            'RSC_OUT_DIR' => base_path('bootstrap/rsc/vite'),
-            'RSC_ASSETS_DIR' => config('rsc.assets_dir'),
-            'RSC_ASSETS_URL' => config('rsc.assets_url'),
-        ], $extra);
+        return BuildEnvironment::forVite(array_merge(['RSC_DEV' => '1'], $extra));
     }
 
     private function findBun(): ?string

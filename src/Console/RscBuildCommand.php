@@ -8,6 +8,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use LaravelRsc\PrerenderService;
 use LaravelRsc\Support\ActionManifest;
+use LaravelRsc\Support\BuildEnvironment;
 use LaravelRsc\Support\EnginePath;
 use LaravelRsc\Support\InterceptManifest;
 use LaravelRsc\Support\RuntimeBinary;
@@ -15,7 +16,8 @@ use Symfony\Component\Process\Process;
 
 class RscBuildCommand extends Command
 {
-    protected $signature = 'rsc:build {--clean : Remove existing static files} {--skip-prerender : Build bundles only} {--skip-bundle : Pre-render only (assumes bundles are already built)}';
+    protected $signature = 'rsc:build {--clean : Remove existing static files} {--skip-prerender : Build bundles only} {--skip-bundle : Pre-render only (assumes bundles are already built)}
+        {--dev : Build against React\'s development bundle, so errors are readable}';
 
     protected $description = 'Build RSC bundles and pre-render static pages';
 
@@ -43,22 +45,11 @@ class RscBuildCommand extends Command
             $this->writeServerActions();
             $this->writeInterceptManifest();
 
-            $bundleProcess = new Process([$runtime, $this->getBuildScript('build-rsc-vite.ts')], base_path(), [
-                'RSC_PROJECT_ROOT' => base_path(),
-                'RSC_SOURCE_DIR' => config('rsc.source_dir'),
-                'RSC_OUT_DIR' => base_path('bootstrap/rsc/vite'),
-                'RSC_ASSETS_DIR' => config('rsc.assets_dir'),
-                'RSC_ASSETS_URL' => config('rsc.assets_url'),
-                'RSC_HOST_GLOBAL' => config('rsc.host_global', 'rpc'),
-
-                // The plugin is host-agnostic and assumes none of these. Laravel's
-                // conventions are supplied here so the plugin stays publishable on
-                // its own: the import prefix for the client runtime, and the file
-                // that marks a route's props dynamic.
-                'RSC_PACKAGE_ALIAS' => config('rsc.package_alias', 'laravel-rsc'),
-                'RSC_ROUTE_CONFIG_FILE' => 'route.php',
-                'RSC_ROUTE_CONFIG_PATTERN' => 'props\s*\(\s*(fn|function)\s*\(',
-            ]);
+            $bundleProcess = new Process(
+                [$runtime, $this->getBuildScript('build-rsc-vite.ts')],
+                base_path(),
+                BuildEnvironment::forVite($this->option('dev') ? ['RSC_DEV' => '1'] : []),
+            );
             $bundleProcess->setTimeout(120);
             $bundleProcess->run(fn ($type, $buffer) => $this->output->write($buffer));
 

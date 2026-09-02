@@ -828,7 +828,19 @@ class RuntimeBridge
 
             try {
                 $result = $registry->execute($function, $args);
-                $response = json_encode(['id' => $id, 'result' => $result], JSON_THROW_ON_ERROR);
+
+                // Anything the callable marked stale rides back with its
+                // result, so the worker can re-render it while it still has
+                // the action open — rather than the browser being told and
+                // asking again.
+                $revalidate = app(Revalidation::class)->flush();
+
+                $response = json_encode(
+                    $revalidate === []
+                        ? ['id' => $id, 'result' => $result]
+                        : ['id' => $id, 'result' => $result, 'revalidate' => $revalidate],
+                    JSON_THROW_ON_ERROR
+                );
             } catch (AuthenticationException $e) {
                 $response = json_encode([
                     'id' => $id,

@@ -518,3 +518,55 @@ describe('what a refusal from the host looks like on the wire', () => {
     expect(frames.find((f) => 'unauthenticated' in f)?.unauthenticated).toBe(true)
   }, 30_000)
 })
+
+describe('what an action says it invalidated', () => {
+  /** Run needsHost, answering its host call the way PHP would. */
+  async function actionAnswering(reply: Record<string, unknown>) {
+    const args = new TextEncoder().encode(JSON.stringify(['ramon']))
+
+    const { main } = await streamRun(
+      {
+        type: 'rsc-action',
+        actionId: actionId('needsHost'),
+        bodyEncoding: 'binary',
+        bodyLength: args.length,
+        contentType: 'text/plain;charset=UTF-8',
+      },
+      async () => reply,
+      1500,
+      [frame(args)],
+    )
+
+    return main.map((f) => f.frame)
+  }
+
+  test('a mark made while the action ran comes back with it', async () => {
+    // The action knows what it changed and the page does not. Reporting it on
+    // the way out is what lets the answer carry the re-rendered part, rather
+    // than the browser being told and asking again.
+    const frames = await actionAnswering({ result: null, revalidate: ['orders'] })
+    const end = frames.find((f) => f.type === 'action-end')
+
+    expect(end).toBeDefined()
+    expect(end!.revalidated).toEqual(['orders'])
+  }, 30_000)
+
+  test('an action that marks nothing says nothing', async () => {
+    // Most actions return what changed and the caller sets it; those must not
+    // pay for a re-render they did not ask for.
+    const frames = await actionAnswering({ result: null })
+    const end = frames.find((f) => f.type === 'action-end')
+
+    expect(end).toBeDefined()
+    expect(end).not.toHaveProperty('revalidated')
+  }, 30_000)
+
+  test('marks do not leak into the next action', async () => {
+    await actionAnswering({ result: null, revalidate: ['orders'] })
+
+    const frames = await actionAnswering({ result: null })
+    const end = frames.find((f) => f.type === 'action-end')
+
+    expect(end).not.toHaveProperty('revalidated')
+  }, 30_000)
+})

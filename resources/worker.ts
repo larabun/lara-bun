@@ -503,9 +503,13 @@ async function handleRscActionMessage(
   }
 
   let cleanupPhp: (() => void) | null = null;
+  // Held beyond the block below: what the host marks stale during the action
+  // is collected against this connection and read after the action returns.
+  let cbConn: SocketLike | null = null;
+
   try {
     if (message.callbackId) {
-      const cbConn = await getCallbackConnection(message.callbackId);
+      cbConn = await getCallbackConnection(message.callbackId);
       cleanupPhp = rscHandler.installHostFn(createPhpFn(cbConn));
     }
 
@@ -536,7 +540,15 @@ async function handleRscActionMessage(
       await yieldToEventLoop();
     }
 
-    writeFrame(mainSocket, '{"type":"action-end"}');
+    // What the host marked stale while the action ran. Reported on the way
+    // out so the answer can carry it; the parts themselves follow once the
+    // worker is given the page context to render them against.
+    const revalidated = takeRevalidated(cbConn);
+
+    writeFrame(
+      mainSocket,
+      JSON.stringify(revalidated.length > 0 ? { type: "action-end", revalidated } : { type: "action-end" }),
+    );
   } catch (err) {
     let errorJson: string;
     if (err instanceof ServerAuthenticationError) {
@@ -629,6 +641,35 @@ const MAX_FRAME_SIZE = parseInt(process.env.RSC_MAX_FRAME_SIZE || "1048576", 10)
  * such a header is that body and must not be parsed as JSON.
  */
 const pendingBody = new Map<SocketLike, IncomingMessage>();
+
+/**
+ * What the host marked stale while an action was running, per callback
+ * connection.
+ *
+ * An action knows what it changed and the page does not, so the marks ride
+ * back with each callback's result. Collected here so the answer to the action
+ * can carry the re-rendered parts — rather than telling the browser what went
+ * stale and waiting for it to ask.
+ */
+const revalidations = new Map<SocketLike, Set<string>>();
+
+function markRevalidated(socket: SocketLike, targets: string[]): void {
+  const marked = revalidations.get(socket) ?? new Set<string>();
+
+  for (const target of targets) marked.add(target);
+
+  revalidations.set(socket, marked);
+}
+
+/** Take what a connection collected and forget it. */
+function takeRevalidated(socket: SocketLike | null): string[] {
+  if (!socket) return [];
+
+  const marked = revalidations.get(socket);
+  revalidations.delete(socket);
+
+  return marked ? [...marked] : [];
+}
 
 // Create the socket files owner-only. Without this, any local user could
 // connect to the predictable socket path and drive the bridge (invoke server
@@ -757,6 +798,10 @@ function handleCbResponse(response: Record<string, unknown>): void {
   const pending = pendingPhpCallbacks.get(id);
   if (!pending) return;
   pendingPhpCallbacks.delete(id);
+
+  if (Array.isArray(response.revalidate) && response.revalidate.length > 0) {
+    markRevalidated(pending.socket, response.revalidate as string[]);
+  }
 
   if (response.unauthenticated) {
     pending.reject(new ServerAuthenticationError(response.error as string));

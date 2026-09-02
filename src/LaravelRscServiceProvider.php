@@ -42,6 +42,11 @@ class LaravelRscServiceProvider extends ServiceProvider
 
         $this->app->singleton(RuntimeBridge::class);
 
+        // Scoped, not singleton: what an action invalidated belongs to the
+        // request that ran it. Under a persistent runtime a singleton would
+        // carry one request's marks into the next.
+        $this->app->scoped(Revalidation::class);
+
         $this->app->singleton(CallableRegistry::class, function ($app) {
             $registry = new CallableRegistry($app);
 

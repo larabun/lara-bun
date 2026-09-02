@@ -49,6 +49,14 @@ class RscBuildCommand extends Command
                 'RSC_ASSETS_DIR' => config('rsc.assets_dir'),
                 'RSC_ASSETS_URL' => config('rsc.assets_url'),
                 'RSC_HOST_GLOBAL' => config('rsc.host_global', 'rpc'),
+
+                // The plugin is host-agnostic and assumes none of these. Laravel's
+                // conventions are supplied here so the plugin stays publishable on
+                // its own: the import prefix for the client runtime, and the file
+                // that marks a route's props dynamic.
+                'RSC_PACKAGE_ALIAS' => config('rsc.package_alias', 'laravel-rsc'),
+                'RSC_ROUTE_CONFIG_FILE' => 'route.php',
+                'RSC_ROUTE_CONFIG_PATTERN' => 'props\s*\(\s*(fn|function)\s*\(',
             ]);
             $bundleProcess->setTimeout(120);
             $bundleProcess->run(fn ($type, $buffer) => $this->output->write($buffer));

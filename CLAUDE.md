@@ -73,6 +73,16 @@ A consequence, not a bug: a slow host call still delays Suspense *completions*
 for its duration, because PHP cannot pump the socket while running app code.
 Fallbacks paint immediately; boundaries behind a 2.5s call resolve after it.
 
+### The Plugin Assumes No Backend
+`rscRoutes()` is published on its own, so it defaults to nothing a particular
+host does: no `route.php`, no `laravel-rsc` import prefix, no
+`resources/js/rsc` or `bootstrap/rsc`. Its defaults are plain Vite ones —
+`src/app` in, `dist/client` + `.rsc` out. Laravel's conventions are passed by
+`RscBuildCommand` through `RSC_PACKAGE_ALIAS`, `RSC_ROUTE_CONFIG_FILE` and
+`RSC_ROUTE_CONFIG_PATTERN`, because a host driving the build out of process
+cannot pass a RegExp any other way. `tests/js/generic-host.test.ts` fails if a
+backend-shaped default reappears, and builds a host that passes nothing.
+
 ### Tailwind Needs @source
 The build compiles no CSS itself — it runs the project's own Vite config, so an
 app adds `@tailwindcss/vite` there like any Vite project. It must also declare

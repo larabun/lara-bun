@@ -19,21 +19,22 @@ import rsc from '@vitejs/plugin-rsc'
 import type { Plugin, ResolvedConfig } from 'vite'
 
 export interface RscRoutesOptions {
-  /** App root. Defaults to RSC_PROJECT_ROOT, then cwd. */
+  /** Project root. Defaults to RSC_PROJECT_ROOT, then cwd. */
   projectRoot?: string
-  /** Directory holding the app/ route tree. Defaults to resources/js/rsc. */
+  /** Directory holding the app/ route tree. Defaults to `src`. */
   sourceDir?: string
-  /** Where server bundles are written. Defaults to bootstrap/rsc/vite. */
+  /** Where the server bundles and generated entries go. Defaults to `.rsc`. */
   outDir?: string
-  /** Where the browser bundle is written. Defaults to public/build/rsc-vite. */
+  /** Where the browser bundle is written. Defaults to `dist/client`. */
   assetsDir?: string
-  /** Public URL the browser bundle is served from. */
+  /** Public URL the browser bundle is served from. Defaults to `/`. */
   assetsUrl?: string
   /**
-   * This package's `resources/` directory, holding the client runtime the
-   * browser entry imports. Vite stages configs through node_modules/.vite-temp,
-   * so import.meta.dir is not this file's real location by the time the plugin
-   * runs — the CLI passes the real path through RSC_PACKAGE_DIR.
+   * This package's directory, holding the client runtime the browser entry
+   * imports. Vite stages configs through node_modules/.vite-temp, so
+   * import.meta.dir is not this file's real location by the time the plugin
+   * runs — a host invoking the build out of process passes the real path
+   * through RSC_PACKAGE_DIR.
    */
   packageDir?: string
   /**
@@ -45,19 +46,28 @@ export interface RscRoutesOptions {
   hostGlobal?: string
   /**
    * JSON file of `{urlPattern, slot}` entries naming the routes the client
-   * router should intercept rather than navigate to. Written by the host.
+   * router should intercept rather than navigate to. Written by the host,
+   * which owns route discovery.
    */
   interceptManifestFile?: string
   /**
-   * Bare-specifier prefix apps use to import the client runtime, as in
-   * `import Link from 'laravel-rsc/Link'`. Aliased to this package's js/
-   * directory so an app never writes a relative path into vendor code.
+   * Bare-specifier prefix for importing the client runtime, as in
+   * `import Link from '<prefix>/Link'`, aliased to this package's js/
+   * directory.
+   *
+   * Only needed when this package is not resolvable from the project's
+   * node_modules — a host that vendors it through its own package manager,
+   * say. Installed from npm, the package name resolves on its own and no
+   * alias is required.
    */
   packageAlias?: string
   /**
-   * How to tell that a route's props are resolved dynamically by the host.
-   * Laravel writes a `route.php` beside the page and resolves `props()` through
-   * a closure; another host substitutes its own file and pattern.
+   * How to tell that a route's props are resolved dynamically by the host, so
+   * the page cannot be prerendered whole.
+   *
+   * Entirely host-defined: a host that writes a config file beside the page
+   * names that file and the pattern that marks it dynamic. Omitted, no page is
+   * classified dynamic on this basis.
    */
   routeConfig?: { file: string; dynamicPattern: RegExp }
 }
@@ -74,33 +84,45 @@ let assetsBaseUrl: string
 let packageDir: string
 let hostGlobal: string
 let interceptManifestFile: string
-let packageAlias: string
-let routeConfig: { file: string; dynamicPattern: RegExp }
+let packageAlias: string | null
+let routeConfig: { file: string; dynamicPattern: RegExp } | null
+
+/** routeConfig supplied through the environment, for out-of-process hosts. */
+function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
+  const file = process.env.RSC_ROUTE_CONFIG_FILE
+  const pattern = process.env.RSC_ROUTE_CONFIG_PATTERN
+
+  if (!file || !pattern) return null
+
+  return { file, dynamicPattern: new RegExp(pattern) }
+}
 
 function resolvePaths(options: RscRoutesOptions): void {
   projectRoot = resolve(options.projectRoot || process.env.RSC_PROJECT_ROOT || process.cwd())
-  sourceDir = resolve(options.sourceDir || process.env.RSC_SOURCE_DIR || join(projectRoot, 'resources/js/rsc'))
-  outDir = resolve(options.outDir || process.env.RSC_OUT_DIR || join(projectRoot, 'bootstrap/rsc/vite'))
+  sourceDir = resolve(options.sourceDir || process.env.RSC_SOURCE_DIR || join(projectRoot, 'src'))
+  outDir = resolve(options.outDir || process.env.RSC_OUT_DIR || join(projectRoot, '.rsc'))
   appDir = join(sourceDir, 'app')
 
   // Generated entries live under the (in-project) out dir so module resolution
   // can walk up to the project's node_modules (@vitejs/plugin-rsc, react, ...).
   genDir = join(outDir, '.gen')
 
-  // The CLIENT bundle is browser-facing and must be web-served from public/; the
-  // rsc/ssr bundles are SERVER code and stay under outDir (never public).
-  publicAssetsDir = resolve(options.assetsDir || process.env.RSC_ASSETS_DIR || join(projectRoot, 'public/build/rsc-vite'))
-  assetsBaseUrl = options.assetsUrl || process.env.RSC_ASSETS_URL || '/build/rsc-vite/'
+  // The CLIENT bundle is browser-facing and has to be web-served; the rsc/ssr
+  // bundles are SERVER code and stay under outDir, which must never be public.
+  publicAssetsDir = resolve(options.assetsDir || process.env.RSC_ASSETS_DIR || join(projectRoot, 'dist/client'))
+  assetsBaseUrl = options.assetsUrl || process.env.RSC_ASSETS_URL || '/'
   packageDir = resolve(options.packageDir || process.env.RSC_PACKAGE_DIR || import.meta.dir)
   hostGlobal = options.hostGlobal || process.env.RSC_HOST_GLOBAL || 'rpc'
   interceptManifestFile = resolve(
     options.interceptManifestFile || process.env.RSC_INTERCEPT_MANIFEST || join(outDir, 'intercept-manifest.json'),
   )
-  packageAlias = options.packageAlias || 'laravel-rsc'
-  routeConfig = options.routeConfig ?? {
-    file: 'route.php',
-    dynamicPattern: /props\s*\(\s*(fn|function)\s*\(/,
-  }
+  packageAlias = options.packageAlias || process.env.RSC_PACKAGE_ALIAS || null
+
+  // No default: which file marks a route dynamic is the host's convention, and
+  // guessing one here would bake a particular backend into a generic plugin.
+  // The env pair exists so a host driving the build out of process can pass it
+  // without writing a config file.
+  routeConfig = options.routeConfig ?? envRouteConfig()
 }
 
 interface Component {
@@ -635,9 +657,9 @@ function validateLoadingBoundaries(): string[] {
     if (pageBlocksOnHostCall(source)) {
       reason = `its default export awaits ${hostGlobal}()`
     } else {
-      const configPath = join(pageDir, routeConfig.file)
+      const configPath = routeConfig ? join(pageDir, routeConfig.file) : null
 
-      if (existsSync(configPath) && routeConfig.dynamicPattern.test(readFileSync(configPath, 'utf-8'))) {
+      if (routeConfig && configPath && existsSync(configPath) && routeConfig.dynamicPattern.test(readFileSync(configPath, 'utf-8'))) {
         reason = `${routeConfig.file} resolves props dynamically`
       }
     }
@@ -704,14 +726,17 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
         // over from the hand-rolled engine.
         resolve: {
           dedupe: ['react', 'react-dom', '@vitejs/plugin-rsc'],
-          // `import Link from 'laravel-rsc/Link'` resolves to the client runtime
-          // shipped with this package, wherever the package is installed.
-          alias: [
-            {
-              find: new RegExp('^' + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(.*)$'),
-              replacement: join(packageDir, 'js') + '/$1',
-            },
-          ],
+          // `import Link from '<packageAlias>/Link'` resolves to the client
+          // runtime shipped here, for hosts that vendor this package outside
+          // node_modules. Installed from npm the name resolves on its own.
+          alias: packageAlias
+            ? [
+                {
+                  find: new RegExp('^' + packageAlias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/(.*)$'),
+                  replacement: join(packageDir, 'js') + '/$1',
+                },
+              ]
+            : [],
         },
         build: { emptyOutDir: true },
         environments: {

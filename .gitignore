@@ -16,3 +16,7 @@ public/build/rsc-vite
 # Tailwind fixtures built by tests/js/tailwind.test.ts
 bootstrap/rsc/tw-*
 bootstrap/rsc/icpt-*
+
+# Generic-consumer fixture built by the plugin tests
+bootstrap/rsc/generic
+bootstrap/rsc/generic-*

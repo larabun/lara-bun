@@ -11,7 +11,9 @@ import { dirname, join, resolve } from 'node:path'
 import { isBun } from './runtime.ts'
 
 const projectRoot = resolve(process.env.RSC_PROJECT_ROOT || process.cwd())
-const outDir = resolve(process.env.RSC_OUT_DIR || join(projectRoot, 'bootstrap/rsc/vite'))
+// Mirrors the plugin's default so the completion message names the
+// directory the build actually wrote to.
+const outDir = resolve(process.env.RSC_OUT_DIR || join(projectRoot, '.rsc'))
 
 function log(...args: unknown[]): void {
   console.error('[laravel-rsc]', ...args)

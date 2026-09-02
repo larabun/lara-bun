@@ -301,11 +301,17 @@ describe('server actions', () => {
 describe('loading.tsx validation', () => {
   const LAYOUT = `export default function L({ children }: any) { return <html><body>{children}</body></html> }\n`
 
+  /** What the Laravel package passes; the plugin itself defaults to neither. */
+  const LARAVEL_ROUTE_CONFIG = {
+    RSC_ROUTE_CONFIG_FILE: 'route.php',
+    RSC_ROUTE_CONFIG_PATTERN: 'props\\s*\\(\\s*(fn|function)\\s*\\(',
+  }
+
   /**
    * Build a throwaway app tree and return the engine's exit code + output.
    * Exit 1 means the build rejected it for a missing loading boundary.
    */
-  async function buildApp(files: Record<string, string>) {
+  async function buildApp(files: Record<string, string>, routeConfig = LARAVEL_ROUTE_CONFIG) {
     const dir = mkdtempSync(join(tmpdir(), 'larabun-validate-'))
     // The generated entries must sit inside the project so their imports can
     // resolve the project's node_modules; only the app source lives in tmp.
@@ -325,6 +331,8 @@ describe('loading.tsx validation', () => {
         RSC_OUT_DIR: buildDir,
         RSC_ASSETS_DIR: join(buildDir, 'public'),
         RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
+        // The plugin knows no backend's file conventions; a host supplies them.
+        ...routeConfig,
       },
       stdout: 'pipe',
       stderr: 'pipe',
@@ -778,5 +786,48 @@ describe('intercept manifest reaches the browser entry', () => {
     expect(entry).toContain('createViteRscApp(document, [])')
 
     cleanup()
+  }, 120_000)
+})
+
+/**
+ * The converse of the route.php rule: the marker only means anything because a
+ * host said so. Without that configuration the same file is just a file, which
+ * is what keeps the plugin publishable independently of any one backend.
+ */
+describe('route config is host-supplied', () => {
+  test('the same route.php is ignored when no host configures it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'larabun-noconf-'))
+    const buildDir = mkdtempSync(join(packageRoot, 'bootstrap/rsc/validate-'))
+
+    mkdirSync(join(dir, 'app/dynamic'), { recursive: true })
+    writeFileSync(
+      join(dir, 'app/layout.tsx'),
+      'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
+    )
+    writeFileSync(join(dir, 'app/dynamic/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
+    writeFileSync(join(dir, 'app/dynamic/route.php'), "<?php\n\nreturn route()->props(fn () => ['a' => 1]);\n")
+
+    const proc = Bun.spawn(['bun', join(packageRoot, 'resources/build-rsc-vite.ts')], {
+      cwd: packageRoot,
+      env: {
+        ...process.env,
+        RSC_PROJECT_ROOT: packageRoot,
+        RSC_SOURCE_DIR: dir,
+        RSC_OUT_DIR: buildDir,
+        RSC_ASSETS_DIR: join(buildDir, 'public'),
+        RSC_VITE_CONFIG: join(packageRoot, 'tests/fixtures/vite.rsc.config.mjs'),
+        RSC_ROUTE_CONFIG_FILE: '',
+        RSC_ROUTE_CONFIG_PATTERN: '',
+      },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    const code = await proc.exited
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(buildDir, { recursive: true, force: true })
+
+    // Builds clean: nothing here knows what a route.php is.
+    expect(code).toBe(0)
   }, 120_000)
 })

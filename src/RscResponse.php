@@ -21,6 +21,8 @@ class RscResponse implements Responsable
     /** @var list<array{component: string, props: array<string, mixed>}> */
     protected array $layouts = [];
 
+    protected bool $shipsClientJs = true;
+
     /** @var list<string> */
     protected array $loadingComponents = [];
 
@@ -316,6 +318,24 @@ class RscResponse implements Responsable
         // The client holding layouts this route does not have means it came
         // from somewhere deeper; only the shared prefix is reusable.
         return min($depth, count($chain));
+    }
+
+    /**
+     * Whether this route ships a client runtime at all.
+     *
+     * Resolved from the route config; a page that opts out renders to HTML and
+     * stops there.
+     */
+    public function shipsClientJs(): bool
+    {
+        return $this->shipsClientJs;
+    }
+
+    public function clientJs(bool $ships): static
+    {
+        $this->shipsClientJs = $ships;
+
+        return $this;
     }
 
     public function getComponent(): string

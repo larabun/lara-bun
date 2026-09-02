@@ -93,11 +93,32 @@ class PrerenderService
         }
 
         // Static page — full render to get HTML + Flight payload
+        $shipsClientJs = $rscResponse->shipsClientJs();
+
         $result = app(RuntimeBridge::class)->rscWithoutCallbacks(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
+            [],
+            [],
+            0,
+            '',
+            $shipsClientJs,
         );
+
+        // Without a runtime a client component is inert markup — a button that
+        // does nothing — so this is refused rather than shipped.
+        $clientComponents = $result['clientComponents'] ?? [];
+
+        if (! $shipsClientJs && $clientComponents !== []) {
+            return [
+                'type' => 'error',
+                'reason' => 'withoutClientJs(), but the tree renders '.implode(', ', $clientComponents)
+                    .'. A client component needs the runtime this route is refusing to ship, so it '
+                    .'would render as inert markup. These usually come from a shared layout rather '
+                    .'than the page itself.',
+            ];
+        }
 
         $version = $rscResponse->getVersion();
 

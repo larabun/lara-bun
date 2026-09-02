@@ -231,6 +231,22 @@ whole document, which replaces the root and unmounts the pages retained behind
 it: the form you were filling in does not survive going back. Most routes in a
 real app are prerendered, so that is the common path, not an edge case.
 
+### A Route Can Ship No JavaScript
+`PageRoute::make()->withoutClientJs()` renders a route to HTML and stops: no
+bootstrap script, so no React, no Flight client, no router. The floor that buys
+back is ~70kB gzip, of which react-dom alone is ~54kB — paid the moment anything
+hydrates, on a page that may have nothing to hydrate.
+
+Two things make it possible. The SSR entry omits `bootstrapScriptContent`, and
+`buildElement` omits the `SegmentBoundary` — the boundary is itself a client
+component, so leaving it in means no page can ever be JS-free.
+
+The build refuses the combination rather than shipping it: a client component
+without a runtime is inert markup, a button that does nothing. The refusal names
+the components responsible, because they are usually inherited from a shared
+layout rather than written on the page. A refusal is a decision, not a
+classification — `prerenderSingleUrl` must return it, not fall through to PPR.
+
 ### Segment Boundaries
 `buildElement` puts a `SegmentBoundary` client component between each layout and
 its children, depth 1 being everything below the root layout. It is the seam a

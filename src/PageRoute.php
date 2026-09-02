@@ -18,6 +18,8 @@ class PageRoute
 
     protected ?Closure $viewDataCallback = null;
 
+    protected bool $withoutClientJs = false;
+
     /** @var Closure|array<string, mixed>|null */
     protected Closure|array|null $propsValue = null;
 
@@ -113,6 +115,28 @@ class PageRoute
     /**
      * @return list<string>
      */
+    /**
+     * Ship no client JavaScript for this route.
+     *
+     * The page renders to HTML and stops there: no React, no Flight client, no
+     * router — about 70kB gzip that a page with nothing interactive on it has
+     * no use for. Links become ordinary browser navigations.
+     *
+     * The build refuses if the page renders a client component, since without
+     * a runtime it would be inert markup rather than a working control.
+     */
+    public function withoutClientJs(bool $without = true): static
+    {
+        $this->withoutClientJs = $without;
+
+        return $this;
+    }
+
+    public function shipsClientJs(): bool
+    {
+        return ! $this->withoutClientJs;
+    }
+
     public function getMiddleware(): array
     {
         return (array) $this->middlewareValue;

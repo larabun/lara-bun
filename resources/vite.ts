@@ -274,6 +274,7 @@ function buildElement(
   head: unknown[] = [],
   from = 0,
   pageKey = '',
+  bootstrap = true,
 ) {
   const Component = components[component]
   if (!Component) throw new Error('Unknown RSC component: ' + component)
@@ -328,7 +329,13 @@ function buildElement(
     // outermost layout, so depth 1 is everything below the root layout and the
     // deepest boundary wraps the page alone. With nothing in the client store
     // these render their children unchanged.
-    element = createElement(SegmentBoundary, { depth: i + 1, pageKey }, element)
+    //
+    // It is a client component, so a route shipping no runtime must not get
+    // one — otherwise every page would drag React in for a seam nothing can
+    // use, and no page could ever be JS-free.
+    if (bootstrap) {
+      element = createElement(SegmentBoundary, { depth: i + 1, pageKey }, element)
+    }
 
     element = createElement(Layout, {
       ...(layouts[i].props ?? {}),
@@ -352,6 +359,7 @@ async function renderTree(
   slotOverrides: Record<string, SlotOverride>,
   from = 0,
   pageKey = '',
+  bootstrap = true,
 ) {
   // The FULL chain, always: a title template lives on an outer layout, and a
   // partial render still has to produce the same <title> the whole document
@@ -370,7 +378,7 @@ async function renderTree(
 
   // Metadata elements are rendered INSIDE the document tree so React 19 hoists
   // <title>/<meta> into <head> (hoisting only works from within the tree).
-  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from, pageKey)
+  return buildElement(component, props, layouts, loadings, parallelSlots, slotOverrides, head, from, pageKey, bootstrap)
 }
 
 /**
@@ -435,15 +443,16 @@ export async function handleRscHtmlStream(
   slotOverrides: Record<string, SlotOverride> = {},
   nonce?: string,
   pageKey = '',
+  bootstrap = true,
 ): Promise<{ htmlStream: ReadableStream; rscPayloadPromise: Promise<string>; clientChunks: unknown }> {
   applyHost()
   const flight = renderToReadableStream(
-    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey),
+    await renderTree(component, props, layouts, loadings, parallelSlots, slotOverrides, 0, pageKey, bootstrap),
   )
   const [forHtml, forPayload] = flight.tee()
   const rscPayloadPromise = new Response(forPayload).text()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(forHtml, nonce)
+  const htmlStream = await ssr.handleSsr(forHtml, nonce, undefined, bootstrap)
   return { htmlStream, rscPayloadPromise, clientChunks: {} }
 }
 
@@ -516,19 +525,49 @@ export async function handleRsc(
   parallelSlots: Record<string, string> = {},
   from = 0,
   pageKey = '',
-): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean }> {
+  bootstrap = true,
+): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean; clientComponents: string[] }> {
   applyHost()
   // renderTree (not bare buildElement) so the prerendered Flight payload carries
   // the same <title>/<meta> elements the live SPA payload does.
   const flight = renderToReadableStream(
-    await renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey),
+    await renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey, bootstrap),
   )
   const [forHtml, forPayload] = flight.tee()
   const rscPayload = await new Response(forPayload).text()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')
-  const htmlStream = await ssr.handleSsr(forHtml)
+  const htmlStream = await ssr.handleSsr(forHtml, undefined, undefined, bootstrap)
   const body = await new Response(htmlStream).text()
-  return { body, rscPayload, clientChunks: {}, usedDynamicApis: false }
+
+  return {
+    body,
+    rscPayload,
+    clientChunks: {},
+    usedDynamicApis: false,
+    // Client reference rows name the components the browser has to run. Shipping
+    // no runtime would leave them as inert markup, so the host refuses — and
+    // says which components forced the decision, since they are usually in a
+    // shared layout rather than the page itself.
+    clientComponents: clientReferenceNames(rscPayload),
+  }
+}
+
+/**
+ * Names of the client components a payload references.
+ *
+ * A row reads 1:I["<module>",[],"Name",1]; the fourth quoted field is the
+ * export. Parsed by splitting rather than matching, because this function is
+ * emitted into a template literal where a regex would need double escaping.
+ */
+function clientReferenceNames(payload: string): string[] {
+  const names = new Set<string>()
+
+  for (const row of payload.split(':I[').slice(1)) {
+    const name = row.split('"')[3]
+    if (name) names.add(name)
+  }
+
+  return [...names]
 }
 
 // Flight payload only (worker: rsc-payload — build-time).
@@ -646,9 +685,17 @@ export async function handleSsr(
   rscStream: ReadableStream,
   nonce?: string,
   onError?: (error: unknown) => void,
+  bootstrap = true,
 ): Promise<ReadableStream> {
   const root = await createFromReadableStream(rscStream)
-  const bootstrapScriptContent = await (import.meta as any).viteRsc.loadBootstrapScriptContent('index')
+
+  // Without the bootstrap the page ships no client runtime at all: no React,
+  // no Flight client, no router. HTML only. A page with nothing interactive on
+  // it has no use for 70kB of hydration.
+  const bootstrapScriptContent = bootstrap
+    ? await (import.meta as any).viteRsc.loadBootstrapScriptContent('index')
+    : undefined
+
   // Without an onError handler React rejects each abortable task on its own,
   // and those rejections surface as unhandled — noisy for the PPR shell render,
   // which aborts on purpose once it has the shell.

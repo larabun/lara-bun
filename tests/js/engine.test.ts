@@ -1000,3 +1000,52 @@ describe('segment rendering', () => {
     expect(payload).toContain('Modal for photo')
   })
 })
+
+/**
+ * A route that ships no client runtime.
+ *
+ * React Server Components keep an application's own code off the client, but
+ * the runtime floor stays: react-dom alone is ~54kB gzip, paid the moment
+ * anything hydrates. A page with nothing interactive on it has no use for that,
+ * and can be HTML and nothing else.
+ */
+describe('rendering without a client bootstrap', () => {
+  test('emits no bootstrap script', async () => {
+    const { htmlStream } = await engine.handleRscHtmlStream(
+      'app/static/page', {}, LAYOUTS, [], {}, {}, undefined, '', false,
+    )
+    const html = await new Response(htmlStream).text()
+
+    expect(html).toContain('Static hello from vite engine')
+    // The bootstrap is what pulls in React, the Flight client and the router.
+    expect(html).not.toContain('<script')
+  })
+
+  test('still emits it by default', async () => {
+    const { htmlStream } = await engine.handleRscHtmlStream(
+      'app/static/page', {}, LAYOUTS, [], {}, {},
+    )
+    const html = await new Response(htmlStream).text()
+
+    expect(html).toContain('<script')
+  })
+
+  test('leaves out the segment boundary, which is itself a client component', async () => {
+    // With one in the tree no page could ever be JS-free: every layout would
+    // drag React in for a seam nothing without a runtime can use. The fixture's
+    // layout has client components of its own, which is the app's choice — the
+    // boundary is the engine's, and must not be imposed.
+    const withRuntime = await engine.handleRsc('app/static/page', {}, null, LAYOUTS, [], {})
+    const without = await engine.handleRsc('app/static/page', {}, null, LAYOUTS, [], {}, 0, '', false)
+
+    expect(withRuntime.clientComponents).toContain('SegmentBoundary')
+    expect(without.clientComponents).not.toContain('SegmentBoundary')
+  })
+
+  test('reports the client components that would force a runtime', async () => {
+    // app/page renders Counter, so it names it rather than failing silently.
+    const result = await engine.handleRsc('app/page', {}, null, LAYOUTS, [], {}, 0, '', false)
+
+    expect(result.clientComponents.length).toBeGreaterThan(0)
+  })
+})

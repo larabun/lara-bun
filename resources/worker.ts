@@ -35,6 +35,8 @@ interface IncomingMessage {
   from?: number;
   /** Identifies the page, so boundaries can retain it for a later return. */
   pageKey?: string;
+  /** False ships the page as HTML only — no React, no router. */
+  bootstrap?: boolean;
   nonce?: string;
   actionId?: string;
   body?: string;
@@ -172,7 +174,8 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
             message.callbackSocket ?? null, // fallback for old protocol
             message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
             message.from ?? 0,
-            message.pageKey ?? ""
+            message.pageKey ?? "",
+            message.bootstrap !== false
           );
           return JSON.stringify({ result: { ...result, metadata } });
         } finally {

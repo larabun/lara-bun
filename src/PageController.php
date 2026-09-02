@@ -126,6 +126,12 @@ class PageController
                 }
             }
 
+            // A route opting out of client JS: innermost config wins, same as
+            // everything else resolved here.
+            if (! $config->shipsClientJs()) {
+                $response->clientJs(false);
+            }
+
             // props → React component props
             if ($config->getProps() !== null) {
                 $pageProps = is_callable($config->getProps())

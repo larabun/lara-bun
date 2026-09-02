@@ -303,6 +303,12 @@ class RscBuildCommand extends Command
             return $result;
         }
 
+        // A refusal is a decision, not a classification: falling through would
+        // silently prerender the page the way it was asked not to be.
+        if ($result['type'] === 'error') {
+            return $result;
+        }
+
         // Uses dynamic APIs → PPR (cached shell + fresh Flight per request)
         return $prerender->prerenderPpr($url, $route, $outputPath);
     }

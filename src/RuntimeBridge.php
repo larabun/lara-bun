@@ -193,7 +193,7 @@ class RuntimeBridge
         return $response['result'];
     }
 
-    public function rscWithoutCallbacks(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], int $from = 0, string $pageKey = ''): array
+    public function rscWithoutCallbacks(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], int $from = 0, string $pageKey = '', bool $bootstrap = true): array
     {
         $response = $this->send(json_encode([
             'type' => 'rsc',
@@ -202,6 +202,7 @@ class RuntimeBridge
             'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
             'from' => $from,
             'pageKey' => $pageKey,
+            'bootstrap' => $bootstrap,
         ], JSON_THROW_ON_ERROR));
 
         if (isset($response['error'])) {

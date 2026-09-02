@@ -8,6 +8,7 @@ use Illuminate\Http\Response;
 use LaravelRsc\Header;
 use LaravelRsc\LaravelRscServiceProvider;
 use LaravelRsc\PrerenderService;
+use LaravelRsc\RscResponse;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class ServeStaticRsc
@@ -23,14 +24,32 @@ class ServeStaticRsc
 
             if (file_exists($flightFile) && file_exists($metaFile)) {
                 $meta = json_decode(file_get_contents($metaFile), true);
+                $chain = $meta['layouts'] ?? [];
+
+                // A client already holding this route's layouts gets the page
+                // on its own. Sending the whole document instead would replace
+                // the root, and replacing the root unmounts the pages retained
+                // behind it — losing the form state going back should restore.
+                $segmentFile = "{$basePath}/{$path}.seg.flight";
+                $held = $request->header(Header::X_RSC_SEGMENTS);
+                $depth = 0;
+                $payload = $flightFile;
+
+                if ($chain !== [] && $held !== null && file_exists($segmentFile)
+                    && RscResponse::commonLayoutDepth($held, $chain) === count($chain)) {
+                    $payload = $segmentFile;
+                    $depth = count($chain);
+                }
 
                 // Like the live SPA response, the prerendered Flight payload is
                 // self-describing — client references, stylesheet <link>s and
                 // <title>/<meta> all travel inside it.
-                return new Response(file_get_contents($flightFile), 200, [
+                return new Response(file_get_contents($payload), 200, [
                     'Content-Type' => 'text/x-component',
                     Header::X_RSC_VERSION => $meta['version'] ?? '',
                     'X-Accel-Buffering' => 'no',
+                    Header::X_RSC_SEGMENT_DEPTH => (string) $depth,
+                    Header::X_RSC_LAYOUTS => implode(',', $chain),
                 ]);
             }
         } else {

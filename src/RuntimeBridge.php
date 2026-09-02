@@ -164,13 +164,15 @@ class RuntimeBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
-    public function rscWithoutCallbacks(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = []): array
+    public function rscWithoutCallbacks(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], int $from = 0, string $pageKey = ''): array
     {
         $response = $this->send(json_encode([
             'type' => 'rsc',
             'component' => $component,
             'props' => $props,
             'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
+            'from' => $from,
+            'pageKey' => $pageKey,
         ], JSON_THROW_ON_ERROR));
 
         if (isset($response['error'])) {

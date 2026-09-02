@@ -514,11 +514,15 @@ export async function handleRsc(
   layouts: LayoutEntry[] = [],
   loadings: string[] = [],
   parallelSlots: Record<string, string> = {},
+  from = 0,
+  pageKey = '',
 ): Promise<{ body: string; rscPayload: string; clientChunks: unknown; usedDynamicApis: boolean }> {
   applyHost()
   // renderTree (not bare buildElement) so the prerendered Flight payload carries
   // the same <title>/<meta> elements the live SPA payload does.
-  const flight = renderToReadableStream(await renderTree(component, props, layouts, loadings, parallelSlots, {}))
+  const flight = renderToReadableStream(
+    await renderTree(component, props, layouts, loadings, parallelSlots, {}, from, pageKey),
+  )
   const [forHtml, forPayload] = flight.tee()
   const rscPayload = await new Response(forPayload).text()
   const ssr = await (import.meta as any).viteRsc.loadModule('ssr', 'index')

@@ -148,7 +148,9 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
             message.component,
             message.props ?? {},
             message.callbackSocket ?? null, // fallback for old protocol
-            message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {}
+            message.layouts ?? [], message.loadings ?? [], message.parallelSlots ?? {},
+            message.from ?? 0,
+            message.pageKey ?? ""
           );
           return JSON.stringify({ result: { ...result, metadata } });
         } finally {

@@ -114,9 +114,32 @@ class PrerenderService
 
         File::put("{$outputPath}/{$path}.html", $html);
         File::put("{$outputPath}/{$path}.flight", $result['rscPayload']);
+
+        // A second payload with the layouts left out, for a client that already
+        // has them mounted. Without it every navigation to a prerendered page
+        // is a whole document, which replaces the root and throws away the
+        // pages being retained behind it — so a form you were filling in on the
+        // page you came from does not survive going back.
+        $chain = array_column($rscResponse->getLayouts(), 'component');
+
+        if ($chain !== []) {
+            $segment = app(RuntimeBridge::class)->rscWithoutCallbacks(
+                $rscResponse->getComponent(),
+                $rscResponse->getProps(),
+                $rscResponse->getLayouts(),
+                [],
+                [],
+                count($chain),
+                '/'.ltrim($url, '/'),
+            );
+
+            File::put("{$outputPath}/{$path}.seg.flight", $segment['rscPayload']);
+        }
+
         $meta = [
             'clientChunks' => $result['clientChunks'],
             'version' => $version,
+            'layouts' => $chain,
         ];
 
         $viewData = $rscResponse->getViewData();

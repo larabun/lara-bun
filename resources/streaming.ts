@@ -105,3 +105,35 @@ export function createDeferredHost(realHostFn: (fn: string, ...args: unknown[]) 
     flush,
   };
 }
+
+/**
+ * Write a React stream out, releasing the deferred host calls at the one safe
+ * moment: after everything already queued — the shell, or the Flight root model
+ * and fallback rows — is on the socket, and before anything that arrives later.
+ *
+ * Both worker paths stream through this so the ordering cannot drift between
+ * them. It already had: the HTML path released after its first chunk and the
+ * Flight path never deferred at all, so a slow host call blocked PHP with most
+ * of the payload still unwritten and the browser rendered nothing until the
+ * call returned.
+ */
+export async function streamWithDeferredRelease<T>(
+  reader: { read(): Promise<{ done: boolean; value?: T }> },
+  onChunk: (chunk: T) => void,
+  release: () => void,
+  idle: () => Promise<void> = yieldToEventLoop,
+): Promise<void> {
+  let { pending, done } = await drainQueuedChunks(reader, onChunk)
+
+  release()
+
+  while (!done) {
+    const result = await (pending ?? reader.read())
+    pending = null
+
+    if (result.done) break
+
+    onChunk(result.value as T)
+    await idle()
+  }
+}

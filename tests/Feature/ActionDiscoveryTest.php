@@ -1,0 +1,45 @@
+<?php
+
+/**
+ * Action discovery reads the app's config, so it belongs with the suite that
+ * boots the framework. The rendering half — where the host global's name is
+ * written — is covered in tests/Unit/ActionManifestTest.php.
+ */
+
+use Illuminate\Support\Facades\Config;
+use LaravelRsc\Support\ActionManifest;
+
+test('discovery maps class methods to camelCase JS names', function () {
+    $dir = sys_get_temp_dir().'/rsc-actions-'.uniqid();
+    mkdir($dir, 0755, true);
+
+    file_put_contents($dir.'/TodoActions.php', <<<'CLASS'
+<?php
+namespace RscTestActions;
+class TodoActions
+{
+    public function add(string $title): array { return []; }
+    public function toggle(string $id): array { return []; }
+    public static function ignored(): void {}
+}
+CLASS);
+
+    require $dir.'/TodoActions.php';
+    Config::set('rsc.actions_dir', $dir);
+
+    $actions = ActionManifest::discover();
+
+    expect($actions)->toBe([
+        'todoActionsAdd' => 'TodoActions.add',
+        'todoActionsToggle' => 'TodoActions.toggle',
+    ]);
+
+    unlink($dir.'/TodoActions.php');
+    rmdir($dir);
+});
+
+test('a missing actions directory discovers nothing', function () {
+    Config::set('rsc.actions_dir', '/nonexistent/app/Rsc/Actions');
+
+    expect(ActionManifest::discover())->toBe([]);
+});

@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { createDeferredHost, drainQueuedChunks } from '../../resources/streaming.ts'
+import { createDeferredHost, drainQueuedChunks, streamWithDeferredRelease } from '../../resources/streaming.ts'
 
 /** A reader whose chunks are already queued, then goes quiet forever. */
 function queuedReader(chunks: string[], thenQuiet = true) {
@@ -201,24 +201,117 @@ describe('createDeferredHost', () => {
   })
 })
 
-/**
- * The client router has to recognise an intercepted link before it asks the
- * server, so the patterns are baked into the generated browser entry. Nothing
- * called setInterceptManifest after the Vite migration, so the manifest stayed
- * empty and every intercepted route fell through to a full-page navigation —
- * the modal demo silently became a normal page.
- */
-describe('intercept manifest wiring', () => {
-  test('the generated browser entry passes the manifest to the bootstrap', async () => {
-    const source = await Bun.file(new URL('../../resources/vite.ts', import.meta.url)).text()
+describe('streamWithDeferredRelease', () => {
+  /**
+   * Let the drain finish. It races each read against a macrotask, so settling
+   * takes more than one turn — wait for the release rather than guessing.
+   */
+  async function settle(events: string[], marker = 'RELEASE'): Promise<void> {
+    for (let i = 0; i < 20 && !events.includes(marker); i++) {
+      await new Promise((r) => setTimeout(r, 0))
+    }
+  }
 
-    // The entry must call createViteRscApp WITH the manifest, not bare.
-    expect(source).toContain('createViteRscApp(document, ${JSON.stringify(readInterceptManifest())})')
+  /**
+   * The ordering both worker paths depend on. PHP runs a host callback on the
+   * same thread that pumps the socket, so a call released too early blocks the
+   * pump with payload still unwritten — which is exactly how a 2.5s rpc() left
+   * the browser blank instead of painting its Suspense fallbacks.
+   */
+  function scriptedReader(queued: string[]) {
+    let i = 0
+    let releaseLate: ((r: { done: boolean; value?: string }) => void) | null = null
+
+    return {
+      reader: {
+        read(): Promise<{ done: boolean; value?: string }> {
+          if (i < queued.length) return Promise.resolve({ done: false, value: queued[i++] })
+
+          return new Promise((resolve) => {
+            releaseLate = resolve
+          })
+        },
+      },
+      /** Deliver a chunk that only becomes available after the host call. */
+      arriveLate(value: string | null) {
+        releaseLate?.(value === null ? { done: true } : { done: false, value })
+      },
+    }
+  }
+
+  test('releases only after every queued chunk is written', async () => {
+    const events: string[] = []
+    const shell = ['<html>', '<head>', 'skeleton-1', 'skeleton-2']
+    const { reader, arriveLate } = scriptedReader(shell)
+
+    const streaming = streamWithDeferredRelease(
+      reader,
+      (c) => events.push(`chunk:${c}`),
+      () => events.push('RELEASE'),
+    )
+
+    await settle(events)
+
+    // Every fallback is on the socket before PHP can block on a host call.
+    expect(events).toEqual([...shell.map((c) => `chunk:${c}`), 'RELEASE'])
+
+    arriveLate(null)
+    await streaming
   })
 
-  test('the bootstrap installs whatever the entry passed it', async () => {
-    const source = await Bun.file(new URL('../../resources/js/createViteRscApp.ts', import.meta.url)).text()
+  test('writes chunks that arrive after the release', async () => {
+    const events: string[] = []
+    const { reader, arriveLate } = scriptedReader(['shell'])
 
-    expect(source).toContain('setInterceptManifest(interceptEntries)')
+    const streaming = streamWithDeferredRelease(
+      reader,
+      (c) => events.push(`chunk:${c}`),
+      () => events.push('RELEASE'),
+      () => Promise.resolve(),
+    )
+
+    await settle(events)
+    expect(events).toEqual(['chunk:shell', 'RELEASE'])
+
+    // A boundary resolving after the host call still reaches the browser.
+    arriveLate('boundary')
+    await settle(events, 'chunk:boundary')
+    arriveLate(null)
+    await streaming
+
+    expect(events).toEqual(['chunk:shell', 'RELEASE', 'chunk:boundary'])
+  })
+
+  test('releases immediately when the payload itself is blocked on a host call', async () => {
+    // A shell that awaits rpc() produces nothing until the call runs, so
+    // holding the queue would deadlock both sides.
+    const events: string[] = []
+    const { reader, arriveLate } = scriptedReader([])
+
+    const streaming = streamWithDeferredRelease(
+      reader,
+      (c) => events.push(`chunk:${c}`),
+      () => events.push('RELEASE'),
+    )
+
+    await settle(events)
+    expect(events).toEqual(['RELEASE'])
+
+    arriveLate(null)
+    await streaming
+  })
+
+  test('still releases when the stream ends inside the drain', async () => {
+    const events: string[] = []
+    let i = 0
+    const chunks = ['only']
+
+    await streamWithDeferredRelease(
+      { read: () => Promise.resolve(i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }) },
+      (c) => events.push(`chunk:${c}`),
+      () => events.push('RELEASE'),
+    )
+
+    expect(events).toEqual(['chunk:only', 'RELEASE'])
   })
 })

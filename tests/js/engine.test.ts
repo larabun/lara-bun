@@ -695,3 +695,78 @@ describe('package alias', () => {
     expect(html).toContain('href="/"')
   })
 })
+
+/**
+ * The client router decides whether a click is an interception before it asks
+ * the server, so the patterns have to be in its bundle. Nothing carried them
+ * across after the migration: the manifest was never installed, matchIntercept
+ * always returned null, and every intercepted link did a full-page navigation.
+ *
+ * PHP's side is covered by PageScannerInterceptTest and RouteInterceptionTest,
+ * and the shape it publishes by InterceptManifestTest. This is the handoff
+ * between them — the part that was untested and therefore the part that broke.
+ */
+describe('intercept manifest reaches the browser entry', () => {
+  function buildApp(manifest: string | null): { entry: string; cleanup: () => void } {
+    const app = mkdtempSync(join(tmpdir(), 'larabun-icpt-'))
+    const buildDir = mkdtempSync(join(packageRoot, 'bootstrap/rsc/icpt-'))
+
+    mkdirSync(join(app, 'app'), { recursive: true })
+    writeFileSync(
+      join(app, 'app/layout.tsx'),
+      'export default function L({ children }: any) { return <html><body>{children}</body></html> }\n',
+    )
+    writeFileSync(join(app, 'app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
+
+    const manifestPath = join(buildDir, 'intercept-manifest.json')
+    if (manifest !== null) writeFileSync(manifestPath, manifest)
+
+    const proc = Bun.spawnSync(['bun', join(packageRoot, 'resources/build-rsc-vite.ts')], {
+      cwd: packageRoot,
+      env: {
+        ...process.env,
+        RSC_PROJECT_ROOT: packageRoot,
+        RSC_SOURCE_DIR: app,
+        RSC_OUT_DIR: buildDir,
+        RSC_ASSETS_DIR: join(buildDir, 'public'),
+      },
+    })
+
+    expect(proc.exitCode).toBe(0)
+
+    return {
+      entry: readFileSync(join(buildDir, '.gen/entry.browser.tsx'), 'utf-8'),
+      cleanup: () => {
+        rmSync(app, { recursive: true, force: true })
+        rmSync(buildDir, { recursive: true, force: true })
+      },
+    }
+  }
+
+  test('patterns the host publishes are baked into the entry', () => {
+    const { entry, cleanup } = buildApp(
+      JSON.stringify([{ urlPattern: '/shop/item/[id]', slot: 'modal' }]),
+    )
+
+    // Passed to the bootstrap, not merely present in the file.
+    expect(entry).toContain('createViteRscApp(document, [{"urlPattern":"/shop/item/[id]","slot":"modal"}])')
+
+    cleanup()
+  }, 120_000)
+
+  test('an app with no interceptors still boots', () => {
+    const { entry, cleanup } = buildApp(null)
+
+    expect(entry).toContain('createViteRscApp(document, [])')
+
+    cleanup()
+  }, 120_000)
+
+  test('an unreadable manifest degrades to no interception, not a failed build', () => {
+    const { entry, cleanup } = buildApp('{ not json')
+
+    expect(entry).toContain('createViteRscApp(document, [])')
+
+    cleanup()
+  }, 120_000)
+})

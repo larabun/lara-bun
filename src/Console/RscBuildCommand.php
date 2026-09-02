@@ -6,9 +6,9 @@ use Illuminate\Console\Command;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
-use LaravelRsc\PageScanner;
 use LaravelRsc\PrerenderService;
 use LaravelRsc\Support\ActionManifest;
+use LaravelRsc\Support\InterceptManifest;
 use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
@@ -124,31 +124,13 @@ class RscBuildCommand extends Command
     /**
      * Publish the intercepted URL patterns for the client router.
      *
-     * The browser decides whether a click is an interception before it asks the
-     * server, so it needs the patterns up front — without them every
-     * intercepted link falls through to a full-page navigation, which is what
-     * the modal demo was doing. PageScanner stays the only thing that resolves
-     * the (.)/(..)/(...) convention; this just hands the result to the build.
+     * Without them every intercepted link falls through to a full-page
+     * navigation, which is what the modal demo was doing after the migration.
      */
     private function writeInterceptManifest(): void
     {
-        $appDir = rtrim((string) config('rsc.source_dir'), '/').'/app';
         $target = base_path('bootstrap/rsc/vite/intercept-manifest.json');
-        $entries = [];
-
-        if (is_dir($appDir)) {
-            $scanner = new PageScanner($appDir);
-            $scanner->scan();
-
-            foreach ($scanner->getPages() as $page) {
-                foreach ($page->interceptRoutes as $intercept) {
-                    $entries[] = [
-                        'urlPattern' => self::clientUrlPattern($page->componentName),
-                        'slot' => $intercept['slot'],
-                    ];
-                }
-            }
-        }
+        $entries = InterceptManifest::discover(rtrim((string) config('rsc.source_dir'), '/').'/app');
 
         File::ensureDirectoryExists(dirname($target));
         File::put($target, json_encode($entries, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
@@ -156,30 +138,6 @@ class RscBuildCommand extends Command
         if ($entries !== []) {
             $this->line('Published '.count($entries).' intercept route(s) → '.$target);
         }
-    }
-
-    /**
-     * The client router's URL pattern for a page component.
-     *
-     * Derived from the component path rather than the Laravel route pattern,
-     * which compiles both `[id]` and `[...slug]` down to `{param}` — matching a
-     * catch-all intercept as a single segment would silently send the wrong
-     * routes to the modal.
-     */
-    private static function clientUrlPattern(string $componentName): string
-    {
-        $path = preg_replace('#^app/#', '', $componentName);
-        $path = preg_replace('#/?page$#', '', (string) $path);
-
-        $segments = array_filter(
-            explode('/', (string) $path),
-            // Route groups and parallel-route slots contribute no URL segment.
-            fn (string $segment) => $segment !== ''
-                && ! str_starts_with($segment, '@')
-                && ! preg_match('/^\(.*\)$/', $segment),
-        );
-
-        return $segments === [] ? '/' : '/'.implode('/', $segments);
     }
 
     /**

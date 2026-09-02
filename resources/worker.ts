@@ -1,6 +1,6 @@
 import { chmodSync, unlinkSync } from "node:fs";
 import { listen, runtimeName, scanScripts, yieldToEventLoop, type SocketLike } from "./runtime.ts";
-import { createDeferredHost, drainQueuedChunks, type DeferredHost } from "./streaming.ts";
+import { createDeferredHost, streamWithDeferredRelease, type DeferredHost } from "./streaming.ts";
 import { join, resolve } from "node:path";
 import { ServerAuthenticationError, ServerAuthorizationError, ServerRedirectError, ServerValidationError } from "./errors.ts";
 
@@ -325,23 +325,9 @@ async function handleRscStreamMessage(
 
     writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata }));
 
-    // Drain everything Flight already has queued — the root model and the rows
-    // for each Suspense fallback — BEFORE releasing the deferred host calls,
-    // for the same reason the HTML path does. Releasing first let a slow call
-    // block PHP with row 0 still unsent, so a navigation rendered nothing at
-    // all until the call returned rather than swapping in fallbacks at once.
-    let { pending: pendingRead, done: streamDone } = await drainQueuedChunks(reader, writeStreamChunk);
-
-    deferred?.flush();
-
-    while (!streamDone) {
-      const { done, value } = await (pendingRead ?? reader.read());
-      pendingRead = null;
-      if (done) break;
-
-      writeStreamChunk(value);
-      await yieldToEventLoop();
-    }
+    // Flight's root model and the rows for each Suspense fallback go out before
+    // any host call is released; see streamWithDeferredRelease.
+    await streamWithDeferredRelease(reader, writeStreamChunk, () => deferred?.flush());
 
     writeFrame(mainSocket, '{"type":"stream-end"}');
   } catch (err) {
@@ -415,29 +401,9 @@ async function handleRscHtmlStreamMessage(
     // Write html-start and the shell without yielding the event loop
     writeFrame(mainSocket, JSON.stringify({ type: "html-start", clientChunks, metadata }));
 
-    // Drain everything React already has queued — the shell, with every
-    // Suspense fallback in it — BEFORE releasing the deferred host calls.
-    //
-    // PHP runs those callbacks synchronously on the same thread that pumps this
-    // socket, so once one starts, nothing we write reaches the browser until it
-    // returns. Releasing them after only the first chunk stranded the rest of
-    // the shell behind a slow call: the browser held ~2KB of <head> for the
-    // length of the callback instead of painting the fallbacks immediately.
-    //
-    // This doubles as the release for a shell that is itself blocked on a host
-    // call: the very first read stays pending, so the calls go out at once.
-    let { pending: pendingRead, done: streamDone } = await drainQueuedChunks(reader, writeHtmlChunk);
-
-    deferred?.flush();
-
-    while (!streamDone) {
-      const { done, value } = await (pendingRead ?? reader.read());
-      pendingRead = null;
-      if (done) break;
-
-      writeHtmlChunk(value);
-      await yieldToEventLoop();
-    }
+    // The whole shell, with every Suspense fallback in it, goes out before any
+    // host call is released; see streamWithDeferredRelease.
+    await streamWithDeferredRelease(reader, writeHtmlChunk, () => deferred?.flush());
 
     const rscPayload = await rscPayloadPromise;
     writeFrame(mainSocket, JSON.stringify({ type: "html-end", rscPayload }));

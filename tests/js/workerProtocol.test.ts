@@ -442,6 +442,24 @@ describe('the request/response messages', () => {
     expect(String(result.shellHtml)).toContain('slow-fallback')
   }, 30_000)
 
+  test('an unknown component is answered, not ignored', async () => {
+    // Silence is indistinguishable from a hung worker: PHP waits out the idle
+    // timeout and reports that instead of the name it got wrong.
+    const [reply] = await exchange([
+      frame(
+        JSON.stringify({
+          type: 'rsc-stream',
+          component: 'app/does-not-exist/page',
+          props: {},
+          layouts: LAYOUTS,
+        }),
+      ),
+    ])
+
+    expect(reply).toBeDefined()
+    expect(JSON.parse(reply!).error).toContain('app/does-not-exist/page')
+  }, 30_000)
+
   test('an unknown message type is answered, not ignored', async () => {
     const [reply] = await exchange([frame('{"type":"nonsense"}')])
 

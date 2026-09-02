@@ -21,7 +21,8 @@ interface InterceptEntry {
 }
 
 let version = "";
-let onNavigate: ((tree: ReactNode) => void) | null = null;
+let onNavigate: ((tree: ReactNode, key: string) => void) | null = null;
+let onRestore: ((key: string) => boolean) | null = null;
 let flightDeserializer: Deserializer | null = null;
 let callServerFn: CallServerFn | null = null;
 let activeController: AbortController | null = null;
@@ -34,8 +35,18 @@ export function setVersion(v: string): void {
   version = v;
 }
 
-export function setNavigateHandler(fn: (tree: ReactNode) => void): void {
+export function setNavigateHandler(fn: (tree: ReactNode, key: string) => void): void {
   onNavigate = fn;
+}
+
+/**
+ * How the router reveals a page that is still mounted behind the current one.
+ *
+ * Returning true means the page was restored with its client state intact and
+ * no request was made.
+ */
+export function setRestoreHandler(fn: (key: string) => boolean): void {
+  onRestore = fn;
 }
 
 export function setDeserializer(fn: Deserializer): void {
@@ -83,7 +94,27 @@ function matchIntercept(url: string): string | null {
 }
 
 export function renderTree(tree: ReactNode): void {
-  onNavigate?.(tree);
+  onNavigate?.(tree, retentionKey(window.location.href, null));
+}
+
+/**
+ * Identity of a page for retention purposes.
+ *
+ * Path and query only: a hash is a position within the same page, and an
+ * intercepted route is a different rendering of the same URL, so it retains
+ * separately from the full page.
+ */
+export function retentionKey(url: string, interceptSlot: string | null): string {
+  let path: string;
+
+  try {
+    const parsed = new URL(url, window.location.origin);
+    path = parsed.pathname + parsed.search;
+  } catch {
+    path = url.split("#")[0];
+  }
+
+  return interceptSlot ? `__intercept:${interceptSlot}:${path}` : path;
 }
 
 export function getCallServer(): CallServerFn {
@@ -153,7 +184,7 @@ function isExternalUrl(url: string): boolean {
 
 export async function navigate(
   url: string,
-  opts?: { replace?: boolean; preserveScroll?: boolean }
+  opts?: { replace?: boolean; preserveScroll?: boolean; restore?: boolean }
 ): Promise<void> {
   // External URLs can't be fetched (CORS) — go directly to full page navigation
   if (isExternalUrl(url)) {
@@ -187,6 +218,25 @@ export async function navigate(
     ? window.location.pathname + window.location.search
     : undefined;
 
+  const activityKey = retentionKey(url, interceptSlot);
+
+  // Back and forward are the browser's own gesture for returning to a page you
+  // were just on, so they reveal the retained one — instantly, and with the
+  // form you were filling in still filled in. A link is a fresh request: the
+  // server may have different data to say, and silently showing a stale page
+  // would be the wrong default.
+  if (opts?.restore && onRestore?.(activityKey)) {
+    if (opts.replace) {
+      history.replaceState({ rscUrl: url }, "", url);
+    } else {
+      history.pushState({ rscUrl: url }, "", url);
+    }
+
+    window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
+
+    return;
+  }
+
   try {
     const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
     const cached = cache.get(cacheKey);
@@ -218,7 +268,7 @@ export async function navigate(
       history.pushState({ rscUrl: url }, "", url);
     }
 
-    onNavigate?.(tree);
+    onNavigate?.(tree, activityKey);
 
     if (!opts?.preserveScroll && !interceptSlot) {
       // Wait for React to commit the DOM update before scrolling.

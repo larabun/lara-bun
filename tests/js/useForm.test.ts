@@ -5,13 +5,9 @@
 // happy-dom is registered before react-dom/client is imported.
 //
 // Run with: bun test tests/js
-import { GlobalRegistrator } from '@happy-dom/global-registrator'
+import { registerDom } from './dom'
 
-GlobalRegistrator.register()
-
-// Tells React it is inside a test renderer, so act() flushes effects and state
-// updates synchronously instead of warning and deferring.
-;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+registerDom()
 
 const { afterEach, describe, expect, test } = await import('bun:test')
 const { act } = await import('react')

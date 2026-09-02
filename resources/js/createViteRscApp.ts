@@ -4,15 +4,19 @@
 // the bun engine's createRscApp + the hand-rolled webpack shim — the plugin
 // resolves client references itself.
 import { createFromReadableStream, encodeReply, setServerCallback } from "@vitejs/plugin-rsc/browser";
+import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
+import { ActivityRoot } from "./ActivityRouter";
 import type { ReactNode } from "react";
 import {
   navigate,
   prefetch,
+  retentionKey,
   setCallServer,
   setDeserializer,
   setInterceptManifest,
   setNavigateHandler,
+  setRestoreHandler,
   setVersion,
 } from "./navigate";
 
@@ -84,7 +88,26 @@ export async function createViteRscApp(
     setVersion(servedVersion);
   }
   const tree = await createFromReadableStream(res.body!, { callServer });
-  const root = hydrateRoot(container, tree as ReactNode, {
+
+  // Retaining the previous page behind <Activity> needs a wrapper above the
+  // page, and React will not hydrate a *document* container through one: the
+  // root child of a document has to be <html>, and wrapping it hangs the
+  // renderer outright (React 19.2.7). An app whose root layout owns <html>
+  // therefore hydrates the tree directly and navigations replace it, as before.
+  //
+  // Apps that hydrate into an element get retention. Giving it to document-
+  // rooted apps means SPA navigation returning only the changed segment rather
+  // than a whole document, which is an engine change, not a client one.
+  const retains = container !== document;
+
+  const shell = retains
+    ? createElement(ActivityRoot, {
+        initialKey: retentionKey(window.location.href, null),
+        initialTree: tree as ReactNode,
+      })
+    : (tree as ReactNode);
+
+  const root = hydrateRoot(container, shell, {
     onRecoverableError(error: unknown, errorInfo: unknown) {
       // A PPR shell is served with its Suspense boundaries deliberately
       // unfinished — the build aborts the render once the static part is out.
@@ -100,10 +123,14 @@ export async function createViteRscApp(
     },
   });
 
-  setNavigateHandler((newTree: ReactNode) => root.render(newTree));
+  // With retention, ActivityRoot registers the handlers as it mounts.
+  if (!retains) {
+    setNavigateHandler((newTree: ReactNode) => root.render(newTree));
+  }
 
   window.addEventListener("popstate", () => {
-    navigate(window.location.href, { replace: true });
+    // restore: back and forward reveal the page you were on, with its state.
+    navigate(window.location.href, { replace: true, restore: true });
   });
 
   history.replaceState({ rscUrl: window.location.href }, "", window.location.href);

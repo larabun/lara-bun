@@ -73,6 +73,19 @@ A consequence, not a bug: a slow host call still delays Suspense *completions*
 for its duration, because PHP cannot pump the socket while running app code.
 Fallbacks paint immediately; boundaries behind a 2.5s call resolve after it.
 
+### Activity Retention Needs a Non-Document Root
+`<Activity mode="hidden">` keeps a page mounted so returning to it restores its
+client state — a half-typed form survives. It needs a wrapper above the page,
+and React will not hydrate a *document* container through one: the root child of
+a document must be `<html>`, and wrapping it does not warn, it hangs the
+renderer (verified on React 19.2.7). So `createViteRscApp` only wraps when the
+container is an element; an app whose root layout owns `<html>` hydrates the
+tree directly and navigations replace it.
+
+Extending retention to document-rooted apps is an engine change, not a client
+one: SPA navigation would have to return only the changed segment instead of a
+whole document, so two retained pages do not mean two `<html>` elements.
+
 ### The Engine Is a Separate npm Package
 The JavaScript half — plugin, build CLI, worker, client runtime — publishes as
 `rsc-router` and is backend-agnostic; this Composer package is one host for it.

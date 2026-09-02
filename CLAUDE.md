@@ -58,6 +58,21 @@ The stream-start frame MUST be yielded before entering the main streaming loop, 
 ### Callback Drain
 Before processing a `php()` callback (which may block), always non-blocking poll the main socket and yield pending stream chunks. This ensures Flight data reaches the browser immediately.
 
+### Shell Before Host Calls
+PHP runs a host callback synchronously on the same thread that pumps the HTML
+socket, so while one is in flight nothing the worker writes reaches the browser.
+The worker therefore drains everything React has already queued — the whole
+shell, with every Suspense fallback in it — before releasing the deferred host
+calls (`drainQueuedChunks` in `resources/runtime.ts`). Releasing after only the
+first chunk strands the rest of the shell for the length of the call. The
+release is a stream-quiet signal, never a timer: the `setTimeout` in the worker
+is a deadlock backstop and must stay long enough that it cannot race a cold
+start. Tests in `tests/js/streaming.test.ts` enforce this.
+
+A consequence, not a bug: a slow host call still delays Suspense *completions*
+for its duration, because PHP cannot pump the socket while running app code.
+Fallbacks paint immediately; boundaries behind a 2.5s call resolve after it.
+
 ### Route Interception
 - `(.)/(..)/(...) ` patterns in `@slot` directories are intercepted routes
 - Intercept pages are excluded from normal route registration

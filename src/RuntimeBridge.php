@@ -93,6 +93,20 @@ class RuntimeBridge
     }
 
     /**
+     * Every socket file this bridge expects a worker to create.
+     *
+     * Callers that need to clear stale sockets ask for them here rather than
+     * rebuilding the path scheme, which is what let the naming drift before.
+     * Empty under the TCP transport, which has no files.
+     *
+     * @return list<string>
+     */
+    public function socketFiles(): array
+    {
+        return [...$this->socketPaths, ...$this->cbSocketPaths];
+    }
+
+    /**
      * Per-worker TCP port assignment, shared by PHP and the serve command so
      * both sides agree. Main ports occupy [base, base+N); callback ports follow
      * at [base+N, base+2N), so the two ranges never overlap.
@@ -672,7 +686,9 @@ class RuntimeBridge
     {
         $anyAlive = false;
 
-        foreach ($this->socketPaths as $i => $path) {
+        // Iterate worker indices rather than $socketPaths, which is empty under
+        // the TCP transport.
+        for ($i = 0; $i < $this->workerCount; $i++) {
             $socket = $this->checkout($i);
 
             try {

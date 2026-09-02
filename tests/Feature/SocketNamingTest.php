@@ -93,3 +93,26 @@ test('falls back to a listening worker when this side counted too high', functio
     unlink($dir.'/w-1.sock');
     rmdir($dir);
 });
+
+test('socketFiles lists the indexed worker and callback sockets', function () {
+    // Callers clear stale sockets through this rather than rebuilding the path
+    // scheme themselves — the duplicate scheme in PrerenderService is what left
+    // `rsc:build` waiting on a file the worker no longer creates.
+    Config::set('rsc.workers', 2);
+    Config::set('rsc.transport', 'unix');
+    Config::set('rsc.socket_path', '/tmp/example.sock');
+
+    expect((new RuntimeBridge)->socketFiles())->toBe([
+        '/tmp/example-0.sock',
+        '/tmp/example-1.sock',
+        '/tmp/example-0.sock.cb',
+        '/tmp/example-1.sock.cb',
+    ]);
+});
+
+test('socketFiles is empty under the tcp transport, which has no files', function () {
+    Config::set('rsc.workers', 2);
+    Config::set('rsc.transport', 'tcp');
+
+    expect((new RuntimeBridge)->socketFiles())->toBe([]);
+});

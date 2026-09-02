@@ -39,6 +39,37 @@ export function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+/**
+ * Read every chunk a stream already has queued, then stop.
+ *
+ * A queued chunk settles its read in a microtask, so it always beats the
+ * macrotask this races it against. A read that loses means the producer is
+ * waiting on data rather than still writing — for React's SSR stream, the
+ * moment the shell is fully out.
+ *
+ * The losing read is handed back rather than dropped, so the caller resumes
+ * without losing a chunk.
+ */
+export async function drainQueuedChunks<T>(
+  reader: { read(): Promise<{ done: boolean; value?: T }> },
+  onChunk: (chunk: T) => void,
+): Promise<{ pending: Promise<{ done: boolean; value?: T }> | null; done: boolean }> {
+  let pending = reader.read()
+
+  while (true) {
+    const settled = await Promise.race([
+      pending.then((result) => ({ result })),
+      yieldToEventLoop().then(() => null),
+    ])
+
+    if (settled === null) return { pending, done: false }
+    if (settled.result.done) return { pending: null, done: true }
+
+    onChunk(settled.result.value as T)
+    pending = reader.read()
+  }
+}
+
 /** Every .ts/.js file under dir, as paths relative to it. */
 export function scanScripts(dir: string): string[] {
   const found: string[] = []

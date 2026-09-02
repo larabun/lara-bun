@@ -386,26 +386,13 @@ class PrerenderService
      */
     public function ensureBunWorker(bool $forceRestart = false): Process|null|false
     {
-        $socketPath = config('rsc.socket_path', '/tmp/bun-bridge.sock');
-
-        if (file_exists($socketPath)) {
-            if ($forceRestart) {
-                // Kill existing worker so we start fresh with new bundles
-                try {
-                    app(RuntimeBridge::class)->disconnect();
-                } catch (\Throwable) {
-                }
-
-                @unlink($socketPath);
-            } else {
-                try {
-                    app(RuntimeBridge::class)->ping();
-
-                    return null;
-                } catch (\Throwable) {
-                    @unlink($socketPath);
-                }
-            }
+        // Readiness is a ping, never a file-existence check. The socket path
+        // scheme lives in RuntimeBridge alone; rebuilding it here is what left
+        // this waiting on a file the worker no longer creates.
+        if ($forceRestart) {
+            $this->clearWorkerSockets();
+        } elseif ($this->workerResponds()) {
+            return null;
         }
 
         $process = new Process([PHP_BINARY, base_path('artisan'), 'rsc:serve']);
@@ -422,16 +409,8 @@ class PrerenderService
             usleep(500_000);
             $waited += 0.5;
 
-            if (file_exists($socketPath)) {
-                try {
-                    // Reset the singleton so it connects to the fresh socket
-                    app()->forgetInstance(RuntimeBridge::class);
-                    app(RuntimeBridge::class)->ping();
-
-                    return $process;
-                } catch (\Throwable) {
-                    // Socket exists but not ready yet
-                }
+            if ($this->workerResponds()) {
+                return $process;
             }
 
             if (! $process->isRunning()) {
@@ -442,6 +421,45 @@ class PrerenderService
         $process->stop(5);
 
         return false;
+    }
+
+    /**
+     * True when at least one worker answers a ping.
+     *
+     * The singleton is dropped first so the bridge reconnects rather than
+     * reusing a pooled socket to a worker that has since been replaced.
+     */
+    private function workerResponds(): bool
+    {
+        try {
+            app()->forgetInstance(RuntimeBridge::class);
+
+            return app(RuntimeBridge::class)->ping();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * Drop a previous worker's connections and socket files so a restart binds
+     * cleanly instead of inheriting a stale listener.
+     */
+    private function clearWorkerSockets(): void
+    {
+        try {
+            $bridge = app(RuntimeBridge::class);
+            $bridge->disconnect();
+
+            foreach ($bridge->socketFiles() as $file) {
+                if (file_exists($file)) {
+                    @unlink($file);
+                }
+            }
+        } catch (\Throwable) {
+            // Nothing connected yet; there is nothing to clear.
+        }
+
+        app()->forgetInstance(RuntimeBridge::class);
     }
 
     /**

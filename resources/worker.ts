@@ -1,5 +1,5 @@
 import { chmodSync, unlinkSync } from "node:fs";
-import { listen, runtimeName, scanScripts, yieldToEventLoop, type SocketLike } from "./runtime.ts";
+import { drainQueuedChunks, listen, runtimeName, scanScripts, yieldToEventLoop, type SocketLike } from "./runtime.ts";
 import { join, resolve } from "node:path";
 import { ServerAuthenticationError, ServerAuthorizationError, ServerRedirectError, ServerValidationError } from "./errors.ts";
 
@@ -379,39 +379,56 @@ async function handleRscHtmlStreamMessage(
   try {
     let deferredPhpFn: ((fn: string, ...args: unknown[]) => Promise<unknown>) | null = null;
     let flushDeferred: (() => void) | null = null;
+    let beginDeferring: (() => void) | null = null;
 
     if (message.callbackId) {
       const cbConn = await getCallbackConnection(message.callbackId);
       const realPhpFn = createPhpFn(cbConn);
 
-      // Deferred php() for Suspense streaming: queue calls so React
-      // emits fallback HTML first, then flush after first chunk.
+      // Deferred host calls for Suspense streaming: queue them so React gets
+      // the whole shell out first, then release once it is on the socket.
       const pendingCalls: Array<{
         fn: string; args: unknown[];
         resolve: (v: unknown) => void; reject: (e: Error) => void;
       }> = [];
       let flushed = false;
+      let deferring = false;
+      let autoFlushTimer: ReturnType<typeof setTimeout> | undefined;
 
       const flush = () => {
         if (flushed) return;
         flushed = true;
+        clearTimeout(autoFlushTimer);
         for (const call of pendingCalls) {
           realPhpFn(call.fn, ...call.args).then(call.resolve, call.reject);
         }
         pendingCalls.length = 0;
       };
 
-      const autoFlushTimer = setTimeout(flush, 100);
-
       deferredPhpFn = (functionName: string, ...args: unknown[]): Promise<unknown> => {
-        if (flushed) return realPhpFn(functionName, ...args);
+        if (!deferring || flushed) return realPhpFn(functionName, ...args);
         return new Promise((resolve, reject) => {
           pendingCalls.push({ fn: functionName, args, resolve, reject });
         });
       };
 
       cleanupPhp = rscHandler.installHostFn(deferredPhpFn);
-      flushDeferred = () => { clearTimeout(autoFlushTimer); flush(); };
+
+      // Deferral covers the render only. Metadata resolves before any HTML
+      // exists, so a host call there has nothing to strand — queueing it would
+      // just stall generateMetadata until the backstop fired.
+      beginDeferring = () => {
+        deferring = true;
+
+        // Backstop only, for a shell that awaits a host call in the component
+        // itself and so can never produce the HTML that would release the
+        // queue. The build rejects that page unless it ships a loading.tsx,
+        // whose shell does not block — so in practice the drain below always
+        // gets there first. Long on purpose: it must never race a cold start.
+        autoFlushTimer = setTimeout(flush, 5000);
+      };
+
+      flushDeferred = flush;
     }
 
     const metadata = await rscHandler.resolveMetadata(
@@ -419,6 +436,8 @@ async function handleRscHtmlStreamMessage(
       message.props ?? {},
       message.layouts ?? [],
     );
+
+    beginDeferring?.();
 
     const { htmlStream, rscPayloadPromise, clientChunks } =
       await rscHandler.handleRscHtmlStream(
@@ -431,40 +450,37 @@ async function handleRscHtmlStreamMessage(
 
     const reader = htmlStream.getReader();
     const decoder = new TextDecoder();
-    let callbacksFlushed = false;
 
-    // Write html-start and the first chunk without yielding the event loop
+    const writeHtmlChunk = (value: string | Uint8Array): void => {
+      const text = typeof value === "string" ? value : decoder.decode(value, { stream: true });
+      writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
+    };
+
+    // Write html-start and the shell without yielding the event loop
     writeFrame(mainSocket, JSON.stringify({ type: "html-start", clientChunks, metadata }));
 
-    const first = await reader.read();
-    if (!first.done) {
-      const text = typeof first.value === "string"
-        ? first.value
-        : decoder.decode(first.value, { stream: true });
-      writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
+    // Drain everything React already has queued — the shell, with every
+    // Suspense fallback in it — BEFORE releasing the deferred host calls.
+    //
+    // PHP runs those callbacks synchronously on the same thread that pumps this
+    // socket, so once one starts, nothing we write reaches the browser until it
+    // returns. Releasing them after only the first chunk stranded the rest of
+    // the shell behind a slow call: the browser held ~2KB of <head> for the
+    // length of the callback instead of painting the fallbacks immediately.
+    //
+    // This doubles as the release for a shell that is itself blocked on a host
+    // call: the very first read stays pending, so the calls go out at once.
+    let { pending: pendingRead, done: streamDone } = await drainQueuedChunks(reader, writeHtmlChunk);
 
-      if (!callbacksFlushed && flushDeferred) {
-        callbacksFlushed = true;
-        flushDeferred();
-      }
-    }
+    if (flushDeferred) flushDeferred();
 
-    if (!first.done) {
-      while (true) {
-        await yieldToEventLoop();
-        const { done, value } = await reader.read();
-        if (done) break;
+    while (!streamDone) {
+      const { done, value } = await (pendingRead ?? reader.read());
+      pendingRead = null;
+      if (done) break;
 
-        const text = typeof value === "string"
-          ? value
-          : decoder.decode(value, { stream: true });
-        writeFrame(mainSocket, JSON.stringify({ type: "html-chunk", data: text }));
-
-        if (!callbacksFlushed && flushDeferred) {
-          callbacksFlushed = true;
-          flushDeferred();
-        }
-      }
+      writeHtmlChunk(value);
+      await yieldToEventLoop();
     }
 
     const rscPayload = await rscPayloadPromise;

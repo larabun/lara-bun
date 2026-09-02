@@ -11,10 +11,12 @@ Document ppr cache at edge
 why do we need to use btoa to upload file?
 
 Why page import have LaravelRsc\PageRoute;, can't these be used outside of laravel?
-React compiler docs stale
+docs is now stale
 
 support view transition when stable in react
 
 support api endpoints
 
 test for route generation
+
+document bun and node usage if differ

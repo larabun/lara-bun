@@ -43,6 +43,11 @@ return [
     'bundle' => env('RSC_BUNDLE', base_path('bootstrap/rsc/vite/dist/rsc/index.js')),
     'source_dir' => env('RSC_SOURCE_DIR', resource_path('js/rsc')),
 
+    // Name of the global your server components call to reach PHP. Both the
+    // Vite plugin and the generated server actions read it from here, so the
+    // two can never disagree about what the global is called.
+    'host_global' => env('RSC_HOST_GLOBAL', 'rpc'),
+
     // Public dir + URL for the browser-facing client bundle. Served directly by
     // the web server (never through PHP); `assets_url` is the Vite base.
     'assets_dir' => env('RSC_ASSETS_DIR', public_path('build/rsc-vite')),

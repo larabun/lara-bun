@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { drainQueuedChunks } from '../../resources/runtime.ts'
+import { createDeferredHost, drainQueuedChunks } from '../../resources/streaming.ts'
 
 /** A reader whose chunks are already queued, then goes quiet forever. */
 function queuedReader(chunks: string[], thenQuiet = true) {
@@ -110,5 +110,115 @@ describe('drainQueuedChunks', () => {
     await drainQueuedChunks(reader, (c) => written.push(c))
 
     expect(written).toEqual(chunks)
+  })
+})
+
+describe('createDeferredHost', () => {
+  /** Records calls and lets the test settle them by hand. */
+  function recordingHost() {
+    const calls: string[] = []
+
+    return {
+      calls,
+      fn: (name: string, ...args: unknown[]): Promise<unknown> => {
+        calls.push(name)
+
+        return Promise.resolve(`${name}:${args.join(',')}`)
+      },
+    }
+  }
+
+  test('does not defer before begin(), so metadata is never queued', async () => {
+    // generateMetadata runs before any payload exists, so a host call there has
+    // nothing to strand. Queueing it only stalled metadata until the backstop.
+    const host = recordingHost()
+    const deferred = createDeferredHost(host.fn)
+
+    await expect(deferred.hostFn('Meta.title')).resolves.toBe('Meta.title:')
+    expect(host.calls).toEqual(['Meta.title'])
+  })
+
+  test('queues calls made during the render until flush()', async () => {
+    const host = recordingHost()
+    const deferred = createDeferredHost(host.fn)
+    deferred.begin()
+
+    const pending = deferred.hostFn('Stats.fetch', 7)
+
+    // The whole point: nothing has reached PHP yet, so it cannot be blocking
+    // while React still has payload to write.
+    expect(host.calls).toEqual([])
+
+    deferred.flush()
+
+    await expect(pending).resolves.toBe('Stats.fetch:7')
+    expect(host.calls).toEqual(['Stats.fetch'])
+  })
+
+  test('passes calls straight through once flushed', async () => {
+    const host = recordingHost()
+    const deferred = createDeferredHost(host.fn)
+    deferred.begin()
+    deferred.flush()
+
+    await expect(deferred.hostFn('Todos.list')).resolves.toBe('Todos.list:')
+    expect(host.calls).toEqual(['Todos.list'])
+  })
+
+  test('flush() is idempotent and never double-sends a queued call', async () => {
+    const host = recordingHost()
+    const deferred = createDeferredHost(host.fn)
+    deferred.begin()
+
+    const pending = deferred.hostFn('Stats.fetch')
+    deferred.flush()
+    deferred.flush()
+
+    await pending
+    expect(host.calls).toEqual(['Stats.fetch'])
+  })
+
+  test('preserves call order across the queue', async () => {
+    const host = recordingHost()
+    const deferred = createDeferredHost(host.fn)
+    deferred.begin()
+
+    const all = Promise.all([deferred.hostFn('a'), deferred.hostFn('b'), deferred.hostFn('c')])
+    deferred.flush()
+
+    await all
+    expect(host.calls).toEqual(['a', 'b', 'c'])
+  })
+
+  test('rejects the caller when the real host call fails', async () => {
+    const deferred = createDeferredHost(() => Promise.reject(new Error('socket closed')))
+    deferred.begin()
+
+    const pending = deferred.hostFn('Stats.fetch')
+    deferred.flush()
+
+    await expect(pending).rejects.toThrow('socket closed')
+  })
+})
+
+/**
+ * The client router has to recognise an intercepted link before it asks the
+ * server, so the patterns are baked into the generated browser entry. Nothing
+ * called setInterceptManifest after the Vite migration, so the manifest stayed
+ * empty and every intercepted route fell through to a full-page navigation —
+ * the modal demo silently became a normal page.
+ */
+describe('intercept manifest wiring', () => {
+  test('the generated browser entry passes the manifest to the bootstrap', async () => {
+    const source = await Bun.file(new URL('../../resources/vite.ts', import.meta.url)).text()
+
+    // The entry must call createViteRscApp WITH the manifest, not bare.
+    expect(source).toContain('createViteRscApp(document, ${JSON.stringify(readInterceptManifest())})')
+  })
+
+  test('the bootstrap installs whatever the entry passed it', async () => {
+    const source = await Bun.file(new URL('../../resources/js/createViteRscApp.ts', import.meta.url)).text()
+
+    expect(source).toContain('setInterceptManifest(interceptEntries)')
   })
 })

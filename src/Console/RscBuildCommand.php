@@ -6,7 +6,9 @@ use Illuminate\Console\Command;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
+use LaravelRsc\PageScanner;
 use LaravelRsc\PrerenderService;
+use LaravelRsc\Support\ActionManifest;
 use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
@@ -37,12 +39,16 @@ class RscBuildCommand extends Command
                 return self::FAILURE;
             }
 
+            $this->writeServerActions();
+            $this->writeInterceptManifest();
+
             $bundleProcess = new Process([$runtime, $this->getBuildScript('build-rsc-vite.ts')], base_path(), [
                 'RSC_PROJECT_ROOT' => base_path(),
                 'RSC_SOURCE_DIR' => config('rsc.source_dir'),
                 'RSC_OUT_DIR' => base_path('bootstrap/rsc/vite'),
                 'RSC_ASSETS_DIR' => config('rsc.assets_dir'),
                 'RSC_ASSETS_URL' => config('rsc.assets_url'),
+                'RSC_HOST_GLOBAL' => config('rsc.host_global', 'rpc'),
             ]);
             $bundleProcess->setTimeout(120);
             $bundleProcess->run(fn ($type, $buffer) => $this->output->write($buffer));
@@ -113,6 +119,95 @@ class RscBuildCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Publish the intercepted URL patterns for the client router.
+     *
+     * The browser decides whether a click is an interception before it asks the
+     * server, so it needs the patterns up front — without them every
+     * intercepted link falls through to a full-page navigation, which is what
+     * the modal demo was doing. PageScanner stays the only thing that resolves
+     * the (.)/(..)/(...) convention; this just hands the result to the build.
+     */
+    private function writeInterceptManifest(): void
+    {
+        $appDir = rtrim((string) config('rsc.source_dir'), '/').'/app';
+        $target = base_path('bootstrap/rsc/vite/intercept-manifest.json');
+        $entries = [];
+
+        if (is_dir($appDir)) {
+            $scanner = new PageScanner($appDir);
+            $scanner->scan();
+
+            foreach ($scanner->getPages() as $page) {
+                foreach ($page->interceptRoutes as $intercept) {
+                    $entries[] = [
+                        'urlPattern' => self::clientUrlPattern($page->componentName),
+                        'slot' => $intercept['slot'],
+                    ];
+                }
+            }
+        }
+
+        File::ensureDirectoryExists(dirname($target));
+        File::put($target, json_encode($entries, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
+
+        if ($entries !== []) {
+            $this->line('Published '.count($entries).' intercept route(s) → '.$target);
+        }
+    }
+
+    /**
+     * The client router's URL pattern for a page component.
+     *
+     * Derived from the component path rather than the Laravel route pattern,
+     * which compiles both `[id]` and `[...slug]` down to `{param}` — matching a
+     * catch-all intercept as a single segment would silently send the wrong
+     * routes to the modal.
+     */
+    private static function clientUrlPattern(string $componentName): string
+    {
+        $path = preg_replace('#^app/#', '', $componentName);
+        $path = preg_replace('#/?page$#', '', (string) $path);
+
+        $segments = array_filter(
+            explode('/', (string) $path),
+            // Route groups and parallel-route slots contribute no URL segment.
+            fn (string $segment) => $segment !== ''
+                && ! str_starts_with($segment, '@')
+                && ! preg_match('/^\(.*\)$/', $segment),
+        );
+
+        return $segments === [] ? '/' : '/'.implode('/', $segments);
+    }
+
+    /**
+     * Regenerate the "use server" module wrapping the app's PHP actions.
+     *
+     * The client imports these as ordinary async functions, so they have to be
+     * rewritten whenever the actions change — or whenever the host global is
+     * renamed, which is how they were last left calling a global that no longer
+     * existed. Written before the bundle build so Vite picks up the new file.
+     */
+    private function writeServerActions(): void
+    {
+        $target = rtrim((string) config('rsc.source_dir'), '/').'/server-actions.generated.ts';
+        $actions = ActionManifest::discover();
+
+        if ($actions === []) {
+            if (File::exists($target)) {
+                File::delete($target);
+                $this->line("Removed stale: {$target}");
+            }
+
+            return;
+        }
+
+        File::ensureDirectoryExists(dirname($target));
+        File::put($target, ActionManifest::render($actions, (string) config('rsc.host_global', 'rpc')));
+
+        $this->line('Generated '.count($actions).' server action(s) → '.$target);
     }
 
     /**

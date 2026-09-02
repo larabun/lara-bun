@@ -11,11 +11,20 @@ import {
   prefetch,
   setCallServer,
   setDeserializer,
+  setInterceptManifest,
   setNavigateHandler,
   setVersion,
 } from "./navigate";
 
-export async function createViteRscApp(container: Document | Element = document): Promise<void> {
+export async function createViteRscApp(
+  container: Document | Element = document,
+  interceptEntries: { urlPattern: string; slot: string }[] = [],
+): Promise<void> {
+  // The router has to recognise an intercepted link before it asks the server,
+  // so the patterns are baked into the generated browser entry. Without them
+  // every intercepted route falls through to a full-page navigation.
+  setInterceptManifest(interceptEntries);
+
   async function callServer(id: string, args: unknown[]): Promise<unknown> {
     const encoded = await encodeReply(args);
 

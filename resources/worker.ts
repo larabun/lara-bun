@@ -1,5 +1,6 @@
 import { chmodSync, unlinkSync } from "node:fs";
-import { drainQueuedChunks, listen, runtimeName, scanScripts, yieldToEventLoop, type SocketLike } from "./runtime.ts";
+import { listen, runtimeName, scanScripts, yieldToEventLoop, type SocketLike } from "./runtime.ts";
+import { createDeferredHost, drainQueuedChunks, type DeferredHost } from "./streaming.ts";
 import { join, resolve } from "node:path";
 import { ServerAuthenticationError, ServerAuthorizationError, ServerRedirectError, ServerValidationError } from "./errors.ts";
 
@@ -291,10 +292,12 @@ async function handleRscStreamMessage(
 
   let cleanupPhp: (() => void) | null = null;
   try {
+    let deferred: DeferredHost | null = null;
+
     if (message.callbackId) {
       const cbConn = await getCallbackConnection(message.callbackId);
-      const phpFn = createPhpFn(cbConn);
-      cleanupPhp = rscHandler.installHostFn(phpFn);
+      deferred = createDeferredHost(createPhpFn(cbConn));
+      cleanupPhp = rscHandler.installHostFn(deferred.hostFn);
     }
 
     const metadata = await rscHandler.resolveMetadata(
@@ -302,6 +305,8 @@ async function handleRscStreamMessage(
       message.props ?? {},
       message.layouts ?? [],
     );
+
+    deferred?.begin();
 
     const { stream, clientChunks } = await rscHandler.handleRscStream(
       message.component,
@@ -313,32 +318,29 @@ async function handleRscStreamMessage(
     const reader = stream.getReader();
     const decoder = new TextDecoder();
 
-    // Write stream-start and immediately read the first chunk WITHOUT
-    // yielding the event loop (no sleep). This ensures the Flight
-    // root model (row 0) reaches PHP on the main socket BEFORE any
-    // php() callback request can be processed — making SPA navigation
-    // resolve instantly even when slow callbacks are pending.
+    const writeStreamChunk = (value: string | Uint8Array): void => {
+      const text = typeof value === "string" ? value : decoder.decode(value, { stream: true });
+      writeFrame(mainSocket, JSON.stringify({ type: "stream-chunk", data: text }));
+    };
+
     writeFrame(mainSocket, JSON.stringify({ type: "stream-start", clientChunks, metadata }));
 
-    const first = await reader.read();
-    if (!first.done) {
-      const text = typeof first.value === "string"
-        ? first.value
-        : decoder.decode(first.value, { stream: true });
-      writeFrame(mainSocket, JSON.stringify({ type: "stream-chunk", data: text }));
-    }
+    // Drain everything Flight already has queued — the root model and the rows
+    // for each Suspense fallback — BEFORE releasing the deferred host calls,
+    // for the same reason the HTML path does. Releasing first let a slow call
+    // block PHP with row 0 still unsent, so a navigation rendered nothing at
+    // all until the call returned rather than swapping in fallbacks at once.
+    let { pending: pendingRead, done: streamDone } = await drainQueuedChunks(reader, writeStreamChunk);
 
-    if (!first.done) {
-      while (true) {
-        await yieldToEventLoop();
-        const { done, value } = await reader.read();
-        if (done) break;
+    deferred?.flush();
 
-        const text = typeof value === "string"
-          ? value
-          : decoder.decode(value, { stream: true });
-        writeFrame(mainSocket, JSON.stringify({ type: "stream-chunk", data: text }));
-      }
+    while (!streamDone) {
+      const { done, value } = await (pendingRead ?? reader.read());
+      pendingRead = null;
+      if (done) break;
+
+      writeStreamChunk(value);
+      await yieldToEventLoop();
     }
 
     writeFrame(mainSocket, '{"type":"stream-end"}');
@@ -377,58 +379,12 @@ async function handleRscHtmlStreamMessage(
 
   let cleanupPhp: (() => void) | null = null;
   try {
-    let deferredPhpFn: ((fn: string, ...args: unknown[]) => Promise<unknown>) | null = null;
-    let flushDeferred: (() => void) | null = null;
-    let beginDeferring: (() => void) | null = null;
+    let deferred: DeferredHost | null = null;
 
     if (message.callbackId) {
       const cbConn = await getCallbackConnection(message.callbackId);
-      const realPhpFn = createPhpFn(cbConn);
-
-      // Deferred host calls for Suspense streaming: queue them so React gets
-      // the whole shell out first, then release once it is on the socket.
-      const pendingCalls: Array<{
-        fn: string; args: unknown[];
-        resolve: (v: unknown) => void; reject: (e: Error) => void;
-      }> = [];
-      let flushed = false;
-      let deferring = false;
-      let autoFlushTimer: ReturnType<typeof setTimeout> | undefined;
-
-      const flush = () => {
-        if (flushed) return;
-        flushed = true;
-        clearTimeout(autoFlushTimer);
-        for (const call of pendingCalls) {
-          realPhpFn(call.fn, ...call.args).then(call.resolve, call.reject);
-        }
-        pendingCalls.length = 0;
-      };
-
-      deferredPhpFn = (functionName: string, ...args: unknown[]): Promise<unknown> => {
-        if (!deferring || flushed) return realPhpFn(functionName, ...args);
-        return new Promise((resolve, reject) => {
-          pendingCalls.push({ fn: functionName, args, resolve, reject });
-        });
-      };
-
-      cleanupPhp = rscHandler.installHostFn(deferredPhpFn);
-
-      // Deferral covers the render only. Metadata resolves before any HTML
-      // exists, so a host call there has nothing to strand — queueing it would
-      // just stall generateMetadata until the backstop fired.
-      beginDeferring = () => {
-        deferring = true;
-
-        // Backstop only, for a shell that awaits a host call in the component
-        // itself and so can never produce the HTML that would release the
-        // queue. The build rejects that page unless it ships a loading.tsx,
-        // whose shell does not block — so in practice the drain below always
-        // gets there first. Long on purpose: it must never race a cold start.
-        autoFlushTimer = setTimeout(flush, 5000);
-      };
-
-      flushDeferred = flush;
+      deferred = createDeferredHost(createPhpFn(cbConn));
+      cleanupPhp = rscHandler.installHostFn(deferred.hostFn);
     }
 
     const metadata = await rscHandler.resolveMetadata(
@@ -437,7 +393,7 @@ async function handleRscHtmlStreamMessage(
       message.layouts ?? [],
     );
 
-    beginDeferring?.();
+    deferred?.begin();
 
     const { htmlStream, rscPayloadPromise, clientChunks } =
       await rscHandler.handleRscHtmlStream(
@@ -472,7 +428,7 @@ async function handleRscHtmlStreamMessage(
     // call: the very first read stays pending, so the calls go out at once.
     let { pending: pendingRead, done: streamDone } = await drainQueuedChunks(reader, writeHtmlChunk);
 
-    if (flushDeferred) flushDeferred();
+    deferred?.flush();
 
     while (!streamDone) {
       const { done, value } = await (pendingRead ?? reader.read());

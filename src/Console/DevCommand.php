@@ -4,143 +4,148 @@ namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
 use LaravelRsc\Support\BuildEnvironment;
-use LaravelRsc\Support\EnginePath;
+use LaravelRsc\Support\DevServer;
+use LaravelRsc\Support\HostManifests;
 use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
+/**
+ * Development mode: the worker renders from source through a Vite dev server.
+ *
+ * There is no bundle and no watcher. The worker imports the generated entry
+ * through Vite's runnable `rsc` environment, so an edit is picked up on the
+ * next request rather than after a rebuild.
+ *
+ * The app keeps its normal development URL — PHP still serves every page. The
+ * dev server only answers module requests, which is the arrangement Laravel
+ * developers already have with Vite. Because @vitejs/plugin-rsc emits those
+ * URLs root-relative and no Vite setting moves them, the SSR entry rewrites
+ * them onto the dev origin; see resources/devUrls.ts.
+ */
 class DevCommand extends Command
 {
-    protected $signature = 'rsc:dev {--socket= : Path to the Unix socket}';
+    protected $signature = 'rsc:dev
+        {--socket= : Path to the Unix socket}
+        {--port=5173 : Port for the Vite dev server}';
 
-    protected $description = 'Start the build watcher and Bun worker for development';
+    protected $description = 'Serve RSC from source through a Vite dev server';
 
-    /** @var Process|null */
-    private $buildProcess = null;
-
-    /** @var Process|null */
-    private $serveProcess = null;
+    private ?Process $serveProcess = null;
 
     public function handle(): int
     {
-        $runtimePath = $this->findBun();
+        if (! config('rsc.enabled')) {
+            $this->error('RSC is not enabled. Set RSC_ENABLED=true in your .env.');
 
-        if ($runtimePath === null) {
+            return self::FAILURE;
+        }
+
+        if (RuntimeBinary::resolve() === null) {
             $this->error(RuntimeBinary::runtime().' executable not found. Run: php artisan rsc:install (or set RSC_RUNTIME_BINARY to its path).');
 
             return self::FAILURE;
         }
 
-        $buildScript = $this->getBuildScript();
+        $config = $this->viteConfigFile();
 
-        if (! file_exists($buildScript)) {
-            $this->error("Build script not found: {$buildScript}");
+        if ($config === null) {
+            $this->error('No Vite config found. Create vite.config.ts with rscRoutes() in its plugins.');
 
             return self::FAILURE;
         }
 
-        $this->trapSignals();
-
-        // Step 1: Run initial build
-        $this->info('Running initial build...');
-        $this->newLine();
-
-        $initialBuild = new Process(
-            [$runtimePath, $buildScript],
-            base_path(),
-            $this->viteBuildEnv(),
-        );
-        $initialBuild->setTimeout(120);
-        $initialBuild->run(fn ($type, $buffer) => $this->output->write($buffer));
-
-        $buildSucceeded = $initialBuild->isSuccessful();
-
-        if (! $buildSucceeded) {
-            $this->warn('Initial build failed — starting watcher so you can fix errors.');
-            $this->newLine();
+        // PHP owns route and action discovery, so these have to exist before
+        // the JavaScript half runs. Dev mode skips the bundle build, which is
+        // exactly how it would come to skip these too.
+        foreach (HostManifests::write() as $note) {
+            $this->line($note);
         }
 
-        // Step 2: Start the Vite build watcher in the background (rebuilds on
-        // source change; the worker restarts via rsc:serve --watch).
-        $this->buildProcess = new Process(
-            [$runtimePath, $buildScript],
-            base_path(),
-            $this->viteBuildEnv(['RSC_WATCH' => '1']),
-        );
-        $this->buildProcess->setTimeout(null);
-        $this->buildProcess->start(fn ($type, $buffer) => $this->output->write($buffer));
+        $this->trapSignals();
 
-        $this->info('Build watcher started.');
-
-        // Step 3: Start rsc:serve --watch (skip if no bundle yet — watcher will trigger it)
+        $port = (int) $this->option('port');
+        $origin = "http://localhost:{$port}";
         $socketOption = $this->option('socket') ? ['--socket='.$this->option('socket')] : [];
-        $bundlePath = config('rsc.bundle', base_path('bootstrap/rsc/entry.rsc.js'));
-        $canServe = $buildSucceeded && file_exists($bundlePath);
 
-        if ($canServe) {
-            $this->serveProcess = new Process(
-                ['php', 'artisan', 'rsc:serve', '--watch', ...$socketOption],
-                base_path(),
-            );
-            $this->serveProcess->setTimeout(null);
-            $this->serveProcess->start(fn ($type, $buffer) => $this->output->write($buffer));
-        } else {
-            $this->warn('Waiting for a successful build before starting the worker...');
-        }
+        $this->serveProcess = new Process(
+            ['php', 'artisan', 'rsc:serve', '--watch', ...$socketOption],
+            base_path(),
+            $this->devEnv($config, $port),
+        );
+        $this->serveProcess->setTimeout(null);
+        $this->serveProcess->start(fn ($type, $buffer) => $this->output->write($buffer));
+
+        // Tells the web process — which has none of this environment — to stop
+        // answering from prerendered output and go to the worker instead.
+        DevServer::start($origin);
 
         $this->newLine();
-        $this->info('Development server started. Press Ctrl+C to stop.');
+        $this->info("Vite dev server on http://localhost:{$port} — serving RSC from source.");
+        $this->info('Open the app at its usual URL. Press Ctrl+C to stop.');
         $this->newLine();
 
-        $this->trapSignals();
-
-        // Step 4: Monitor processes — start worker when build succeeds
-        while ($this->buildProcess->isRunning() || $this->serveProcess?->isRunning()) {
+        while ($this->serveProcess->isRunning()) {
             if (function_exists('pcntl_signal_dispatch')) {
                 pcntl_signal_dispatch();
             }
 
-            // If worker isn't running yet but the bundle now exists, start it
-            if ($this->serveProcess === null && file_exists($bundlePath)) {
-                $this->info('Build succeeded — starting worker...');
-                $this->serveProcess = new Process(
-                    ['php', 'artisan', 'rsc:serve', '--watch', ...$socketOption],
-                    base_path(),
-                );
-                $this->serveProcess->setTimeout(null);
-                $this->serveProcess->start(fn ($type, $buffer) => $this->output->write($buffer));
-            }
-
-            // If build watcher dies, stop everything
-            if (! $this->buildProcess->isRunning() && $this->serveProcess?->isRunning()) {
-                $this->error('Build watcher stopped unexpectedly.');
-                $this->shutdown();
-
-                return self::FAILURE;
-            }
-
-            // If serve process dies, stop everything
-            if ($this->serveProcess !== null && ! $this->serveProcess->isRunning() && $this->buildProcess->isRunning()) {
-                $this->error('Bun worker stopped unexpectedly.');
-                $this->shutdown();
-
-                return self::FAILURE;
-            }
-
-            usleep(200_000); // 200ms
+            usleep(200_000);
         }
 
-        return self::SUCCESS;
+        // The worker died on its own; a stale hot file would leave every
+        // request going to a worker that is not there.
+        DevServer::stop();
+
+        return $this->serveProcess->isSuccessful() ? self::SUCCESS : self::FAILURE;
     }
 
-    private function shutdown(): void
+    /**
+     * Environment for a worker that renders from source.
+     *
+     * @return array<string, string>
+     */
+    private function devEnv(string $config, int $port): array
     {
-        if ($this->serveProcess?->isRunning()) {
-            $this->serveProcess->stop(5);
+        $origin = "http://localhost:{$port}";
+
+        return BuildEnvironment::forVite([
+            // Presence of this is what puts the worker in dev mode.
+            'RSC_DEV_CONFIG' => $config,
+            'RSC_DEV_PORT' => (string) $port,
+            // Baked into the SSR entry so it can point the browser at Vite.
+            'RSC_DEV_ORIGIN' => $origin,
+            'RSC_DEV' => '1',
+            // No built assets exist in dev, so Vite serves from the root. The
+            // production base would otherwise prefix every dev module URL
+            // (/build/rsc-vite/@id/...), which is neither where Vite serves
+            // them nor what the rewrite looks for.
+            'RSC_ASSETS_URL' => '/',
+            // One dev server, so one worker — a second would find the port
+            // taken and fail on strictPort.
+            'RSC_WORKERS' => '1',
+        ]);
+    }
+
+    /**
+     * The config Vite should run, resolved the way the build resolves it.
+     *
+     * vite.rsc.config.* wins so an app whose root config drives another asset
+     * pipeline can keep the two separate.
+     */
+    private function viteConfigFile(): ?string
+    {
+        $names = [
+            'vite.rsc.config.ts', 'vite.rsc.config.mts', 'vite.rsc.config.js', 'vite.rsc.config.mjs',
+            'vite.config.ts', 'vite.config.mts', 'vite.config.js', 'vite.config.mjs',
+        ];
+
+        foreach ($names as $name) {
+            if (file_exists(base_path($name))) {
+                return base_path($name);
+            }
         }
 
-        if ($this->buildProcess?->isRunning()) {
-            $this->buildProcess->stop(5);
-        }
+        return null;
     }
 
     private function trapSignals(): void
@@ -152,39 +157,17 @@ class DevCommand extends Command
         $handler = function (): void {
             $this->newLine();
             $this->info('Shutting down...');
-            $this->shutdown();
+
+            if ($this->serveProcess?->isRunning()) {
+                $this->serveProcess->stop(5);
+            }
+
+            DevServer::stop();
+
             exit(0);
         };
 
         pcntl_signal(SIGINT, $handler);
         pcntl_signal(SIGTERM, $handler);
-    }
-
-    private function getBuildScript(): string
-    {
-        return EnginePath::script('build-rsc-vite.ts') ?? 'build-rsc-vite.ts';
-    }
-
-    /**
-     * Environment for the Vite RSC build engine (build-rsc-vite.ts).
-     *
-     * @param  array<string, string>  $extra
-     * @return array<string, string>
-     */
-    /**
-     * Always a development build: the watcher exists for the moment something
-     * breaks, and a production bundle reports that as a minified error code.
-     *
-     * @param  array<string, string>  $extra
-     * @return array<string, string>
-     */
-    private function viteBuildEnv(array $extra = []): array
-    {
-        return BuildEnvironment::forVite(array_merge(['RSC_DEV' => '1'], $extra));
-    }
-
-    private function findBun(): ?string
-    {
-        return RuntimeBinary::resolve();
     }
 }

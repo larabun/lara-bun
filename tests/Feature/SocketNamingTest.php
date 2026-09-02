@@ -116,3 +116,19 @@ test('socketFiles is empty under the tcp transport, which has no files', functio
 
     expect((new RuntimeBridge)->socketFiles())->toBe([]);
 });
+
+test('the single-worker path binds where php connects', function () {
+    // rsc:serve has two paths: several workers, which indexes correctly, and
+    // one worker, which passed the raw path to the worker while logging and
+    // connecting to the indexed one. Nothing hit it because the default worker
+    // count is above one — but dev mode forces exactly one worker, so it hit
+    // every request, and the error named a socket the running worker had not
+    // created.
+    $source = file_get_contents(__DIR__.'/../../src/Console/ServeCommand.php');
+    $start = strpos($source, 'private function serveSingle(');
+    $end = strpos($source, 'private function serveMultiple(');
+    $body = substr($source, $start, $end - $start);
+
+    expect($body)->toContain('$this->spawnWorker($runtimePath, $workerPath, 0, $this->socketPaths[0],')
+        ->and($body)->not->toContain('$this->spawnWorker($runtimePath, $workerPath, 0, $socketPath,');
+});

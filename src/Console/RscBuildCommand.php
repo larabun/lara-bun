@@ -7,10 +7,9 @@ use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use LaravelRsc\PrerenderService;
-use LaravelRsc\Support\ActionManifest;
 use LaravelRsc\Support\BuildEnvironment;
 use LaravelRsc\Support\EnginePath;
-use LaravelRsc\Support\InterceptManifest;
+use LaravelRsc\Support\HostManifests;
 use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
@@ -42,8 +41,7 @@ class RscBuildCommand extends Command
                 return self::FAILURE;
             }
 
-            $this->writeServerActions();
-            $this->writeInterceptManifest();
+            $this->writeHostManifests();
 
             $bundleProcess = new Process(
                 [$runtime, $this->getBuildScript('build-rsc-vite.ts')],
@@ -127,63 +125,17 @@ class RscBuildCommand extends Command
      * Without them every intercepted link falls through to a full-page
      * navigation, which is what the modal demo was doing after the migration.
      */
-    private function writeInterceptManifest(): void
-    {
-        $target = base_path('bootstrap/rsc/vite/intercept-manifest.json');
-        $entries = InterceptManifest::discover(rtrim((string) config('rsc.source_dir'), '/').'/app');
-
-        File::ensureDirectoryExists(dirname($target));
-        File::put($target, json_encode($entries, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
-
-        if ($entries !== []) {
-            $this->line('Published '.count($entries).' intercept route(s) → '.$target);
-        }
-    }
-
     /**
-     * Regenerate the "use server" module wrapping the app's PHP actions.
+     * Write the manifests PHP owns, echoing what changed.
      *
-     * The client imports these as ordinary async functions, so they have to be
-     * rewritten whenever the actions change — or whenever the host global is
-     * renamed, which is how they were last left calling a global that no longer
-     * existed. Written before the bundle build so Vite picks up the new file.
+     * Shared with `rsc:dev`, which skips the bundle build but needs these just
+     * the same — see HostManifests for why neither failure is visible.
      */
-    private function writeServerActions(): void
+    private function writeHostManifests(): void
     {
-        $sourceDir = rtrim((string) config('rsc.source_dir'), '/');
-        $target = $sourceDir.'/server-actions.generated.ts';
-        $hostGlobal = (string) config('rsc.host_global', 'rpc');
-        $actions = ActionManifest::discover();
-
-        // The host global is installed at runtime, so nothing in app source
-        // declares it and a typecheck cannot see it — which is how a renamed
-        // global survived a clean build. Always written, actions or not.
-        File::ensureDirectoryExists($sourceDir);
-        File::put($sourceDir.'/rsc-env.d.ts', ActionManifest::renderTypes($hostGlobal));
-
-        // The engine's own ambient types (Metadata, GenerateMetadata) live with
-        // the engine and are copied where the app's typechecker will see them.
-        // They are deliberately a separate file: this one is the engine's, the
-        // one above is generated from this host's configuration.
-        $engineTypes = EnginePath::script('types.d.ts');
-
-        if ($engineTypes !== null) {
-            File::copy($engineTypes, $sourceDir.'/rsc-types.d.ts');
+        foreach (HostManifests::write() as $note) {
+            $this->line($note);
         }
-
-        if ($actions === []) {
-            if (File::exists($target)) {
-                File::delete($target);
-                $this->line("Removed stale: {$target}");
-            }
-
-            return;
-        }
-
-        File::ensureDirectoryExists(dirname($target));
-        File::put($target, ActionManifest::render($actions, $hostGlobal));
-
-        $this->line('Generated '.count($actions).' server action(s) → '.$target);
     }
 
     /**

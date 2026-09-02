@@ -9,12 +9,20 @@ use LaravelRsc\Header;
 use LaravelRsc\LaravelRscServiceProvider;
 use LaravelRsc\PrerenderService;
 use LaravelRsc\RscResponse;
+use LaravelRsc\Support\DevServer;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class ServeStaticRsc
 {
     public function handle(Request $request, Closure $next): SymfonyResponse
     {
+        // Prerendered output is the previous build's; in dev the point is to
+        // render from source. Serving the static copy here means the worker is
+        // never reached and no edit ever shows up.
+        if (DevServer::isActive()) {
+            return $next($request);
+        }
+
         $path = trim($request->getPathInfo(), '/') ?: 'index';
         $basePath = config('rsc.static_path', storage_path('framework/rsc-static'));
 

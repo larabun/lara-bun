@@ -105,7 +105,11 @@ class ServeCommand extends Command
         $this->lastBuildTime = $this->getBuildTime();
         $this->trapSignals();
 
-        $process = $this->spawnWorker($runtimePath, $workerPath, 0, $socketPath, $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
+        // The indexed path, not the raw one: this is the path PHP connects to
+        // and the one just logged. Passing the raw path binds the worker
+        // somewhere nothing looks — invisible with several workers, because
+        // that path indexes correctly, and dev mode runs exactly one.
+        $process = $this->spawnWorker($runtimePath, $workerPath, 0, $this->socketPaths[0], $functionsDir, $hasFunctionsDir, $entryPoints, $rscBundle);
 
         if ($process === null) {
             $this->error('Failed to start the RSC worker process');
@@ -424,9 +428,11 @@ class ServeCommand extends Command
             $env['RSC_BUNDLE'] = $rscBundle;
         }
 
-        $packageDir = realpath(__DIR__.'/../../');
+        // Must match what the build passes: in dev mode the worker runs the
+        // Vite plugin itself, which resolves js/ against this.
+        $packageDir = EnginePath::directory();
 
-        if ($packageDir !== false) {
+        if ($packageDir !== null) {
             $env['RSC_PACKAGE_DIR'] = $packageDir;
         }
 

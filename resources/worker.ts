@@ -281,7 +281,29 @@ type RscHandlerModule = {
 
 let rscHandler: RscHandlerModule | null = null;
 
-if (process.env.RSC_BUNDLE) {
+if (process.env.RSC_DEV_CONFIG) {
+  // Dev mode: the entry comes from Vite's runnable rsc environment rather than
+  // a bundle, so an edit is live without a rebuild. Same module contract.
+  try {
+    const { startDevServer, devEntryPath } = await import("./devServer.ts");
+    const outDir = process.env.RSC_OUT_DIR!;
+
+    const dev = await startDevServer({
+      projectRoot: process.env.RSC_PROJECT_ROOT ?? process.cwd(),
+      configFile: process.env.RSC_DEV_CONFIG,
+      entry: devEntryPath(outDir),
+      port: parseInt(process.env.RSC_DEV_PORT ?? "5173", 10),
+    });
+
+    rscHandler = dev.handler as unknown as RscHandlerModule;
+    log(`RSC dev server on ${process.env.RSC_DEV_ORIGIN}`);
+  } catch (err) {
+    log(
+      "Failed to start RSC dev server:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+} else if (process.env.RSC_BUNDLE) {
   try {
     // The built @vitejs/plugin-rsc entry IS the handler — it exports the
     // installHostFn / handleRsc* / handleAction / resolveMetadata contract.

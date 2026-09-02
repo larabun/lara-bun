@@ -36,6 +36,26 @@ class EnginePath
     }
 
     /**
+     * The engine's directory — the one holding vite.ts, worker.ts and js/.
+     *
+     * This is what the Vite plugin means by its package dir, and it is a
+     * directory rather than the Composer package root: `js/Link.tsx` is
+     * resolved against it. Deriving it at a call site is how `rsc:serve` came
+     * to pass the package root while the build passed this, a disagreement
+     * nothing noticed until the plugin started running inside the worker.
+     */
+    public static function directory(): ?string
+    {
+        foreach (self::roots() as $root) {
+            if (is_dir($root)) {
+                return $root;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Directories to look in, most specific first.
      *
      * @return list<string>

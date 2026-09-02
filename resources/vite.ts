@@ -241,6 +241,27 @@ function applyHost() {
   ;(globalThis as Record<string, unknown>)[HOST_GLOBAL] = currentHost
 }
 
+/**
+ * Which layout renders a given slot.
+ *
+ * The slot component's own path names the directory that declares it:
+ * app/docs/@modal/default is declared in app/docs, and the layout there is the
+ * one whose props it belongs in. Falls back to the innermost layout when
+ * nothing matches, which is the shape a single-layout app has anyway.
+ */
+function ownerLayoutIndex(slotComponent: string, layouts: LayoutEntry[]): number {
+  const at = slotComponent.indexOf('/@')
+  if (at === -1) return layouts.length - 1
+
+  const ownerDir = slotComponent.slice(0, at)
+  const suffix = '/layout'
+  const found = layouts.findIndex(
+    (l) => (l.component.endsWith(suffix) ? l.component.slice(0, -suffix.length) : l.component) === ownerDir,
+  )
+
+  return found === -1 ? layouts.length - 1 : found
+}
+
 // Composition: layout(outer..inner) > Suspense(loading, innermost-first) > page.
 function buildElement(
   component: string,
@@ -266,27 +287,40 @@ function buildElement(
   // resolves, delaying the whole document on a slow page.
   if (head.length) element = createElement(Fragment, null, ...head, element)
 
-  const slotElements: Record<string, unknown> = {}
+  // A slot belongs to the layout in the directory that declares it, which is
+  // not necessarily the innermost one: slots are collected by walking up from
+  // the page to the app root. Handing every slot to the innermost layout drops
+  // any the innermost does not declare, silently — the page renders, the modal
+  // just never appears.
+  const slotsByLayout = new Map<number, Record<string, unknown>>()
+
   for (const [slot, value] of Object.entries(parallelSlots)) {
     const override = slotOverrides[slot]
+    let rendered: unknown = null
+
     if (override) {
       const OverrideComp = components[override.component]
-      slotElements[slot] = OverrideComp ? createElement(OverrideComp, override.props ?? {}) : null
+      rendered = OverrideComp ? createElement(OverrideComp, override.props ?? {}) : null
     } else {
       const SlotComp = components[value]
-      slotElements[slot] = SlotComp ? createElement(SlotComp, props) : null
+      rendered = SlotComp ? createElement(SlotComp, props) : null
     }
+
+    const owner = ownerLayoutIndex(value, layouts)
+    const bucket = slotsByLayout.get(owner) ?? {}
+    bucket[slot] = rendered
+    slotsByLayout.set(owner, bucket)
   }
 
   for (let i = layouts.length - 1; i >= 0; i--) {
     const Layout = components[layouts[i].component]
     if (!Layout) continue
-    const layoutProps = { ...(layouts[i].props ?? {}) }
-    if (i === layouts.length - 1) {
-      element = createElement(Layout, { ...layoutProps, ...slotElements, children: element })
-    } else {
-      element = createElement(Layout, { ...layoutProps, children: element })
-    }
+
+    element = createElement(Layout, {
+      ...(layouts[i].props ?? {}),
+      ...(slotsByLayout.get(i) ?? {}),
+      children: element,
+    })
   }
 
   return element

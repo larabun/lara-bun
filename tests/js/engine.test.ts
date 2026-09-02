@@ -831,3 +831,56 @@ describe('route config is host-supplied', () => {
     expect(code).toBe(0)
   }, 120_000)
 })
+
+/**
+ * Which layout receives a parallel slot.
+ *
+ * Slots are collected by walking up from the page to the app root, so an
+ * @slot directory can sit at any level and belongs to the layout at that
+ * level. Composition has to hand it to that layout — not to the innermost
+ * one, which may not declare the prop at all.
+ *
+ * Every other slot test uses a single layout, where innermost and owner are
+ * the same directory, so the distinction never showed. These assert on
+ * rendered HTML rather than the Flight payload: an unused prop is still
+ * serialized, so the payload contains the slot component either way.
+ */
+describe('slot ownership', () => {
+  const NESTED = [
+    { component: 'app/layout', props: {} },
+    { component: 'app/nested/layout', props: {} },
+  ]
+
+  async function renderHtml(layouts: unknown[], overrides: Record<string, unknown> = {}) {
+    const { htmlStream } = await engine.handleRscHtmlStream(
+      'app/nested/page', {}, layouts, [], { modal: 'app/@modal/default' }, overrides,
+    )
+
+    return await new Response(htmlStream).text()
+  }
+
+  test('a slot declared at the root renders, even from a page under a deeper layout', async () => {
+    const html = await renderHtml(NESTED)
+
+    expect(html).toContain('Nested page content')
+    expect(html).toContain('nested-layout')
+    // app/layout renders {modal}; app/nested/layout never receives it.
+    expect(html).toContain('modal-default')
+  })
+
+  test('an interceptor replaces a root-owned slot from a page under a deeper layout', async () => {
+    const html = await renderHtml(NESTED, {
+      modal: { component: 'app/@modal/(.)photo/[id]/page', props: { id: '7' } },
+    })
+
+    expect(html).toContain('Modal for photo')
+    expect(html).toContain('nested-layout')
+    expect(html).not.toContain('modal-default')
+  })
+
+  test('still works when the owning layout is the innermost one', async () => {
+    const html = await renderHtml([{ component: 'app/layout', props: {} }])
+
+    expect(html).toContain('modal-default')
+  })
+})

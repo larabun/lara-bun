@@ -135,6 +135,20 @@ through to a full-page navigation. Neither failure is visible at build time, so
 `rsc.host_global` and reaches the plugin as `RSC_HOST_GLOBAL`, so the codegen and
 the plugin cannot disagree about what it is called.
 
+### Slots Belong to the Layout That Declares Them
+Parallel slots are collected by walking up from the page to the app root, so an
+`@slot` directory sits at some level and belongs to the layout in that
+directory. Composition attributes each slot by its own component path —
+`app/docs/@modal/default` is declared in `app/docs` — rather than handing every
+slot to the innermost layout, which drops any the innermost does not declare.
+Nothing errors when that happens: the page renders and the modal is simply
+absent.
+
+Assert this on rendered HTML, not the Flight payload. An unused prop is still
+serialized, so the payload contains the slot component whether or not any
+layout rendered it — which is how a test for this passed while the bug was
+live.
+
 ### Route Interception
 - `(.)/(..)/(...) ` patterns in `@slot` directories are intercepted routes
 - Intercept pages are excluded from normal route registration

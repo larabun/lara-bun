@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   navigate,
   prefetch,
+  refresh,
   setCallServer,
   setDeserializer,
   setHeldLayouts,
@@ -475,5 +476,83 @@ describe('a route with its own root layout', () => {
     await go('/a')
 
     expect(visiblePage()).toBe('/a')
+  })
+})
+
+describe('asking for the page again', () => {
+  test('re-renders the page and leaves the layouts mounted', async () => {
+    // The cheap form: what is already on screen above the page stays, so the
+    // server only has to produce what changed.
+    await boot('/a')
+    await go('/b')
+
+    const before = requests.length
+    await act(async () => {
+      await refresh()
+    })
+
+    const asked = requests.at(-1)!
+
+    expect(requests.length).toBe(before + 1)
+    expect(asked.url).toBe('/b')
+    expect(asked.held!.split(',')).toEqual(ROUTES['/b'])
+  })
+
+  test('adds no history entry, because you have not gone anywhere', async () => {
+    await boot('/a')
+    await go('/b')
+
+    const entries = history.length
+    await act(async () => {
+      await refresh()
+    })
+
+    expect(history.length).toBe(entries)
+    expect(window.location.pathname).toBe('/b')
+  })
+
+  test('ignores a prefetched copy, since that is what the server said before', async () => {
+    // Refreshing is a request for what is true now. Serving it from the cache
+    // would answer with the very thing being refreshed.
+    await boot('/a')
+
+    await act(async () => {
+      prefetch('/a')
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    const afterPrefetch = requests.length
+    await act(async () => {
+      await refresh()
+    })
+
+    expect(requests.length).toBe(afterPrefetch + 1)
+  })
+
+  test('full gives up the chain, so the layouts are re-rendered too', async () => {
+    // A count in a layout does not move on an ordinary refresh — the layout
+    // was never asked for. This is how you ask.
+    await boot('/a')
+    await go('/b')
+
+    await act(async () => {
+      await refresh({ full: true })
+    })
+
+    const asked = requests.at(-1)!
+
+    expect(asked.held).toBeNull()
+    expect(asked.depth).toBe(0)
+  })
+
+  test('a full refresh keeps you on the same url', async () => {
+    await boot('/a')
+    await go('/deep')
+
+    await act(async () => {
+      await refresh({ full: true })
+    })
+
+    expect(window.location.pathname).toBe('/deep')
   })
 })

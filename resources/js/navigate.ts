@@ -477,6 +477,34 @@ export async function navigate(
   }
 }
 
+/**
+ * Ask the server for this page again.
+ *
+ * A navigation to where you already are, with two differences: the prefetch
+ * cache is skipped, because refreshing is a request for what the server says
+ * now rather than what it said a moment ago; and no history entry is added,
+ * because you have not gone anywhere.
+ *
+ * By default the layouts you are already holding stay mounted and only the
+ * page below them is re-rendered — which is what makes it cheap, and also
+ * means a count living in a layout will not move. `full` gives up the chain so
+ * the server sends the whole document, at the cost of the pages retained
+ * behind it.
+ */
+export async function refresh(opts?: { full?: boolean }): Promise<void> {
+  const url = window.location.pathname + window.location.search;
+  const interceptSlot = matchIntercept(url);
+  const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
+
+  cache.delete(cacheKey);
+
+  if (opts?.full) {
+    heldLayouts = [];
+  }
+
+  await navigate(url, { replace: true, preserveScroll: true });
+}
+
 export function prefetch(url: string, cacheForMs?: number): void {
   if (isExternalUrl(url)) return;
 

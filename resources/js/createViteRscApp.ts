@@ -15,6 +15,7 @@ import {
   cancelPrefetch,
   isPrefetched,
   navigate,
+  refresh,
   prefetch,
   retentionKey,
   setCallServer,
@@ -107,6 +108,7 @@ export async function createViteRscApp(
     cancelPrefetch;
   (window as unknown as { __rsc_is_prefetched: typeof isPrefetched }).__rsc_is_prefetched =
     isPrefetched;
+  (window as unknown as { __rsc_refresh: typeof refresh }).__rsc_refresh = refresh;
 
   // Hydrate from the RSC endpoint (same url + X-RSC, no version header).
   //

@@ -20,5 +20,6 @@ there is alot of security vulnerabilty with nextjs and react server functions es
 
 
 rsc-router-laravel-adapter or rsc-laravel-adapter
+vite-plugin-rsc-router
 
 With nextjs revalidate refresh the entire page altho look seemless, can we get targetted revalidation. Example if I have two tables on a page and I only affect one table with an action, could we only refresh data for one table instead of the entire page? but someone user might also want to refresh everything

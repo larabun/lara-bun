@@ -20,10 +20,10 @@ let outDir: string
 let results: Awaited<ReturnType<typeof prerender>>
 
 beforeAll(async () => {
-  // Built here if it is not already there. Sharing engine.test.ts's build is
-  // fine when it ran first, but test files must not depend on each other's
-  // ordering — running this file alone has to work.
-  if (!existsSync(bundlePath)) {
+  // Always, not only when missing: a fixture page added since the last run
+  // would otherwise be absent from the bundle, and the failure reads as the
+  // prerenderer ignoring a route rather than as a stale build.
+  {
     const proc = Bun.spawn(['bun', join(packageRoot, 'resources/build-rsc-vite.ts')], {
       cwd: packageRoot,
       env: {
@@ -158,28 +158,102 @@ describe('which pages can be frozen', () => {
     expect(wrote('static.flight')).toBe(true)
   })
 
-  test('a page that reaches for the host is left to render on demand', () => {
-    // The probe replaces the host global with a promise that never resolves,
-    // so the page says what it is by reaching. Freezing it would bake one
-    // request's data into every response.
-    expect(resultFor('/')?.type).toBe('dynamic')
+  test('a page that reaches for the host ships a shell instead', () => {
+    // Not frozen whole — that would bake one request's data into every
+    // response — but not given up on either. The probe's timeout is the
+    // ordinary path here: React flushed everything that does not depend on
+    // the host, and that markup is the shell.
+    expect(resultFor('/')?.type).toBe('ppr')
     expect(wrote('index.html')).toBe(false)
+    expect(wrote('index.ppr.html')).toBe(true)
   })
 
-  test('so is one whose slow work sits behind Suspense', () => {
-    // It still reaches the host, just not before it can paint. Shipping the
-    // shell and streaming the rest is PPR, which is a later slice; until then
-    // it renders on demand.
-    expect(resultFor('/slow')?.type).toBe('dynamic')
+  test('so does one whose slow work sits behind Suspense', () => {
+    expect(resultFor('/slow')?.type).toBe('ppr')
   })
 
-  test('and names the host call rather than the timeout it also caused', () => {
-    // A page that reaches for the host also fails to finish: the probe hands
-    // it a promise that never resolves. Reporting the timeout would describe
-    // every such page as merely slow and point at the wrong fix.
-    expect(resultFor('/')?.reason).toMatch(/host/)
-    expect(resultFor('/slow')?.reason).toMatch(/host/)
+  test('the shell holds the fallbacks, not the data behind them', () => {
+    const shell = readFileSync(join(outDir, 'slow.ppr.html'), 'utf-8')
+
+    expect(shell).toContain('slow-shell')
+    expect(shell).toContain('loading slow')
+    // The data never resolved during the probe, and must not appear as though
+    // it had — a frozen shell claiming one request's answer is worse than no
+    // shell at all.
+    expect(shell).not.toContain('from hono')
   })
+
+  test('an aborted render is closed, so the document is valid', () => {
+    // The render is cut off mid-stream once the shell is out, which leaves
+    // <body> and <html> open.
+    const shell = readFileSync(join(outDir, 'slow.ppr.html'), 'utf-8')
+
+    expect(shell.trimEnd()).toEndWith('</html>')
+  })
+
+  test('a page that blocks before anything paints has no shell to ship', async () => {
+    // With no boundary above the blocking work, nothing is flushed — so there
+    // is nothing to freeze and it can only render on demand. The build refuses
+    // this shape anyway, which is why the fixture has to be told to forget its
+    // loading.tsx to produce it.
+    const manifest = engine.manifest()
+    const bare = {
+      ...manifest,
+      routes: manifest.routes
+        .filter((r: { component: string }) => r.component === 'app/page')
+        .map((r: object) => ({ ...r, loadings: [] })),
+    }
+
+    const [result] = await prerender({ engine, manifest: bare, outDir: mkdtempSync(join(tmpdir(), 'rsc-bare-')) })
+
+    expect(result.type).toBe('dynamic')
+    expect(result.reason).toMatch(/host/)
+  }, 30_000)
+})
+
+describe('routes whose urls were never listed', () => {
+  const withoutParams = () => {
+    const manifest = engine.manifest()
+
+    return {
+      ...manifest,
+      routes: manifest.routes.map((r: { staticParams: boolean }) => ({ ...r, staticParams: false })),
+    }
+  }
+
+  test('ship one shell for the whole pattern', async () => {
+    // Nothing in a shell varies by param, so the same markup serves every url
+    // the route matches. This is most of PPR's value — the routes you can
+    // enumerate are the ones you could already freeze whole.
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-pattern-'))
+    const results = await prerender({ engine, manifest: withoutParams(), outDir: dir })
+
+    expect(results.find((r) => r.component === 'app/item/[id]/page')?.type).toBe('ppr')
+    expect(existsSync(join(dir, 'item/_id_.ppr.html'))).toBe(true)
+
+    // The shell holds the fallback, never the placeholder the build invented.
+    const shell = readFileSync(join(dir, 'item/_id_.ppr.html'), 'utf-8')
+
+    expect(shell).toContain('item-fallback')
+    expect(shell).not.toContain('item-detail')
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 60_000)
+
+  test('are refused when the page renders its params before it can paint', async () => {
+    // The photo page prints its id directly. A shell for it would contain the
+    // placeholder the build invented, served as though it were a real id.
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-pattern-'))
+    const results = await prerender({ engine, manifest: withoutParams(), outDir: dir })
+    const photo = results.find((r) => r.component === 'app/photo/[id]/page')
+
+    expect(photo?.type).toBe('dynamic')
+    expect(photo?.reason).toMatch(/params/)
+    expect(existsSync(join(dir, 'photo/_id_.ppr.html'))).toBe(false)
+    expect(existsSync(join(dir, 'photo/_.html'))).toBe(false)
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 60_000)
 })
 
 describe('what gets written', () => {
@@ -249,6 +323,26 @@ describe('serving what was written', () => {
 
     expect(res?.headers.get('X-RSC-Segment-Depth')).toBe('0')
   })
+
+  test('a page with only a shell serves the shell', async () => {
+    const res = await handler()(new Request('http://x/slow'))
+
+    expect(await res!.text()).toContain('loading slow')
+  })
+
+  test('the payload that fills a shell is rendered now, never served frozen', async () => {
+    // Answering with a frozen payload hands back the same fallbacks the shell
+    // already shows, and the page never finishes loading.
+    const handle = createRscHandler({
+      engine,
+      prerendered: outDir,
+      rpc: { slowData: async () => ({ value: 'resolved at request time' }) },
+    })
+
+    const body = await (await handle(new Request('http://x/slow', { headers: { 'X-RSC': '1' } })))!.text()
+
+    expect(body).toContain('resolved at request time')
+  }, 20_000)
 
   test('a url that was not frozen still renders', async () => {
     // A partial prerender is a valid state, not a broken one.

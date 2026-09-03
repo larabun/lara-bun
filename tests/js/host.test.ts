@@ -477,3 +477,33 @@ describe('where the route table comes from', () => {
     expect(() => createRscHandler({ engine: fakeEngine() as never })).toThrow(/No route table/)
   })
 })
+
+describe('host functions already installed', () => {
+  test('are left alone by a handler that brings none', async () => {
+    // A prerenderer sharing this engine instance installs its own, and a host
+    // may set one up before building the handler. Installing unconditionally
+    // replaces it, and every call then fails as unregistered — which reads as
+    // the app calling a name it never registered.
+    const engine = fakeEngine()
+
+    engine.installHostFn(async () => 'from the host')
+
+    createRscHandler({ engine: engine as never, manifest: manifestOf({ '/': [] }) })
+
+    expect(await engine.callHost('anything')).toBe('from the host')
+  })
+
+  test('are replaced when the handler brings its own', async () => {
+    const engine = fakeEngine()
+
+    engine.installHostFn(async () => 'from the host')
+
+    createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/': [] }),
+      rpc: { greet: () => 'from the handler' },
+    })
+
+    expect(await engine.callHost('greet')).toBe('from the handler')
+  })
+})

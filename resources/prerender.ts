@@ -75,9 +75,36 @@ export interface PrerenderOptions {
 export interface PrerenderResult {
   url: string
   component: string
-  /** static — written. dynamic — rendered on demand. error — refused. */
-  type: 'static' | 'dynamic' | 'error'
+  /**
+   * static — frozen whole. ppr — a shell was frozen and the client fills the
+   * rest. dynamic — rendered on demand. error — refused.
+   */
+  type: 'static' | 'ppr' | 'dynamic' | 'error'
   reason: string | null
+}
+
+/**
+ * The file name a route's shell is stored under, with params standing in for
+ * themselves: /posts/[slug] → posts/_slug_.
+ *
+ * A shell contains nothing that varies by param — everything that does is
+ * behind a boundary the client fills — so one shell serves every url the
+ * route matches, including the ones the app never listed.
+ */
+export function patternKey(route: ManifestRoute): string {
+  const parts = route.segments.map((s) => (s.type === 'static' ? s.value : `_${s.value}_`))
+
+  return parts.join('/') || 'index'
+}
+
+/** Close a document the render was aborted in the middle of. */
+export function closeDocument(html: string): string {
+  let out = html
+
+  if (!/<\/body>/i.test(out) && /<body/i.test(out)) out += '</body>'
+  if (!/<\/html>/i.test(out) && /<html/i.test(out)) out += '</html>'
+
+  return out
 }
 
 /** The file name a url is stored under: / → index, /a/b → a/b. */
@@ -101,6 +128,17 @@ export function urlFor(route: ManifestRoute, params: Record<string, string>): st
  * nothing — not an error: rendering on demand is a legitimate answer, and the
  * alternative is guessing at slugs the app never listed.
  */
+/** Stand-in values for a route whose real urls were never listed. */
+function placeholders(route: ManifestRoute): Record<string, string> {
+  const params: Record<string, string> = {}
+
+  for (const segment of route.segments) {
+    if (segment.type !== 'static') params[segment.value] = '_'
+  }
+
+  return params
+}
+
 export async function urlsToBuild(
   manifest: RouteManifest,
   engine: PrerenderEngine,
@@ -115,7 +153,12 @@ export async function urlsToBuild(
       continue
     }
 
-    if (!route.staticParams) continue
+    // A route that lists no urls still gets one attempt, with placeholder
+    // params, so it can ship a shell. Nothing in a shell varies by param.
+    if (!route.staticParams) {
+      entries.push({ route, params: placeholders(route), url: urlFor(route, placeholders(route)) })
+      continue
+    }
 
     const sets = (await engine.getStaticParams?.(route.component)) ?? null
 
@@ -158,12 +201,17 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
   ): Promise<PrerenderResult> {
     const props = options.props ? options.props(route, params) : params
     const layouts = route.layouts.map((component) => ({ component, props: {} }))
+    const unlistedNow = route.segments.some((seg) => seg.type !== 'static') && !route.staticParams
     const said = (type: PrerenderResult['type'], reason: string | null) => ({
-      url,
+      // A route standing in for many urls reports the pattern. Reporting the
+      // placeholder url instead prints `/posts/_`, which looks like a page.
+      url: unlistedNow ? '/' + patternKey(route) : url,
       component: route.component,
       type,
       reason,
     })
+
+    const unlisted = route.segments.some((seg) => seg.type !== 'static') && !route.staticParams
 
     // Classify by rendering, never by asking. The probe is cheap and cannot
     // hang: anything still suspended when its budget expires is the answer.
@@ -177,13 +225,42 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
 
     if (shell.error) return said('error', shell.error)
 
-    // The host call is checked first because it is the specific answer. A page
-    // that reaches for the host also times out — the probe hands it a promise
-    // that never resolves, so the boundary it suspends never finishes and the
-    // render never completes. Reading the timeout first would report every
-    // such page as merely slow, which points at the wrong fix.
-    if (shell.usedDynamicApis) return said('dynamic', 'reaches for the host at render time')
-    if (shell.timedOut) return said('dynamic', 'did not finish rendering in time')
+    // A timeout is the ordinary path for a page that streams, not a failure:
+    // the probe hands the page a host global that never resolves, React
+    // flushes everything that does not depend on it, and the abort happens
+    // once there is nothing left to flush. So the captured markup IS the
+    // shell — layouts, static content, and the fallbacks standing in for what
+    // has not arrived.
+    if (shell.timedOut) {
+      const body = closeDocument(shell.shellHtml.trim())
+
+      // Nothing was flushed before the page blocked, so there is no shell to
+      // ship — a page that blocks above every boundary can only be rendered on
+      // demand. `reaches for the host` is the specific reason when both are
+      // true; a page that merely ran long says the other thing.
+      if (body === '') {
+        return said(
+          'dynamic',
+          shell.usedDynamicApis
+            ? 'blocks on the host before anything can paint'
+            : 'did not paint anything in time',
+        )
+      }
+
+      await writeShell(route, url, body)
+
+      return said('ppr', null)
+    }
+
+    // Rendered whole, with params that were invented because the route listed
+    // none. Freezing that stores a page whose id is literally `_`, and a shell
+    // is no better: the value is in the markup rather than behind a boundary
+    // the client fills. A route reaches this only by rendering its params
+    // before it can paint, which is exactly the shape that cannot be shared
+    // across urls.
+    if (unlisted) {
+      return said('dynamic', 'renders its params before it can paint, and lists no urls to build')
+    }
 
     const rendered = await engine.handleRsc(
       route.component,
@@ -230,6 +307,30 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     )
 
     return said('static', null)
+  }
+
+  /**
+   * Freeze a shell, under the url when it is one and under the route's pattern
+   * when it stands for many.
+   *
+   * A route whose urls were never listed still gets a shell: nothing in it
+   * varies by param, so the same markup is correct for every url the route
+   * matches. That is most of the value — the routes you can enumerate are the
+   * ones you could already freeze whole.
+   */
+  async function writeShell(route: ManifestRoute, url: string, body: string): Promise<void> {
+    const parameterised = route.segments.some((s) => s.type !== 'static')
+    const key = parameterised && !route.staticParams ? patternKey(route) : pathKey(url)
+
+    await write(`${key}.ppr.html`, body)
+    await write(
+      `${key}.ppr-meta.json`,
+      JSON.stringify(
+        { layouts: route.layouts, component: route.component, parameterised, version: version ?? null },
+        null,
+        2,
+      ),
+    )
   }
 
   async function write(name: string, contents: string): Promise<void> {

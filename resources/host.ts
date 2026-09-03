@@ -15,7 +15,7 @@
 //   Bun.serve({ fetch: (req) => rsc(req).then((r) => r ?? new Response('', { status: 404 })) })
 
 import { matchIntercept, matchRoute, retentionKey, sharedDepth } from './routing.ts'
-import { pathKey } from './prerender.ts'
+import { pathKey, patternKey } from './prerender.ts'
 // Re-exported, not redefined: routing.ts is the one implementation, shared with
 // the prerenderer and the generated bundle, and this stays the adapter's
 // public surface so a host imports from one place.
@@ -101,7 +101,7 @@ export interface RscHostOptions {
 }
 
 export function createRscHandler(options: RscHostOptions): (request: Request) => Promise<Response | null> {
-  const { engine, rpc = {}, assets, version } = options
+  const { engine, assets, version } = options
   const manifest = options.manifest ?? engine.manifest?.()
 
   if (!manifest) {
@@ -115,17 +115,27 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
   // instead of the client making a second round trip to ask.
   const marked = new WeakMap<Request, string[]>()
 
-  engine.installHostFn(async (name: string, ...args: unknown[]) => {
-    const fn = rpc[name]
+  // Only when this host has functions of its own. Installing unconditionally
+  // overwrites whatever was already registered — a prerenderer sharing the
+  // same engine instance, or a host that set its own up first — and the
+  // symptom is every call failing as unregistered.
+  if (options.rpc) installHostFunctions(options.rpc)
 
-    if (!fn) {
-      // Louder than returning null: a typo in a server component otherwise
-      // renders as missing data with nothing anywhere saying why.
-      throw new Error(`No host function named ${JSON.stringify(name)}. Registered: ${Object.keys(rpc).join(', ') || '(none)'}`)
-    }
+  function installHostFunctions(fns: NonNullable<RscHostOptions['rpc']>): void {
+    engine.installHostFn(async (name: string, ...args: unknown[]) => {
+      const fn = fns[name]
 
-    return await fn(...args)
-  })
+      if (!fn) {
+        // Louder than returning null: a typo in a server component otherwise
+        // renders as missing data with nothing anywhere saying why.
+        throw new Error(
+          `No host function named ${JSON.stringify(name)}. Registered: ${Object.keys(fns).join(', ') || '(none)'}`,
+        )
+      }
+
+      return await fn(...args)
+    })
+  }
 
   async function propsFor(match: MatchedRoute, request: Request): Promise<Record<string, unknown>> {
     return options.props ? await options.props(match, request) : match.params
@@ -253,7 +263,15 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     }
 
     if (request.headers.get(HEADER.rsc) === null) {
-      const html = await read(`${key}.html`)
+      // A frozen page first; then a shell, under this url or under the route's
+      // pattern. Nothing in a shell varies by param, so one shell serves every
+      // url its route matches — which is the only way a route whose urls were
+      // never listed gets anything frozen at all.
+      const route = matchRoute(manifest, url.pathname)
+      const html =
+        (await read(`${key}.html`)) ??
+        (await read(`${key}.ppr.html`)) ??
+        (route ? await read(`${patternKey(route.route)}.ppr.html`) : null)
 
       return html === null
         ? null
@@ -261,6 +279,11 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
             headers: withVersion({ 'Content-Type': HTML_TYPE, Vary: HEADER.rsc }),
           })
     }
+
+    // Only the document is ever served frozen for a shell. The payload is what
+    // fills it in, and it has to be rendered now — answering with a frozen one
+    // would hand back the same fallbacks the shell already shows, and the page
+    // would never finish loading.
 
     const meta = await read(`${key}.meta.json`)
 

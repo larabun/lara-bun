@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 
 const packageRoot = join(import.meta.dir, '../..')
 
@@ -165,6 +165,124 @@ describe('what the build produces', () => {
 
     expect(manifest.build.output).toBe('server')
     expect(manifest.build.payloadName).toBe('')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
+describe('what the app imports but nobody writes', () => {
+  function appWith(files: Record<string, string>): string {
+    const root = mkdtempSync(join(packageRoot, 'bootstrap/rsc/host-'))
+
+    for (const [path, contents] of Object.entries(files)) {
+      mkdirSync(join(root, path, '..'), { recursive: true })
+      writeFileSync(join(root, path), contents)
+    }
+
+    return root
+  }
+
+  test('renders the host functions as ordinary imports', async () => {
+    // The app writes `import { addTodo } from './server-actions.generated'`
+    // and never names the transport. Discovery belongs to the host — these
+    // are its functions — but the module has to land beside the app's source,
+    // and that path is the build's.
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await configFor({
+      projectRoot: root,
+      hostActions: { addTodo: 'TodoActions.add', removeTodo: 'TodoActions.remove' },
+    })
+
+    const module = readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')
+
+    expect(module).toStartWith('"use server";')
+    expect(module).toContain('export async function addTodo(...args: unknown[]) {')
+    expect(module).toContain('"TodoActions.add"')
+    expect(module).toContain('export async function removeTodo')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('calls the global the host said it installs', async () => {
+    // A renamed global is invisible at build time: the stub goes on calling
+    // the old name and only the browser finds out. One name, one place.
+    const root = appWith({ 'src/app/page.tsx': 'export default function P() { return null }' })
+
+    await configFor({ projectRoot: root, hostGlobal: 'callHost', hostActions: { a: 'A' } })
+
+    expect(readFileSync(join(root, 'src', 'server-actions.generated.ts'), 'utf-8')).toContain(
+      '(globalThis as any).callHost("A", ...args)',
+    )
+    expect(readFileSync(join(root, 'src', 'rsc-env.d.ts'), 'utf-8')).toContain(
+      'declare function callHost<T = unknown>',
+    )
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('leaves no stubs behind for a host that has no functions', async () => {
+    // A JS host answers its own calls. Kept, these would name targets nothing
+    // is listening for.
+    const root = appWith({
+      'src/app/page.tsx': 'export default function P() { return null }',
+      'src/server-actions.generated.ts': 'export async function stale() {}',
+    })
+
+    await configFor({ projectRoot: root })
+
+    expect(existsSync(join(root, 'src', 'server-actions.generated.ts'))).toBe(false)
+
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
+describe('the host route config', () => {
+  test('is reported per route, so a host need not walk the tree again', async () => {
+    const root = mkdtempSync(join(packageRoot, 'bootstrap/rsc/cfgman-'))
+
+    mkdirSync(join(root, 'src/app/docs/[slug]'), { recursive: true })
+    writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return null }')
+    writeFileSync(join(root, 'src/app/docs/[slug]/page.tsx'), 'export default function P() { return null }')
+    writeFileSync(join(root, 'src/app/route.php'), '<?php return 1;')
+    writeFileSync(join(root, 'src/app/docs/route.php'), '<?php return 1;')
+    writeFileSync(join(root, 'src/app/docs/[slug]/route.php'), '<?php return 1;')
+
+    await configFor({
+      projectRoot: root,
+      routeConfig: { file: 'route.php', dynamicPattern: /props\(/ },
+    })
+
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+    const page = manifest.routes.find((r: any) => r.component === 'app/docs/[slug]/page')
+
+    // Relative to the project root: an absolute path is true only on the
+    // machine that built it, and building in a container is ordinary.
+    expect(page.config).toBe('src/app/docs/[slug]/route.php')
+    // Outermost first — the host applies them in order and lets the inner one
+    // win, so reversed they would silently resolve the opposite way — and
+    // never the page's own, which it applies separately and last.
+    expect(page.ancestorConfigs).toEqual(['src/app/route.php', 'src/app/docs/route.php'])
+
+    const root_ = manifest.routes.find((r: any) => r.component === 'app/page')
+    expect(root_.config).toBe('src/app/route.php')
+    expect(root_.ancestorConfigs).toEqual([])
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('is absent for a host that names no such file', async () => {
+    const root = mkdtempSync(join(packageRoot, 'bootstrap/rsc/cfgman-'))
+
+    mkdirSync(join(root, 'src/app'), { recursive: true })
+    writeFileSync(join(root, 'src/app/page.tsx'), 'export default function P() { return null }')
+    writeFileSync(join(root, 'src/app/route.php'), '<?php return 1;')
+
+    await configFor({ projectRoot: root })
+
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+
+    expect(manifest.routes[0].config).toBeNull()
 
     rmSync(root, { recursive: true, force: true })
   })

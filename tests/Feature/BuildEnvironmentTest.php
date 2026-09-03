@@ -19,7 +19,6 @@ test('passes every convention the plugin will not assume', function () {
 
     expect($env)->toHaveKeys([
         'RSC_PROJECT_ROOT',
-        'RSC_SOURCE_DIR',
         'RSC_OUT_DIR',
         'RSC_ASSETS_DIR',
         'RSC_ASSETS_URL',
@@ -27,7 +26,19 @@ test('passes every convention the plugin will not assume', function () {
         'RSC_PACKAGE_ALIAS',
         'RSC_ROUTE_CONFIG_FILE',
         'RSC_ROUTE_CONFIG_PATTERN',
+        'RSC_HOST_ACTIONS',
     ]);
+
+    // Where the app tree lives is declared in the vite config, not here: the
+    // build is the only thing that reads it.
+    expect($env)->not->toHaveKey('RSC_SOURCE_DIR');
+});
+
+test('hands over the actions it discovered, which the build cannot find itself', function () {
+    // Reflection over the app's own classes — inherited methods included — is
+    // why discovery stays on this side. Rendering the stubs does not need any
+    // of that, and does need to know where the app's source lives.
+    expect(json_decode(BuildEnvironment::forVite()['RSC_HOST_ACTIONS'], true))->toBeArray();
 });
 
 test('the route marker is the file Laravel actually writes', function () {

@@ -5,7 +5,6 @@ namespace LaravelRsc\Console;
 use Illuminate\Console\Command;
 use LaravelRsc\Support\BuildEnvironment;
 use LaravelRsc\Support\DevServer;
-use LaravelRsc\Support\HostManifests;
 use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
@@ -52,13 +51,6 @@ class DevCommand extends Command
             $this->error('No Vite config found. Create vite.config.ts with rscRoutes() in its plugins.');
 
             return self::FAILURE;
-        }
-
-        // PHP owns route and action discovery, so these have to exist before
-        // the JavaScript half runs. Dev mode skips the bundle build, which is
-        // exactly how it would come to skip these too.
-        foreach (HostManifests::write() as $note) {
-            $this->line($note);
         }
 
         $this->trapSignals();

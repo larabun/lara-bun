@@ -15,16 +15,13 @@ class RscPagesCommand extends Command
 
     public function handle(): int
     {
-        $appDir = config('rsc.source_dir').'/app';
-
-        if (! is_dir($appDir)) {
-            $this->warn("No app/ directory found at: {$appDir}");
+        if (! RouteManifest::exists()) {
+            $this->warn('No route manifest found. Run: php artisan rsc:build');
 
             return self::SUCCESS;
         }
 
         $pages = RouteManifest::forApp()->pages();
-        $pages = $pages;
 
         if ($pages === []) {
             $this->warn('No page.tsx files found.');

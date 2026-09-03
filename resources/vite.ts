@@ -102,6 +102,18 @@ export interface RscRoutesOptions {
    * classified dynamic on this basis.
    */
   routeConfig?: { file: string; dynamicPattern: RegExp }
+  /**
+   * Functions the host exposes to the app, as `{ exportedName: target }`.
+   *
+   * The build writes a "use server" module of stubs for these, each one
+   * calling the host global with its target — so app code imports an ordinary
+   * async function and never names the transport. Discovery belongs to the
+   * host, whose functions these are; only the rendering is here, because the
+   * module has to land beside the app's source and that path is the build's.
+   *
+   * A host whose functions are already JavaScript passes nothing.
+   */
+  hostActions?: Record<string, string>
 }
 
 // Resolved once per rscRoutes() call. One build runs in one process, so these are
@@ -130,6 +142,8 @@ let exportPath: string
  */
 let staticPayloads: string
 let routeConfig: { file: string; dynamicPattern: RegExp } | null
+/** Host functions to generate stubs for — see RscRoutesOptions.hostActions. */
+let hostActions: Record<string, string>
 
 /**
  * This file's directory.
@@ -152,6 +166,15 @@ function envRouteConfig(): { file: string; dynamicPattern: RegExp } | null {
   if (!file || !pattern) return null
 
   return { file, dynamicPattern: new RegExp(pattern) }
+}
+
+/** hostActions supplied through the environment, for out-of-process hosts. */
+function envHostActions(): Record<string, string> {
+  const raw = process.env.RSC_HOST_ACTIONS
+
+  if (!raw) return {}
+
+  return JSON.parse(raw) as Record<string, string>
 }
 
 /**
@@ -211,6 +234,7 @@ function resolvePaths(options: RscRoutesOptions): void {
   // The env pair exists so a host driving the build out of process can pass it
   // without writing a config file.
   routeConfig = options.routeConfig ?? envRouteConfig()
+  hostActions = options.hostActions ?? envHostActions()
 }
 
 interface Component {
@@ -252,6 +276,18 @@ interface ManifestRoute {
   loadings: string[]
   slots: Record<string, string>
   sections: string[]
+  /**
+   * The host's route-config file beside this page, if it has one, and the
+   * ancestor ones that also apply — outermost first, the page's own excluded.
+   *
+   * Resolved here because the build already walks these directories and
+   * already stats this file to classify the route. A host reading the
+   * manifest would otherwise walk the tree again at boot to find the same
+   * paths. Relative to the project root: an absolute path is correct only on
+   * the machine that built it, and a build in a container is normal.
+   */
+  config: string | null
+  ancestorConfigs: string[]
 }
 
 interface ManifestIntercept {
@@ -329,6 +365,34 @@ function routeManifest(): {
       .filter((n) => n.endsWith('/' + base) && !isIntercept(n) && isUnder(dirOf(name), dirOf(n)))
       .sort((a, b) => a.length - b.length)
 
+  /** Project-root-relative, posix — the same string on every machine. */
+  const fromRoot = (abs: string) => relative(projectRoot, abs).replace(/\\/g, '/')
+
+  /** The host's config file in a directory, if the host named one and it exists. */
+  const configIn = (absDir: string): string | null => {
+    if (!routeConfig) return null
+
+    const path = join(absDir, routeConfig.file)
+
+    return existsSync(path) ? fromRoot(path) : null
+  }
+
+  /** Ancestor configs, outermost first, excluding the page's own directory. */
+  const ancestorConfigs = (dir: string): string[] => {
+    const found: string[] = []
+    const parts = dir.split('/').slice(0, -1)
+
+    while (parts.length > 0) {
+      const path = configIn(join(sourceDir, parts.join('/')))
+
+      if (path) found.unshift(path)
+
+      parts.pop()
+    }
+
+    return found
+  }
+
   const routes: ManifestRoute[] = []
   const intercepts: ManifestIntercept[] = []
 
@@ -364,6 +428,8 @@ function routeManifest(): {
       loadings: ancestors(name, 'loading').map((n) => n),
       slots,
       sections: names.filter((n) => SECTION_FILE.test(n + '.tsx') && dirOf(n) === dirOf(name)),
+      config: configIn(join(sourceDir, dirOf(name))),
+      ancestorConfigs: ancestorConfigs(dirOf(name)),
     })
   }
 
@@ -375,6 +441,86 @@ function routeManifest(): {
     routes,
     intercepts,
   }
+}
+
+// ── What the app imports ─────────────────────────────────────────────────────
+
+/**
+ * Write the modules the app's source imports but nobody writes by hand.
+ *
+ * All three land in the source directory because that is where the app's own
+ * imports and its typechecker can reach them: the stubs are imported by
+ * relative path, and an ambient declaration is only ambient if it is inside
+ * the project. The build owns that path, which is why it owns this.
+ *
+ * Rewritten on every run. The failure they prevent is invisible at build
+ * time — a stale stub calls a global that has since been renamed, and only
+ * the browser ever finds out.
+ */
+function writeHostBindings(): void {
+  mkdirSync(sourceDir, { recursive: true })
+
+  // The global is installed at runtime, so nothing in app source declares it
+  // and a typecheck cannot see it. Written whether or not there are actions:
+  // server components call it directly too.
+  writeFileSync(join(sourceDir, 'rsc-env.d.ts'), renderHostGlobalTypes())
+
+  // The engine's own ambient types, copied where the app's typechecker will
+  // see them. Deliberately a separate file from the one above: this one is
+  // the engine's and identical everywhere, that one is generated from how
+  // this host is configured.
+  const engineTypes = join(packageDir, 'types.d.ts')
+
+  if (existsSync(engineTypes)) {
+    writeFileSync(join(sourceDir, 'rsc-types.d.ts'), readFileSync(engineTypes, 'utf-8'))
+  }
+
+  const target = join(sourceDir, 'server-actions.generated.ts')
+
+  // A host with no functions of its own leaves no file behind: kept, its
+  // stubs would go on naming targets the host has stopped answering for.
+  if (Object.keys(hostActions).length === 0) {
+    if (existsSync(target)) rmSync(target)
+
+    return
+  }
+
+  writeFileSync(target, renderHostActions())
+}
+
+/** The "use server" module exposing each host function as a plain async call. */
+function renderHostActions(): string {
+  const lines = [
+    '"use server";',
+    '// @generated — do not edit. Written by the RSC build from the host action map.',
+    '',
+  ]
+
+  for (const [name, target] of Object.entries(hostActions)) {
+    lines.push('export async function ' + name + '(...args: unknown[]) {')
+    lines.push('  return await (globalThis as any).' + hostGlobal + '(' + JSON.stringify(target) + ', ...args);')
+    lines.push('}')
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
+/** Ambient declaration for the host global, written beside the app's source. */
+function renderHostGlobalTypes(): string {
+  return [
+    '// @generated — do not edit.',
+    '//',
+    '// ' + hostGlobal + '() is installed on globalThis by the RSC worker, so it has no',
+    '// import to resolve. This declares it for the typechecker; run',
+    '// `tsc --noEmit` to catch calls to a host global that no longer exists.',
+    '//',
+    '// Deliberately not a module — no import/export — so the declaration is',
+    '// global to the project without every file having to reference it.',
+    '',
+    'declare function ' + hostGlobal + '<T = unknown>(name: string, ...args: unknown[]): Promise<T>;',
+    '',
+  ].join('\n')
 }
 
 // ── Discovery ────────────────────────────────────────────────────────────────
@@ -1251,6 +1397,10 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
             'into a child component wrapped in its own <Suspense> so the page can paint.',
         )
       }
+
+      // Before the entries, because the app's own source imports these and the
+      // module graph is walked as soon as this hook returns.
+      writeHostBindings()
 
       if (existsSync(genDir)) rmSync(genDir, { recursive: true, force: true })
       mkdirSync(genDir, { recursive: true })

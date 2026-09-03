@@ -41,7 +41,6 @@ return [
 
     // The built RSC server bundle the worker loads (@vitejs/plugin-rsc output).
     'bundle' => env('RSC_BUNDLE', base_path('bootstrap/rsc/vite/dist/rsc/index.js')),
-    'source_dir' => env('RSC_SOURCE_DIR', resource_path('js/rsc')),
 
     // Name of the global your server components call to reach PHP. Both the
     // Vite plugin and the generated server actions read it from here, so the

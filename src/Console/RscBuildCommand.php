@@ -10,7 +10,6 @@ use LaravelRsc\PrerenderService;
 use LaravelRsc\RouteManifest;
 use LaravelRsc\Support\BuildEnvironment;
 use LaravelRsc\Support\EnginePath;
-use LaravelRsc\Support\HostManifests;
 use LaravelRsc\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
@@ -41,8 +40,6 @@ class RscBuildCommand extends Command
 
                 return self::FAILURE;
             }
-
-            $this->writeHostManifests();
 
             $bundleProcess = new Process(
                 [$runtime, $this->getBuildScript('build-rsc-vite.ts')],
@@ -142,19 +139,6 @@ class RscBuildCommand extends Command
      * Without them every intercepted link falls through to a full-page
      * navigation, which is what the modal demo was doing after the migration.
      */
-    /**
-     * Write the manifests PHP owns, echoing what changed.
-     *
-     * Shared with `rsc:dev`, which skips the bundle build but needs these just
-     * the same — see HostManifests for why neither failure is visible.
-     */
-    private function writeHostManifests(): void
-    {
-        foreach (HostManifests::write() as $note) {
-            $this->line($note);
-        }
-    }
-
     /**
      * @param  Collection<int, Route>  $routes
      * @return list<array{url: string, uri: string, component: string, type: string, reason: string|null, generatedPaths: list<string>}>

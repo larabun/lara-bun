@@ -6,12 +6,22 @@
 use Illuminate\Support\Facades\Artisan;
 
 beforeEach(function () {
-    $this->sourceDir = sys_get_temp_dir().'/rsc-manifest-'.uniqid();
+    // Under the project root, because the build writes route.php paths
+    // relative to it — a fixture outside it could not be addressed at all.
+    $this->sourceDir = base_path('rsc-manifest-'.uniqid());
     mkdir($this->sourceDir.'/app', 0755, true);
-    config()->set('rsc.source_dir', $this->sourceDir);
+
 });
 
 afterEach(function () {
+    // Before the next test boots: route registration reads this at boot, so a
+    // manifest left behind would point the next app at deleted fixtures.
+    $manifest = base_path('bootstrap/rsc/vite/routes.json');
+
+    if (is_file($manifest)) {
+        unlink($manifest);
+    }
+
     $iterator = new RecursiveIteratorIterator(
         new RecursiveDirectoryIterator($this->sourceDir, RecursiveDirectoryIterator::SKIP_DOTS),
         RecursiveIteratorIterator::CHILD_FIRST,
@@ -39,12 +49,14 @@ function writeRouteFile(string $base, string $path, string $contents = '// test 
  * Stand in for the build.
  *
  * Discovering the route tree is the plugin's job now, so a test that wants
- * routes declares them rather than writing files and expecting a scan.
- * Page files are still written, because route.php is found beside them.
+ * routes declares them rather than writing files and expecting a scan. That
+ * includes finding route.php: the build stats for it while it is already
+ * walking those directories, and writes down what it found. So this stands in
+ * for that too, and has to run after the files it reports exist.
  *
  * @param  list<string>  $components
  */
-function writeManifest(array $components): void
+function writeManifest(array $components, string $base): void
 {
     $routes = [];
 
@@ -63,6 +75,25 @@ function writeManifest(array $components): void
                 : ['type' => 'static', 'value' => $part];
         }
 
+        // Root-relative, as the build writes them.
+        $dir = implode('/', array_slice($parts, 0, -1));
+        $configOf = function (string $relative) use ($base): ?string {
+            $path = rtrim($base.'/'.$relative, '/').'/route.php';
+
+            return is_file($path) ? ltrim(str_replace(base_path(), '', $path), '/') : null;
+        };
+
+        $ancestors = [];
+        $walk = array_slice(explode('/', $dir), 0, -1);
+
+        while ($walk !== []) {
+            if ($found = $configOf(implode('/', $walk))) {
+                array_unshift($ancestors, $found);
+            }
+
+            array_pop($walk);
+        }
+
         $routes[] = [
             'component' => $component,
             'segments' => $segments,
@@ -70,6 +101,8 @@ function writeManifest(array $components): void
             'loadings' => [],
             'slots' => [],
             'sections' => [],
+            'config' => $configOf($dir),
+            'ancestorConfigs' => $ancestors,
         ];
     }
 
@@ -93,9 +126,7 @@ function manifest(): array
     return json_decode(trim(Artisan::output()), true, 512, JSON_THROW_ON_ERROR);
 }
 
-test('returns an empty manifest when there is no app directory', function () {
-    config()->set('rsc.source_dir', $this->sourceDir.'/missing');
-
+test('returns an empty manifest when there is no build to read', function () {
     expect(manifest())->toBe([]);
 });
 
@@ -103,7 +134,7 @@ test('emits url patterns for static and dynamic routes', function () {
     writeRouteFile($this->sourceDir, 'app/page.tsx');
     writeRouteFile($this->sourceDir, 'app/docs/page.tsx');
     writeRouteFile($this->sourceDir, 'app/docs/[slug]/page.tsx');
-    writeManifest(['app/page', 'app/docs/page', 'app/docs/[slug]/page']);
+    writeManifest(['app/page', 'app/docs/page', 'app/docs/[slug]/page'], $this->sourceDir);
 
     $patterns = array_column(manifest(), 'urlPattern');
 
@@ -114,12 +145,12 @@ test('emits url patterns for static and dynamic routes', function () {
 
 test('includes staticPaths from a route.php simple list', function () {
     writeRouteFile($this->sourceDir, 'app/docs/[slug]/page.tsx');
-    writeManifest(['app/docs/[slug]/page']);
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
         "<?php\n\nreturn LaravelRsc\\PageRoute::make()->staticPaths(['installation', 'configuration']);\n",
     );
+    writeManifest(['app/docs/[slug]/page'], $this->sourceDir);
 
     $entry = collect(manifest())->firstWhere('urlPattern', '/docs/{slug}');
 
@@ -129,7 +160,6 @@ test('includes staticPaths from a route.php simple list', function () {
 
 test('groups and deduplicates staticPaths given multi-param combinations', function () {
     writeRouteFile($this->sourceDir, 'app/posts/[year]/[slug]/page.tsx');
-    writeManifest(['app/posts/[year]/[slug]/page']);
     writeRouteFile(
         $this->sourceDir,
         'app/posts/[year]/[slug]/route.php',
@@ -138,6 +168,7 @@ test('groups and deduplicates staticPaths given multi-param combinations', funct
         "    ['year' => '2026', 'slug' => 'b'],\n".
         "]);\n",
     );
+    writeManifest(['app/posts/[year]/[slug]/page'], $this->sourceDir);
 
     $entry = collect(manifest())->firstWhere('urlPattern', '/posts/{year}/{slug}');
 
@@ -147,12 +178,12 @@ test('groups and deduplicates staticPaths given multi-param combinations', funct
 
 test('extracts literal alternations from where constraints', function () {
     writeRouteFile($this->sourceDir, 'app/docs/[slug]/page.tsx');
-    writeManifest(['app/docs/[slug]/page']);
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
         "<?php\n\nreturn LaravelRsc\\PageRoute::make()->where('slug', 'alpha|beta');\n",
     );
+    writeManifest(['app/docs/[slug]/page'], $this->sourceDir);
 
     $entry = collect(manifest())->firstWhere('urlPattern', '/docs/{slug}');
 
@@ -161,12 +192,12 @@ test('extracts literal alternations from where constraints', function () {
 
 test('skips where constraints that are not simple alternations', function () {
     writeRouteFile($this->sourceDir, 'app/docs/[slug]/page.tsx');
-    writeManifest(['app/docs/[slug]/page']);
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
         "<?php\n\nreturn LaravelRsc\\PageRoute::make()->where('slug', '[0-9]+');\n",
     );
+    writeManifest(['app/docs/[slug]/page'], $this->sourceDir);
 
     $entry = collect(manifest())->firstWhere('urlPattern', '/docs/{slug}');
 

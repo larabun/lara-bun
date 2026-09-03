@@ -28,16 +28,18 @@ class RouteManifest
 
     public function __construct(
         private string $manifestPath,
-        private string $appDir,
     ) {}
 
-    /** The manifest the build writes, and the app dir it describes. */
+    /** The manifest the build writes. */
     public static function forApp(): self
     {
-        return new self(
-            base_path('bootstrap/rsc/vite/routes.json'),
-            rtrim((string) config('rsc.source_dir'), '/').'/app',
-        );
+        return new self(base_path('bootstrap/rsc/vite/routes.json'));
+    }
+
+    /** Whether a build has happened, so there is anything to register. */
+    public static function exists(): bool
+    {
+        return is_file(base_path('bootstrap/rsc/vite/routes.json'));
     }
 
     /**
@@ -89,7 +91,6 @@ class RouteManifest
 
         foreach ($manifest['routes'] ?? [] as $route) {
             $url = self::url($route['segments'] ?? []);
-            $dir = $this->pageDir($route['component']);
 
             $this->pages[] = new PageDefinition(
                 componentName: $route['component'],
@@ -98,8 +99,11 @@ class RouteManifest
                 loadings: $route['loadings'] ?? [],
                 parallelSlots: $route['slots'] ?? [],
                 isDynamic: (bool) preg_match('/\{[^}]+\}/', $url),
-                routeConfigPath: is_file($dir.'/route.php') ? $dir.'/route.php' : null,
-                directoryConfigPaths: $this->ancestorConfigs($dir),
+                routeConfigPath: self::absolute($route['config'] ?? null),
+                directoryConfigPaths: array_map(
+                    fn (string $path) => (string) self::absolute($path),
+                    $route['ancestorConfigs'] ?? [],
+                ),
                 interceptRoutes: array_values(array_filter(
                     $intercepts,
                     fn (array $i) => $i['interceptedUrl'] === $url,
@@ -157,40 +161,15 @@ class RouteManifest
         return $intercepts;
     }
 
-    /** Where a component's files live, so this host can look beside them. */
-    private function pageDir(string $component): string
-    {
-        $relative = preg_replace('#^app/#', '', $component);
-        $relative = preg_replace('#/page$#', '', (string) $relative);
-
-        return rtrim($this->appDir.'/'.$relative, '/');
-    }
-
     /**
-     * Ancestor route.php files, outermost first, excluding the page's own.
+     * A manifest path, as this host has to use it.
      *
-     * @return list<string>
+     * The build writes them relative to the project root, because an absolute
+     * path is only true on the machine that produced it and building in a
+     * container is ordinary.
      */
-    private function ancestorConfigs(string $dir): array
+    private static function absolute(?string $path): ?string
     {
-        $configs = [];
-        $current = dirname($dir);
-        $root = rtrim($this->appDir, '/');
-
-        while (str_starts_with($current, $root)) {
-            $path = $current.'/route.php';
-
-            if (is_file($path)) {
-                array_unshift($configs, $path);
-            }
-
-            if ($current === $root) {
-                break;
-            }
-
-            $current = dirname($current);
-        }
-
-        return $configs;
+        return $path === null ? null : base_path($path);
     }
 }

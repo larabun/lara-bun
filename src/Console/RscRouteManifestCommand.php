@@ -14,9 +14,7 @@ class RscRouteManifestCommand extends Command
 
     public function handle(): int
     {
-        $appDir = config('rsc.source_dir').'/app';
-
-        if (! is_dir($appDir)) {
+        if (! RouteManifest::exists()) {
             $this->line(json_encode([], JSON_THROW_ON_ERROR));
 
             return self::SUCCESS;

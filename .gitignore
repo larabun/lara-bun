@@ -22,3 +22,9 @@ bootstrap/rsc/generic
 bootstrap/rsc/generic-*
 bootstrap/rsc/alias-*
 bootstrap/rsc/output-*
+bootstrap/rsc/host-*
+bootstrap/rsc/cfgman-*
+
+# Written into the fixture app by the build
+tests/fixtures/rsc-app/rsc-env.d.ts
+tests/fixtures/rsc-app/rsc-types.d.ts

@@ -4,6 +4,7 @@ namespace LaravelRsc;
 
 use Illuminate\Routing\Router;
 use LaravelRsc\Http\Middleware\ServeStaticRsc;
+use RuntimeException;
 
 class PageRouteRegistrar
 {
@@ -172,6 +173,16 @@ class PageRouteRegistrar
 
     protected function loadConfig(string $path): mixed
     {
+        // The build recorded this path; nothing re-checks it on the way here,
+        // so a config deleted since then would surface as a bare require()
+        // warning from inside routing. Statted only for routes that declared
+        // one, which is few, and it says what to do about it.
+        if (! is_file($path)) {
+            throw new RuntimeException(
+                "Route config {$path} is named in the build manifest but is no longer on disk. Run: php artisan rsc:build"
+            );
+        }
+
         return require $path;
     }
 

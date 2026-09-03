@@ -76,13 +76,15 @@ class LaravelRscServiceProvider extends ServiceProvider
             Route::post('/_rsc/action', RscActionController::class)
                 ->middleware('web');
 
-            $appDir = config('rsc.source_dir').'/app';
-
             // Read rather than walked: the build already found the route tree
             // and wrote it down. Routing therefore needs a build — which was
             // already true for the bundle, and is why a missing manifest names
             // the command rather than registering nothing.
-            if (is_dir($appDir)) {
+            //
+            // Guarded on the manifest rather than on a source directory: the
+            // manifest is what registration actually reads, and where the
+            // source lives is now the build's business, not this host's.
+            if (RouteManifest::exists()) {
                 (new PageRouteRegistrar($this->app['router']))
                     ->register(RouteManifest::forApp()->pages());
             }

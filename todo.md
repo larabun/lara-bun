@@ -1,13 +1,10 @@
 Review and ensure everything is optimize and using the best practice and no security issue
-use offline like nextjs
-form prefetching
-optimistic update
-swr config
+use offline like nextjs 
+document all features including new features such as withoutjs
 
 Can we generate a full static site if all pages are static?
 Update the docs instruction
 Document ppr cache at edge
-why do we need to use btoa to upload file?
 
 Why page import have LaravelRsc\PageRoute;, can't these be used outside of laravel?
 docs is now stale

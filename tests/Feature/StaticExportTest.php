@@ -102,12 +102,19 @@ test('it says so when nothing has been prerendered', function () {
         ->assertFailed();
 });
 
-test('the output directory defaults to the configured one', function () {
-    // So `output => export` is the only thing an app has to declare, the way
-    // next.config declares it rather than the build command carrying it.
+test('the output directory comes from the build that produced the site', function () {
+    // Declared in the vite config, because it is a decision about what the
+    // build produces — so this reads it back rather than being told again.
     $source = prerendered(['docs/rsc.html' => '<html>rsc</html>']);
 
-    Config::set('rsc.export_path', 'dist-test');
+    $manifestDir = base_path('bootstrap/rsc/vite');
+    File::ensureDirectoryExists($manifestDir);
+    File::put($manifestDir.'/routes.json', json_encode([
+        'version' => 1,
+        'build' => ['output' => 'export', 'exportPath' => 'dist-test', 'payloadName' => 'index.rsc'],
+        'routes' => [],
+        'intercepts' => [],
+    ]));
 
     $this->artisan('rsc:export')->assertSuccessful();
 

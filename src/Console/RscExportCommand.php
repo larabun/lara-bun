@@ -4,6 +4,7 @@ namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
+use LaravelRsc\RouteManifest;
 
 /**
  * Write the prerendered site out as files a static host can serve.
@@ -33,7 +34,7 @@ class RscExportCommand extends Command
     public const PAYLOAD_NAME = 'index.rsc';
 
     protected $signature = 'rsc:export
-        {--out= : Directory to write the static site into, defaulting to rsc.export_path}
+        {--out= : Directory to write the static site into, defaulting to the one the build chose}
         {--force : Export anyway, leaving routes that need a server broken}';
 
     protected $description = 'Write the prerendered site out for a static host';
@@ -48,7 +49,7 @@ class RscExportCommand extends Command
             return self::FAILURE;
         }
 
-        $out = $this->option('out') ?: (string) config('rsc.export_path', 'dist');
+        $out = $this->option('out') ?: RouteManifest::forApp()->build()['exportPath'];
         $out = str_starts_with($out, '/') ? $out : base_path($out);
 
         $needsServer = $this->routesNeedingServer($source);

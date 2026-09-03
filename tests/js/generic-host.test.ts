@@ -120,3 +120,52 @@ describe('the package alias', () => {
     rmSync(root, { recursive: true, force: true })
   })
 })
+
+describe('what the build produces', () => {
+  test('a server build leaves the header doing the work', async () => {
+    const root = mkdtempSync(join(packageRoot, 'bootstrap/rsc/output-'))
+    mkdirSync(join(root, 'src', 'app'), { recursive: true })
+    writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
+
+    const config = await configFor({ projectRoot: root })
+
+    expect(config.build?.rollupOptions).toBeUndefined()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('an export build decides for itself that payloads need urls', async () => {
+    // There is no server to read a header on a static host, so the client has
+    // to be built asking for a file. The build knows that; nothing has to tell
+    // it, and nothing else has to agree with it.
+    const root = mkdtempSync(join(packageRoot, 'bootstrap/rsc/output-'))
+    mkdirSync(join(root, 'src', 'app'), { recursive: true })
+    writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
+
+    await configFor({ projectRoot: root, output: 'export', exportPath: 'out' })
+
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+
+    expect(manifest.build).toEqual({
+      output: 'export',
+      exportPath: 'out',
+      payloadName: 'index.rsc',
+    })
+
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('a server build says so, and asks for no payload filename', async () => {
+    const root = mkdtempSync(join(packageRoot, 'bootstrap/rsc/output-'))
+    mkdirSync(join(root, 'src', 'app'), { recursive: true })
+    writeFileSync(join(root, 'src', 'app', 'page.tsx'), 'export default function P() { return null }')
+
+    await configFor({ projectRoot: root })
+
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+
+    expect(manifest.build.output).toBe('server')
+    expect(manifest.build.payloadName).toBe('')
+
+    rmSync(root, { recursive: true, force: true })
+  })
+})

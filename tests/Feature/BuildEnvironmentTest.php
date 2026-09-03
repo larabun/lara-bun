@@ -11,7 +11,6 @@
  */
 
 use Illuminate\Support\Facades\Config;
-use LaravelRsc\Console\RscExportCommand;
 use LaravelRsc\Support\BuildEnvironment;
 use LaravelRsc\Support\EnginePath;
 
@@ -53,15 +52,6 @@ test('and states the package name rather than taking it as a setting', function 
     expect(BuildEnvironment::forVite()['RSC_PACKAGE_ALIAS'])->toBe(EnginePath::PACKAGE);
 });
 
-test('an export build asks for payloads by the name the export writes', function () {
-    // The client is built to request this and the export writes it; a setting
-    // that changed one without the other would 404 every navigation.
-    Config::set('rsc.output', 'export');
-
-    expect(BuildEnvironment::forVite()['RSC_STATIC_PAYLOADS'])
-        ->toBe(RscExportCommand::PAYLOAD_NAME);
-});
-
 test('extra values win, so a caller can ask for a development build', function () {
     expect(BuildEnvironment::forVite(['RSC_DEV' => '1'])['RSC_DEV'])->toBe('1');
 });
@@ -76,19 +66,4 @@ test('the dev watcher and the build command agree on everything else', function 
             expect($watch[$key])->toBe($build[$key]);
         }
     }
-});
-
-test('an export build tells the client to ask for payloads by url', function () {
-    // There is no server to read the X-RSC header on a static host, so the
-    // client has to know before it is built that payloads live somewhere else.
-    Config::set('rsc.output', 'export');
-    Config::set('rsc.export_payload_name', 'index.rsc');
-
-    expect(BuildEnvironment::forVite()['RSC_STATIC_PAYLOADS'])->toBe('index.rsc');
-});
-
-test('an ordinary build leaves the header doing the work', function () {
-    Config::set('rsc.output', 'server');
-
-    expect(BuildEnvironment::forVite()['RSC_STATIC_PAYLOADS'])->toBe('');
 });

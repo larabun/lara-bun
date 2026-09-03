@@ -20,3 +20,5 @@ bootstrap/rsc/icpt-*
 # Generic-consumer fixture built by the plugin tests
 bootstrap/rsc/generic
 bootstrap/rsc/generic-*
+bootstrap/rsc/alias-*
+bootstrap/rsc/output-*

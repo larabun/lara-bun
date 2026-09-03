@@ -7,6 +7,7 @@ use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
 use LaravelRsc\PrerenderService;
+use LaravelRsc\RouteManifest;
 use LaravelRsc\Support\BuildEnvironment;
 use LaravelRsc\Support\EnginePath;
 use LaravelRsc\Support\HostManifests;
@@ -118,15 +119,18 @@ class RscBuildCommand extends Command
 
         // Step 8: With output set to export, the build is not finished until
         // the site is on disk — the same way `next build` produces the out
-        // directory when configured to. The client was already built to ask
-        // for payloads by url, so stopping here would leave a build that only
-        // works behind this app.
-        if (config('rsc.output') === 'export') {
+        // directory when configured to.
+        //
+        // Read from the manifest the build just wrote, because the decision is
+        // declared in the vite config: the client is already built to ask for
+        // payloads by url, so stopping here would leave a build that only works
+        // behind this app.
+        $build = RouteManifest::forApp()->build();
+
+        if ($build['output'] === 'export') {
             $this->newLine();
 
-            return $this->call('rsc:export', [
-                '--out' => config('rsc.export_path', 'dist'),
-            ]);
+            return $this->call('rsc:export', ['--out' => $build['exportPath']]);
         }
 
         return self::SUCCESS;

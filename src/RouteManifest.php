@@ -23,6 +23,9 @@ class RouteManifest
     /** @var list<PageDefinition> */
     private array $pages = [];
 
+    /** @var array{output: string, exportPath: string, payloadName: string}|null */
+    private ?array $build = null;
+
     public function __construct(
         private string $manifestPath,
         private string $appDir,
@@ -49,6 +52,24 @@ class RouteManifest
         return $this->pages;
     }
 
+    /**
+     * What the build decided, for the steps that run after it.
+     *
+     * output and where an export goes are declared in the vite config, because
+     * they are decisions about what the build produces. This host acts on them
+     * afterwards rather than passing them in.
+     *
+     * @return array{output: string, exportPath: string, payloadName: string}
+     */
+    public function build(): array
+    {
+        if ($this->build === null) {
+            $this->read();
+        }
+
+        return $this->build ?? ['output' => 'server', 'exportPath' => 'dist', 'payloadName' => ''];
+    }
+
     private function read(): void
     {
         if (! is_file($this->manifestPath)) {
@@ -59,6 +80,12 @@ class RouteManifest
 
         $manifest = json_decode((string) file_get_contents($this->manifestPath), true, 512, JSON_THROW_ON_ERROR);
         $intercepts = $this->intercepts($manifest['intercepts'] ?? []);
+
+        $this->build = [
+            'output' => $manifest['build']['output'] ?? 'server',
+            'exportPath' => $manifest['build']['exportPath'] ?? 'dist',
+            'payloadName' => $manifest['build']['payloadName'] ?? '',
+        ];
 
         foreach ($manifest['routes'] ?? [] as $route) {
             $url = self::url($route['segments'] ?? []);

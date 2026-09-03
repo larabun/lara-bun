@@ -74,6 +74,18 @@ export interface RscRoutesOptions {
    */
   devOrigin?: string
   /**
+   * What the build produces.
+   *
+   *   'server'  the default: pages are served by a host, and a payload is
+   *             asked for with a header on the page's own url.
+   *   'export'  files any static host can serve. Payloads get addresses of
+   *             their own, because a host serving files cannot act on a
+   *             header, and the client is built to ask for those instead.
+   */
+  output?: 'server' | 'export'
+  /** Where an exported site is written, relative to the project root. */
+  exportPath?: string
+  /**
    * Filename payloads are served under on a static host, e.g. `index.rsc`.
    *
    * Only for an exported build. Normally the payload shares the page's url and
@@ -107,6 +119,10 @@ let interceptManifestFile: string
 let packageAlias: string | null
 /** Dev-server origin; empty in a build. See devUrls.ts. */
 let devOrigin: string
+/** 'server' or 'export' — see RscRoutesOptions.output. */
+let output: string
+/** Where an exported site is written. */
+let exportPath: string
 /**
  * Filename payloads are exported under, empty unless building for a static
  * host. Set, the client asks `<page>/<name>` for a payload instead of asking
@@ -182,7 +198,13 @@ function resolvePaths(options: RscRoutesOptions): void {
   )
   packageAlias = options.packageAlias || process.env.RSC_PACKAGE_ALIAS || null
   devOrigin = options.devOrigin || process.env.RSC_DEV_ORIGIN || ''
-  staticPayloads = options.staticPayloads || process.env.RSC_STATIC_PAYLOADS || ''
+  output = options.output || process.env.RSC_OUTPUT || 'server'
+  exportPath = options.exportPath || process.env.RSC_EXPORT_PATH || 'dist'
+  // An export decides this for itself: the client has to ask for payloads by
+  // url because there is no server to read a header, and the name it asks for
+  // is the one the export writes.
+  staticPayloads =
+    options.staticPayloads || process.env.RSC_STATIC_PAYLOADS || (output === 'export' ? 'index.rsc' : '')
 
   // No default: which file marks a route dynamic is the host's convention, and
   // guessing one here would bake a particular backend into a generic plugin.
@@ -288,7 +310,12 @@ function slotOf(componentName: string): string | null {
  * Ancestry is by path prefix: a layout at app/docs applies to everything under
  * app/docs, which is the same rule the composition uses.
  */
-function routeManifest(): { version: number; routes: ManifestRoute[]; intercepts: ManifestIntercept[] } {
+function routeManifest(): {
+  version: number
+  build: { output: string; exportPath: string; payloadName: string }
+  routes: ManifestRoute[]
+  intercepts: ManifestIntercept[]
+} {
   const names = [...components.keys()]
   const dirOf = (name: string) => name.split('/').slice(0, -1).join('/')
 
@@ -340,7 +367,14 @@ function routeManifest(): { version: number; routes: ManifestRoute[]; intercepts
     })
   }
 
-  return { version: 1, routes, intercepts }
+  // What the build decided, for a host that has to act on it afterwards —
+  // writing the site out, and knowing which filename the client will ask for.
+  return {
+    version: 1,
+    build: { output, exportPath, payloadName: staticPayloads },
+    routes,
+    intercepts,
+  }
 }
 
 // ── Discovery ────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ composer.lock
 /dist
 bootstrap/rsc/vite
 bootstrap/rsc/vite-test
+bootstrap/rsc/hono-spike
 bootstrap/rsc/validate-*
 bootstrap/rsc/cfg-*
 public/build/rsc-vite

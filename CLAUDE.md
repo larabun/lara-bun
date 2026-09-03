@@ -73,18 +73,29 @@ A consequence, not a bug: a slow host call still delays Suspense *completions*
 for its duration, because PHP cannot pump the socket while running app code.
 Fallbacks paint immediately; boundaries behind a 2.5s call resolve after it.
 
-### Activity Retention Needs a Non-Document Root
+### Activity Retention Rides on Partial Payloads, Not on the Root
 `<Activity mode="hidden">` keeps a page mounted so returning to it restores its
-client state — a half-typed form survives. It needs a wrapper above the page,
-and React will not hydrate a *document* container through one: the root child of
-a document must be `<html>`, and wrapping it does not warn, it hangs the
-renderer (verified on React 19.2.7). So `createViteRscApp` only wraps when the
-container is an element; an app whose root layout owns `<html>` hydrates the
-tree directly and navigations replace it.
+client state — a half-typed form survives. There are two places it can happen,
+and only one of them cares about `<html>`.
 
-Extending retention to document-rooted apps is an engine change, not a client
-one: SPA navigation would have to return only the changed segment instead of a
-whole document, so two retained pages do not mean two `<html>` elements.
+At the **root**, `ActivityRoot` needs a wrapper above the page, and React will
+not hydrate a *document* container through one: the root child of a document
+must be `<html>`, and wrapping it does not warn, it hangs the renderer
+(verified on React 19.2.7). So `createViteRscApp` only wraps when the container
+is an element.
+
+At a **segment boundary**, `SegmentBoundary` retains on its own — it sits below
+the root layout, inside `<body>`, where retained siblings are ordinary elements
+and nothing about `<html>` is at stake. So a document-rooted app *does* retain,
+and the docs app (whose root layout owns `<html>`) is the proof: navigate away
+from a half-typed form and it is still in the DOM behind `display: none`.
+
+What actually decides it is whether the host answers **partially**. A response
+at depth ≥ 1 goes to that boundary and everything above stays mounted; depth 0
+replaces the root and unmounts whatever was retained behind it. A host that
+always returns a whole document therefore has no retention at any depth — which
+is what the Hono spike looked like before it read `X-RSC-Segments`, and it read
+as an `<html>` problem when it was a protocol one.
 
 ### The Engine Is a Separate npm Package
 The JavaScript half — plugin, build CLI, worker, client runtime — publishes as

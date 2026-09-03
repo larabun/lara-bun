@@ -18,6 +18,7 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import rsc from '@vitejs/plugin-rsc'
 import type { Plugin, ResolvedConfig } from 'vite'
+import type { ManifestIntercept, ManifestRoute, RouteManifest, RouteSegment } from './manifest.ts'
 
 export interface RscRoutesOptions {
   /** Project root. Defaults to RSC_PROJECT_ROOT, then cwd. */
@@ -264,40 +265,6 @@ function log(...args: unknown[]): void {
  * neither is the plugin's business.
  */
 
-interface RouteSegment {
-  type: 'static' | 'param' | 'catchAll'
-  value: string
-}
-
-interface ManifestRoute {
-  component: string
-  segments: RouteSegment[]
-  layouts: string[]
-  loadings: string[]
-  slots: Record<string, string>
-  sections: string[]
-  /**
-   * The host's route-config file beside this page, if it has one, and the
-   * ancestor ones that also apply — outermost first, the page's own excluded.
-   *
-   * Resolved here because the build already walks these directories and
-   * already stats this file to classify the route. A host reading the
-   * manifest would otherwise walk the tree again at boot to find the same
-   * paths. Relative to the project root: an absolute path is correct only on
-   * the machine that built it, and a build in a container is normal.
-   */
-  config: string | null
-  ancestorConfigs: string[]
-}
-
-interface ManifestIntercept {
-  component: string
-  slot: string
-  segments: RouteSegment[]
-  /** (.) same level, (..) one up, (...) from the root. */
-  marker: string
-}
-
 /** `[...path]` → catchAll, `[id]` → param, `(group)` → nothing at all. */
 function urlSegments(componentName: string): RouteSegment[] {
   const parts = componentName.split('/').slice(1, -1)
@@ -346,12 +313,7 @@ function slotOf(componentName: string): string | null {
  * Ancestry is by path prefix: a layout at app/docs applies to everything under
  * app/docs, which is the same rule the composition uses.
  */
-function routeManifest(): {
-  version: number
-  build: { output: string; exportPath: string; payloadName: string }
-  routes: ManifestRoute[]
-  intercepts: ManifestIntercept[]
-} {
+function routeManifest(): RouteManifest {
   const names = [...components.keys()]
   const dirOf = (name: string) => name.split('/').slice(0, -1).join('/')
 

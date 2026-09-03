@@ -47,7 +47,10 @@
     "./types": "./resources/types.d.ts",
     "./useOnline": "./resources/js/useOnline.ts",
     "./form": "./resources/js/Form.tsx",
-    "./section": "./resources/js/section.tsx"
+    "./section": "./resources/js/section.tsx",
+    "./host": "./resources/host.ts",
+    "./hono": "./resources/hono.ts",
+    "./manifest": "./resources/manifest.ts"
   },
   "version": "0.1.0",
   "description": "File-based React Server Components routing for Vite \u2014 a router, a build, and a worker that any backend can drive.",

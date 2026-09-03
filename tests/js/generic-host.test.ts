@@ -287,3 +287,42 @@ describe('the host route config', () => {
     rmSync(root, { recursive: true, force: true })
   })
 })
+
+describe('routes that declare their own urls', () => {
+  test('are recognised however the export is written', async () => {
+    // An app may write it as a const arrow, or plain (not async) — both are
+    // valid exports of the same thing. A scan that only matches `export async
+    // function` records nothing, the manifest says the route declares no urls,
+    // and it is quietly left out of the build with nothing to say why.
+    const root = mkdtempSync(join(packageRoot, 'bootstrap/rsc/params-'))
+
+    mkdirSync(join(root, 'src/app/a/[id]'), { recursive: true })
+    mkdirSync(join(root, 'src/app/b/[id]'), { recursive: true })
+    mkdirSync(join(root, 'src/app/c/[id]'), { recursive: true })
+
+    writeFileSync(
+      join(root, 'src/app/a/[id]/page.tsx'),
+      'export async function generateStaticParams() { return [] }\nexport default function P() { return null }',
+    )
+    writeFileSync(
+      join(root, 'src/app/b/[id]/page.tsx'),
+      'export const generateStaticParams = () => []\nexport default function P() { return null }',
+    )
+    writeFileSync(
+      join(root, 'src/app/c/[id]/page.tsx'),
+      'export function generateStaticParams() { return [] }\nexport default function P() { return null }',
+    )
+
+    await configFor({ projectRoot: root })
+
+    const manifest = JSON.parse(readFileSync(join(root, '.rsc', 'routes.json'), 'utf-8'))
+    const declared = manifest.routes
+      .filter((r: any) => r.staticParams)
+      .map((r: any) => r.component)
+      .sort()
+
+    expect(declared).toEqual(['app/a/[id]/page', 'app/b/[id]/page', 'app/c/[id]/page'])
+
+    rmSync(root, { recursive: true, force: true })
+  })
+})

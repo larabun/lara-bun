@@ -139,3 +139,15 @@ describe('the route manifest', () => {
     expect(route('/feed')!.sections).toEqual([])
   })
 })
+
+describe('routes that declare their own urls', () => {
+  test('the manifest says which pages were asked', () => {
+    // So a host can plan a build — which routes to ask for urls, which to
+    // leave on demand — without loading the server bundle to find out.
+    const photo = manifest.routes.find((r) => r.component === 'app/photo/[id]/page')
+    const plain = manifest.routes.find((r) => r.component === 'app/page')
+
+    expect((photo as { staticParams?: boolean }).staticParams).toBe(true)
+    expect((plain as { staticParams?: boolean }).staticParams).toBe(false)
+  })
+})

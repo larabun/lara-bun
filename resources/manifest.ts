@@ -31,6 +31,15 @@ export interface ManifestRoute {
    */
   config: string | null
   ancestorConfigs: string[]
+  /**
+   * Whether the page exports generateStaticParams.
+   *
+   * Recorded here so a host can plan a build — which routes to ask for urls,
+   * which to leave on demand — without loading the server bundle first. The
+   * function itself is reached through the bundle's getStaticParams(), because
+   * only the bundle can run it.
+   */
+  staticParams: boolean
 }
 
 export interface ManifestIntercept {

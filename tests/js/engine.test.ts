@@ -1209,3 +1209,20 @@ describe('a section: a named region of a page', () => {
       .toContain('modal-default')
   })
 })
+
+describe('the urls a route declares', () => {
+  test('are reached by calling the page export through the bundle', async () => {
+    // A generated map that never executes is the failure this catches: the
+    // manifest would still say staticParams, and the prerenderer would get
+    // nothing back with nothing to say why.
+    expect(await engine.getStaticParams('app/photo/[id]/page')).toEqual([{ id: '1' }, { id: '2' }])
+  })
+
+  test('a route that declares none says so, rather than declaring none', async () => {
+    // null and [] are different answers. No generateStaticParams means render
+    // on demand; an empty array means the app looked and found nothing to
+    // build. Collapsing them prerenders nothing for a route that wanted
+    // everything, or the reverse.
+    expect(await engine.getStaticParams('app/page')).toBeNull()
+  })
+})

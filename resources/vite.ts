@@ -392,6 +392,7 @@ function routeManifest(): RouteManifest {
       sections: names.filter((n) => SECTION_FILE.test(n + '.tsx') && dirOf(n) === dirOf(name)),
       config: configIn(join(sourceDir, dirOf(name))),
       ancestorConfigs: ancestorConfigs(dirOf(name)),
+      staticParams: hasStaticParams(components.get(name)!.absPath),
     })
   }
 
@@ -545,12 +546,28 @@ function hasMetadata(absPath: string): boolean {
   return /export\s+(const\s+metadata|(async\s+)?function\s+generateMetadata)/.test(src)
 }
 
+/**
+ * Which urls exist for a parameterised route.
+ *
+ * The one thing about a route the build cannot work out for itself: only the
+ * app knows its slugs. Everything else about whether a page can be frozen is
+ * observed by rendering it — a page that suspends past the shell budget, or
+ * reaches for the host, says so by doing it. This is asked rather than
+ * inferred because there is nothing to infer it from.
+ */
+function hasStaticParams(absPath: string): boolean {
+  const src = readFileSync(absPath, 'utf-8')
+
+  return /export\s+((async\s+)?function\s+generateStaticParams|const\s+generateStaticParams)/.test(src)
+}
+
 // ── Codegen ──────────────────────────────────────────────────────────────────
 
 function generateEntryRsc(): string {
   const imports: string[] = []
   const mapEntries: string[] = []
   const metaEntries: string[] = []
+  const paramEntries: string[] = []
 
   for (const c of components.values()) {
     imports.push(`import ${c.alias} from ${JSON.stringify(c.absPath)}`)
@@ -561,6 +578,13 @@ function generateEntryRsc(): string {
       metaEntries.push(
         `  ${JSON.stringify(c.name)}: { static: ${c.alias}_meta.metadata, generate: ${c.alias}_meta.generateMetadata },`,
       )
+    }
+
+    if (hasStaticParams(c.absPath)) {
+      // The namespace import may already be in place for metadata; a second
+      // one of the same module is the same binding, so this is safe to repeat.
+      imports.push(`import * as ${c.alias}_params from ${JSON.stringify(c.absPath)}`)
+      paramEntries.push(`  ${JSON.stringify(c.name)}: ${c.alias}_params.generateStaticParams,`)
     }
   }
 
@@ -582,6 +606,26 @@ ${mapEntries.join('\n')}
 
 const metadataMap: Record<string, { static?: any; generate?: (p: any) => any }> = {
 ${metaEntries.join('\n')}
+}
+
+const staticParamsMap: Record<string, () => any> = {
+${paramEntries.join('\n')}
+}
+
+/**
+ * The param sets a route declares, or null when it declares none.
+ *
+ * Null and [] are different answers: no generateStaticParams means the route
+ * is rendered on demand, an empty array means the app looked and there is
+ * nothing to build. Collapsing them silently prerenders nothing for a route
+ * that asked for everything, or the reverse.
+ */
+export async function getStaticParams(component: string): Promise<Record<string, string>[] | null> {
+  const generate = staticParamsMap[component]
+
+  if (!generate) return null
+
+  return (await generate()) as Record<string, string>[]
 }
 
 // The host installs its callable via installHostFn. The global must be set

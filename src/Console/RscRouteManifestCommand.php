@@ -4,7 +4,7 @@ namespace LaravelRsc\Console;
 
 use Illuminate\Console\Command;
 use LaravelRsc\PageRoute;
-use LaravelRsc\PageScanner;
+use LaravelRsc\RouteManifest;
 
 class RscRouteManifestCommand extends Command
 {
@@ -22,12 +22,11 @@ class RscRouteManifestCommand extends Command
             return self::SUCCESS;
         }
 
-        $scanner = new PageScanner($appDir);
-        $scanner->scan();
+        $pages = RouteManifest::forApp()->pages();
 
         $routes = [];
 
-        foreach ($scanner->getPages() as $page) {
+        foreach ($pages as $page) {
             $entry = [
                 'urlPattern' => $page->urlPattern === '/' ? '/' : '/'.$page->urlPattern,
             ];

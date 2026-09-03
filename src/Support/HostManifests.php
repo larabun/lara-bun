@@ -7,13 +7,16 @@ use LaravelRsc\Console\DevCommand;
 use LaravelRsc\Console\RscBuildCommand;
 
 /**
- * The two artifacts PHP generates before the JavaScript half runs.
+ * What PHP generates before the JavaScript half runs.
  *
- * PHP owns route and action discovery, so the client cannot discover either on
- * its own — it needs the result up front. Neither failure is visible at build
- * time: a stale actions module calls a global that no longer exists, and an
- * empty intercept manifest silently turns every intercepted link into a
- * full-page navigation. So both are rewritten on every run.
+ * PHP owns action discovery — the actions are its classes — so the client
+ * cannot work them out for itself. The failure is not visible at build time: a
+ * stale module calls a global that no longer exists. So it is rewritten on
+ * every run.
+ *
+ * Route and intercept discovery used to be here too. The plugin walks app/ to
+ * generate its entries and now writes down what it found, so it produces those
+ * itself.
  *
  * Shared by `rsc:build` and `rsc:dev`. Dev mode skips the bundle build
  * entirely, which is exactly how it would come to skip these too.
@@ -32,22 +35,7 @@ class HostManifests
     {
         return array_values(array_filter([
             self::writeServerActions(),
-            self::writeInterceptManifest(),
         ]));
-    }
-
-    /** Routes the client router should intercept rather than navigate to. */
-    public static function writeInterceptManifest(): ?string
-    {
-        $target = base_path('bootstrap/rsc/vite/intercept-manifest.json');
-        $entries = InterceptManifest::discover(rtrim((string) config('rsc.source_dir'), '/').'/app');
-
-        File::ensureDirectoryExists(dirname($target));
-        File::put($target, json_encode($entries, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT));
-
-        return $entries === []
-            ? null
-            : 'Published '.count($entries).' intercept route(s) → '.$target;
     }
 
     /**

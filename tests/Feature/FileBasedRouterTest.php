@@ -3,7 +3,7 @@
 use LaravelRsc\Http\Middleware\ServeStaticRsc;
 use LaravelRsc\PageDefinition;
 use LaravelRsc\PageRouteRegistrar;
-use LaravelRsc\PageScanner;
+use LaravelRsc\RouteManifest;
 
 test('registers a static route for root page', function () {
     $registrar = new PageRouteRegistrar(app('router'));
@@ -205,9 +205,22 @@ test('scanner and registrar work end-to-end', function () {
     file_put_contents($appDir.'/docs/[slug]/page.tsx', '// doc page');
     file_put_contents($appDir.'/(marketing)/pricing/page.tsx', '// pricing page');
 
-    $scanner = new PageScanner($appDir);
-    $scanner->scan();
-    $pages = $scanner->getPages();
+    // The rules the build applies, stated as the manifest it writes: a route
+    // group contributes no segment, a [slug] directory becomes a parameter.
+    $manifestDir = $appDir.'/../manifest';
+    mkdir($manifestDir, 0755, true);
+    file_put_contents($manifestDir.'/routes.json', json_encode([
+        'version' => 1,
+        'routes' => [
+            ['component' => 'app/page', 'segments' => [], 'layouts' => ['app/layout'], 'loadings' => [], 'slots' => [], 'sections' => []],
+            ['component' => 'app/about/page', 'segments' => [['type' => 'static', 'value' => 'about']], 'layouts' => ['app/layout'], 'loadings' => [], 'slots' => [], 'sections' => []],
+            ['component' => 'app/docs/[slug]/page', 'segments' => [['type' => 'static', 'value' => 'docs'], ['type' => 'param', 'value' => 'slug']], 'layouts' => ['app/layout'], 'loadings' => [], 'slots' => [], 'sections' => []],
+            ['component' => 'app/(marketing)/pricing/page', 'segments' => [['type' => 'static', 'value' => 'pricing']], 'layouts' => ['app/layout'], 'loadings' => [], 'slots' => [], 'sections' => []],
+        ],
+        'intercepts' => [],
+    ]));
+
+    $pages = (new RouteManifest($manifestDir.'/routes.json', $appDir))->pages();
 
     expect($pages)->toHaveCount(4);
 
@@ -216,6 +229,9 @@ test('scanner and registrar work end-to-end', function () {
         ->and($urls)->toContain('about')
         ->and($urls)->toContain('docs/{slug}')
         ->and($urls)->toContain('pricing');
+
+    unlink($manifestDir.'/routes.json');
+    rmdir($manifestDir);
 
     // Clean up
     $iterator = new RecursiveIteratorIterator(

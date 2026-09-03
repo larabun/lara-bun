@@ -35,6 +35,57 @@ function writeRouteFile(string $base, string $path, string $contents = '// test 
     file_put_contents($full, $contents);
 }
 
+/**
+ * Stand in for the build.
+ *
+ * Discovering the route tree is the plugin's job now, so a test that wants
+ * routes declares them rather than writing files and expecting a scan.
+ * Page files are still written, because route.php is found beside them.
+ *
+ * @param  list<string>  $components
+ */
+function writeManifest(array $components): void
+{
+    $routes = [];
+
+    foreach ($components as $component) {
+        $parts = explode('/', $component);
+        $segments = [];
+
+        // Everything between app/ and /page, in the manifest's own terms.
+        foreach (array_slice($parts, 1, -1) as $part) {
+            if (str_starts_with($part, '(') && str_ends_with($part, ')')) {
+                continue;
+            }
+
+            $segments[] = str_starts_with($part, '[')
+                ? ['type' => 'param', 'value' => trim($part, '[]')]
+                : ['type' => 'static', 'value' => $part];
+        }
+
+        $routes[] = [
+            'component' => $component,
+            'segments' => $segments,
+            'layouts' => [],
+            'loadings' => [],
+            'slots' => [],
+            'sections' => [],
+        ];
+    }
+
+    $dir = base_path('bootstrap/rsc/vite');
+
+    if (! is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+
+    file_put_contents($dir.'/routes.json', json_encode([
+        'version' => 1,
+        'routes' => $routes,
+        'intercepts' => [],
+    ], JSON_THROW_ON_ERROR));
+}
+
 function manifest(): array
 {
     Artisan::call('rsc:route-manifest');
@@ -52,6 +103,7 @@ test('emits url patterns for static and dynamic routes', function () {
     writeRouteFile($this->sourceDir, 'app/page.tsx');
     writeRouteFile($this->sourceDir, 'app/docs/page.tsx');
     writeRouteFile($this->sourceDir, 'app/docs/[slug]/page.tsx');
+    writeManifest(['app/page', 'app/docs/page', 'app/docs/[slug]/page']);
 
     $patterns = array_column(manifest(), 'urlPattern');
 
@@ -62,6 +114,7 @@ test('emits url patterns for static and dynamic routes', function () {
 
 test('includes staticPaths from a route.php simple list', function () {
     writeRouteFile($this->sourceDir, 'app/docs/[slug]/page.tsx');
+    writeManifest(['app/docs/[slug]/page']);
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
@@ -76,6 +129,7 @@ test('includes staticPaths from a route.php simple list', function () {
 
 test('groups and deduplicates staticPaths given multi-param combinations', function () {
     writeRouteFile($this->sourceDir, 'app/posts/[year]/[slug]/page.tsx');
+    writeManifest(['app/posts/[year]/[slug]/page']);
     writeRouteFile(
         $this->sourceDir,
         'app/posts/[year]/[slug]/route.php',
@@ -93,6 +147,7 @@ test('groups and deduplicates staticPaths given multi-param combinations', funct
 
 test('extracts literal alternations from where constraints', function () {
     writeRouteFile($this->sourceDir, 'app/docs/[slug]/page.tsx');
+    writeManifest(['app/docs/[slug]/page']);
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
@@ -106,6 +161,7 @@ test('extracts literal alternations from where constraints', function () {
 
 test('skips where constraints that are not simple alternations', function () {
     writeRouteFile($this->sourceDir, 'app/docs/[slug]/page.tsx');
+    writeManifest(['app/docs/[slug]/page']);
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
@@ -122,6 +178,29 @@ test('reports intercept routes against the page they intercept', function () {
     writeRouteFile($this->sourceDir, 'app/feed/page.tsx');
     writeRouteFile($this->sourceDir, 'app/photo/[id]/page.tsx');
     writeRouteFile($this->sourceDir, 'app/@modal/(.)photo/[id]/page.tsx');
+
+    // Declared the way the build reports it: the interceptor is not a route of
+    // its own, and names the url it stands in for.
+    $dir = base_path('bootstrap/rsc/vite');
+
+    if (! is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+
+    file_put_contents($dir.'/routes.json', json_encode([
+        'version' => 1,
+        'routes' => [[
+            'component' => 'app/photo/[id]/page',
+            'segments' => [['type' => 'static', 'value' => 'photo'], ['type' => 'param', 'value' => 'id']],
+            'layouts' => [], 'loadings' => [], 'slots' => [], 'sections' => [],
+        ]],
+        'intercepts' => [[
+            'component' => 'app/@modal/(.)photo/[id]/page',
+            'slot' => 'modal',
+            'segments' => [['type' => 'static', 'value' => 'photo'], ['type' => 'param', 'value' => 'id']],
+            'marker' => '(.)',
+        ]],
+    ], JSON_THROW_ON_ERROR));
 
     $entry = collect(manifest())->firstWhere('urlPattern', '/photo/{id}');
 

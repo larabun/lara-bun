@@ -78,11 +78,13 @@ class LaravelRscServiceProvider extends ServiceProvider
 
             $appDir = config('rsc.source_dir').'/app';
 
+            // Read rather than walked: the build already found the route tree
+            // and wrote it down. Routing therefore needs a build — which was
+            // already true for the bundle, and is why a missing manifest names
+            // the command rather than registering nothing.
             if (is_dir($appDir)) {
-                $scanner = new PageScanner($appDir);
-                $scanner->scan();
                 (new PageRouteRegistrar($this->app['router']))
-                    ->register($scanner->getPages());
+                    ->register(RouteManifest::forApp()->pages());
             }
         }
 

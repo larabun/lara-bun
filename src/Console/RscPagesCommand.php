@@ -5,7 +5,7 @@ namespace LaravelRsc\Console;
 use Illuminate\Console\Command;
 use LaravelRsc\PageDefinition;
 use LaravelRsc\PageRoute;
-use LaravelRsc\PageScanner;
+use LaravelRsc\RouteManifest;
 
 class RscPagesCommand extends Command
 {
@@ -23,9 +23,8 @@ class RscPagesCommand extends Command
             return self::SUCCESS;
         }
 
-        $scanner = new PageScanner($appDir);
-        $scanner->scan();
-        $pages = $scanner->getPages();
+        $pages = RouteManifest::forApp()->pages();
+        $pages = $pages;
 
         if ($pages === []) {
             $this->warn('No page.tsx files found.');

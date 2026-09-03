@@ -624,7 +624,7 @@ class RuntimeBridge
      *
      * @return \Generator<int, string, void, void>
      */
-    public function rscAction(string $actionId, string $body, string $contentType = 'text/plain'): \Generator
+    public function rscAction(string $actionId, string $body, string $contentType = 'text/plain', ?array $page = null): \Generator
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -653,6 +653,9 @@ class RuntimeBridge
                 'bodyLength' => strlen($body),
                 'contentType' => $contentType,
                 'callbackId' => $callbackId,
+                // Only when the browser said where it was: without it the
+                // action still runs, it just cannot re-render anything.
+                'page' => $page,
             ], JSON_THROW_ON_ERROR));
 
             // Only when there is one: a zero-length frame is not a frame.

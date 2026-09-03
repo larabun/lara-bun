@@ -7,6 +7,7 @@
  */
 
 import { reportReachable } from "./onlineStore";
+import { clearSlots, setSlot } from "./slotStore";
 
 type ReactNode = unknown;
 type Deserializer = (stream: ReadableStream, options: Record<string, unknown>) => Promise<ReactNode>;
@@ -445,6 +446,10 @@ export async function navigate(
 
     if (nextLayouts !== null) heldLayouts = nextLayouts;
 
+    // A slot rendered for the page being left has no claim on the one being
+    // arrived at.
+    clearSlots();
+
     interceptedAtDepth = interceptSlot ? segmentDepth : null;
 
     onNavigate?.(tree, activityKey, segmentDepth);
@@ -491,6 +496,33 @@ export async function navigate(
  * the server sends the whole document, at the cost of the pages retained
  * behind it.
  */
+/**
+ * Put something the server re-rendered on screen.
+ *
+ * The trees arrive with an action's answer rather than being fetched, so this
+ * is the same apply path a navigation uses — only without a request, a url
+ * change or a history entry.
+ */
+export function applyRevalidated(target: string, tree: ReactNode): void {
+  const url = window.location.pathname + window.location.search;
+  const key = retentionKey(url, null);
+
+  if (target === 'all') {
+    // Depth 0 replaces the root, which is what re-rendering the layouts means.
+    onNavigate?.(tree, key, 0);
+
+    return;
+  }
+
+  if (target === 'page') {
+    onNavigate?.(tree, key, heldLayouts.length);
+
+    return;
+  }
+
+  setSlot(target, tree);
+}
+
 export async function refresh(opts?: { full?: boolean }): Promise<void> {
   const url = window.location.pathname + window.location.search;
   const interceptSlot = matchIntercept(url);

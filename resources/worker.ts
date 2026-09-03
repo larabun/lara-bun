@@ -46,6 +46,14 @@ interface IncomingMessage {
   body?: string | Uint8Array;
   /** "binary" means the body is the frame after this one. */
   bodyEncoding?: string;
+  /** What renders the page an action came from, so what it invalidates can be re-rendered. */
+  page?: {
+    component: string;
+    props: Record<string, unknown>;
+    layouts: LayoutEntry[];
+    loadings: string[];
+    parallelSlots: Record<string, string>;
+  };
   bodyLength?: number;
   contentType?: string;
 }
@@ -274,6 +282,8 @@ type RscHandlerModule = {
     actionId: string,
     body: string | Uint8Array,
     contentType: string,
+    page?: IncomingMessage["page"],
+    takeRevalidated?: () => string[],
   ) => Promise<{ stream: ReadableStream }>;
   handleRscPprShell: (
     component: string,
@@ -521,6 +531,10 @@ async function handleRscActionMessage(
       message.actionId,
       actionBody,
       message.contentType ?? "text/plain",
+      // The page the action was invoked from, resolved by the host — the
+      // browser knows the url but not which components render it.
+      message.page,
+      () => takeRevalidated(cbConn),
     );
 
     writeFrame(mainSocket, '{"type":"action-start"}');

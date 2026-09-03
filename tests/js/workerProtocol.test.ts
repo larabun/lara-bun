@@ -520,8 +520,16 @@ describe('what a refusal from the host looks like on the wire', () => {
 })
 
 describe('what an action says it invalidated', () => {
+  const PAGE = {
+    component: 'app/page',
+    props: { name: 'ramon' },
+    layouts: LAYOUTS,
+    loadings: [],
+    parallelSlots: { modal: 'app/@modal/default' },
+  }
+
   /** Run needsHost, answering its host call the way PHP would. */
-  async function actionAnswering(reply: Record<string, unknown>) {
+  async function actionAnswering(reply: Record<string, unknown>, page: unknown = PAGE) {
     const args = new TextEncoder().encode(JSON.stringify(['ramon']))
 
     const { main } = await streamRun(
@@ -531,42 +539,51 @@ describe('what an action says it invalidated', () => {
         bodyEncoding: 'binary',
         bodyLength: args.length,
         contentType: 'text/plain;charset=UTF-8',
+        page,
       },
       async () => reply,
       1500,
       [frame(args)],
     )
 
-    return main.map((f) => f.frame)
+    return main
+      .map((f) => f.frame)
+      .filter((f) => f.type === 'action-chunk')
+      .map((f) => String(f.data))
+      .join('')
   }
 
-  test('a mark made while the action ran comes back with it', async () => {
-    // The action knows what it changed and the page does not. Reporting it on
-    // the way out is what lets the answer carry the re-rendered part, rather
-    // than the browser being told and asking again.
-    const frames = await actionAnswering({ result: null, revalidate: ['orders'] })
-    const end = frames.find((f) => f.type === 'action-end')
+  test('a marked slot comes back rendered, with the answer', async () => {
+    // One round trip. The browser is not told what went stale and sent to
+    // fetch it — the server knew at the end of the first request.
+    const payload = await actionAnswering({ result: null, revalidate: ['modal'] })
 
-    expect(end).toBeDefined()
-    expect(end!.revalidated).toEqual(['orders'])
+    expect(payload).toContain('__rscRevalidated')
+    expect(payload).toContain('modal-default')
   }, 30_000)
 
-  test('an action that marks nothing says nothing', async () => {
-    // Most actions return what changed and the caller sets it; those must not
-    // pay for a re-render they did not ask for.
-    const frames = await actionAnswering({ result: null })
-    const end = frames.find((f) => f.type === 'action-end')
+  test('an action that marks nothing sends no envelope', async () => {
+    // Most actions return what changed and the caller sets it. Those pay for
+    // nothing: the result is serialized exactly as it was before any of this.
+    const payload = await actionAnswering({ result: null })
 
-    expect(end).toBeDefined()
-    expect(end).not.toHaveProperty('revalidated')
+    expect(payload).not.toContain('__rscRevalidated')
   }, 30_000)
 
   test('marks do not leak into the next action', async () => {
-    await actionAnswering({ result: null, revalidate: ['orders'] })
+    await actionAnswering({ result: null, revalidate: ['modal'] })
 
-    const frames = await actionAnswering({ result: null })
-    const end = frames.find((f) => f.type === 'action-end')
+    const payload = await actionAnswering({ result: null })
 
-    expect(end).not.toHaveProperty('revalidated')
+    expect(payload).not.toContain('__rscRevalidated')
+  }, 30_000)
+
+  test('an action still succeeds when the host could not say where it came from', async () => {
+    // A url that no longer routes, or a page needing more than a url to
+    // build. Revalidation is an optimisation; the action itself must run.
+    const payload = await actionAnswering({ result: null, revalidate: ['modal'] }, null)
+
+    expect(payload).not.toContain('__rscRevalidated')
+    expect(payload.length).toBeGreaterThan(0)
   }, 30_000)
 })

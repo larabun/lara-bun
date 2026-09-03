@@ -16,6 +16,7 @@ import {
   isPrefetched,
   navigate,
   refresh,
+  applyRevalidated,
   prefetch,
   retentionKey,
   setCallServer,
@@ -66,6 +67,11 @@ export async function createViteRscApp(
       method: "POST",
       headers: {
         "X-RSC-Action": id,
+        // Where the action was invoked from. The host resolves it to the
+        // components that render the page, so anything the action says it
+        // invalidated can come back with the answer instead of being fetched
+        // afterwards.
+        "X-RSC-Referer": window.location.pathname + window.location.search,
         "X-RSC-Content-Type": realContentType,
         "Content-Type": "application/octet-stream",
         "X-XSRF-TOKEN": decodeURIComponent(
@@ -91,7 +97,30 @@ export async function createViteRscApp(
       throw err;
     }
 
-    return createFromReadableStream(res.body!, { callServer });
+    const answer = await createFromReadableStream(res.body!, { callServer });
+
+    return unwrapRevalidated(answer);
+  }
+
+  /**
+   * Put anything the action re-rendered on screen, and hand back its result.
+   *
+   * The trees travel with the answer rather than being fetched afterwards, so
+   * the caller sees only what its action returned and never knows the page
+   * was updated around it.
+   */
+  function unwrapRevalidated(answer: unknown): unknown {
+    if (answer === null || typeof answer !== "object" || !("__rscRevalidated" in answer)) {
+      return answer;
+    }
+
+    const envelope = answer as { __rscRevalidated: Record<string, unknown>; result: unknown };
+
+    for (const [target, tree] of Object.entries(envelope.__rscRevalidated)) {
+      applyRevalidated(target, tree);
+    }
+
+    return envelope.result;
   }
 
   setDeserializer(createFromReadableStream as never);

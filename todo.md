@@ -23,3 +23,10 @@ rsc-router-laravel-adapter or rsc-laravel-adapter
 vite-plugin-rsc-router
 
 With nextjs revalidate refresh the entire page altho look seemless, can we get targetted revalidation. Example if I have two tables on a page and I only affect one table with an action, could we only refresh data for one table instead of the entire page? but someone user might also want to refresh everything
+
+
+Still open from the roadmap: targeted revalidation, withoutClientJs, and static export. Export is now mostly a matter of walking the same results and refusing anything that isn't static — PPR shells can't be exported, since nothing fills them on a static host.
+switch to navigation api when become stable
+
+add skills/something like laravel boost
+add mcp

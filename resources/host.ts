@@ -16,6 +16,8 @@
 
 import { matchIntercept, matchRoute, retentionKey, sharedDepth } from './routing.ts'
 import { pathKey, patternKey } from './prerender.ts'
+import { withRevalidation } from './revalidate.ts'
+export { revalidate } from './revalidate.ts'
 // Re-exported, not redefined: routing.ts is the one implementation, shared with
 // the prerenderer and the generated bundle, and this stays the adapter's
 // public surface so a host imports from one place.
@@ -48,6 +50,7 @@ export interface RscEngine {
     parallelSlots?: Record<string, string>,
     slotOverrides?: Record<string, unknown>,
   ): Promise<{ htmlStream: ReadableStream }>
+  handleRscRevalidate?(target: string, page: unknown): Promise<{ rscPayload: string }>
   handleAction(
     actionId: string,
     body: Uint8Array | string | FormData,
@@ -110,11 +113,6 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     )
   }
 
-  // Revalidation targets are per-request: an action marks what it invalidated
-  // while it runs, and the answer carries the re-rendered regions back with it
-  // instead of the client making a second round trip to ask.
-  const marked = new WeakMap<Request, string[]>()
-
   // Only when this host has functions of its own. Installing unconditionally
   // overwrites whatever was already registered — a prerenderer sharing the
   // same engine instance, or a host that set its own up first — and the
@@ -175,6 +173,16 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       const frozen = await servePrerendered(request, url, options.prerendered)
 
       if (frozen) return frozen
+    }
+
+    // One named region of this page, asked for without mutating anything to
+    // earn it. What an action invalidated does not come through here — that
+    // travels back inside the action's own answer, which is the whole point of
+    // marking rather than telling the client to go and ask.
+    const revalidating = request.headers.get(HEADER.revalidate)
+
+    if (revalidating !== null && request.headers.get(HEADER.rsc) !== null) {
+      return await handleRevalidate(request, url, revalidating)
     }
 
     // An intercepted navigation renders the page you are already on, with the
@@ -312,6 +320,30 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     })
   }
 
+  async function handleRevalidate(request: Request, url: URL, target: string): Promise<Response> {
+    if (!engine.handleRscRevalidate) {
+      return new Response('This build cannot revalidate', { status: 501 })
+    }
+
+    const match = matchRoute(manifest, url.pathname)
+
+    if (!match) return new Response('No such page', { status: 404 })
+
+    const { rscPayload } = await engine.handleRscRevalidate(
+      target,
+      pageContext(match, await propsFor(match, request)),
+    )
+
+    return new Response(rscPayload, {
+      headers: withVersion({
+        'Content-Type': FLIGHT_TYPE,
+        // Echoed so the client can tell which region it is holding.
+        [HEADER.revalidate]: target,
+        Vary: HEADER.rsc,
+      }),
+    })
+  }
+
   async function handleIntercept(request: Request, url: URL, slot: string): Promise<Response> {
     const intercept = matchIntercept(manifest, url.pathname, slot)
 
@@ -369,10 +401,11 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     const match = referer ? matchRoute(manifest, new URL(referer, url.origin).pathname) : null
     const page = match ? pageContext(match, await propsFor(match, request)) : undefined
 
-    marked.set(request, [])
-
-    const { stream } = await engine.handleAction(actionId, body, contentType, page, () =>
-      marked.get(request) ?? [],
+    // Scoped to this action: revalidate() called anywhere inside it, at any
+    // depth, marks here and nowhere else — two requests can be in flight and
+    // marking is per-request state.
+    const { stream } = await withRevalidation((taken) =>
+      engine.handleAction(actionId, body, contentType, page, taken),
     )
 
     return new Response(stream, {

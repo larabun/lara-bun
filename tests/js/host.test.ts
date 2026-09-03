@@ -8,6 +8,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import { createRscHandler, matchRoute, sharedDepth } from '../../resources/host.ts'
+import { revalidate, withRevalidation } from '../../resources/revalidate.ts'
 import type { RouteManifest } from '../../resources/manifest.ts'
 
 const segments = (spec: string) =>
@@ -40,9 +41,15 @@ function manifestOf(specs: Record<string, string[]>): RouteManifest {
   }
 }
 
-/** Records what it was asked to render, and answers with an empty stream. */
-function fakeEngine() {
-  const calls: Record<string, unknown[]> = { rsc: [], html: [], action: [] }
+/**
+ * Records what it was asked to render, and answers with an empty stream.
+ *
+ * `onAction` stands in for the body of a server action. Per engine rather than
+ * shared, so two actions can be in flight without one overwriting the other's
+ * behaviour — which is the only way to test that their marks stay apart.
+ */
+function fakeEngine(onAction?: () => void | Promise<void>) {
+  const calls: Record<string, unknown[]> = { rsc: [], html: [], action: [], revalidate: [] }
   let hostFn: ((name: string, ...args: unknown[]) => unknown) | null = null
 
   const empty = () => new ReadableStream({ start: (c) => c.close() })
@@ -73,10 +80,31 @@ function fakeEngine() {
 
       return { htmlStream: empty() }
     },
-    async handleAction(actionId: string, body: Uint8Array, contentType: string, page: unknown) {
-      calls.action.push({ actionId, body: new TextDecoder().decode(body), contentType, page })
+    async handleAction(
+      actionId: string,
+      body: Uint8Array,
+      contentType: string,
+      page: unknown,
+      takeRevalidated?: () => string[],
+    ) {
+      // Awaited, so marking and reading are separated by a suspension point —
+      // marks that leaked between requests would show up here and nowhere in a
+      // synchronous test.
+      await onAction?.()
+      calls.action.push({
+        actionId,
+        body: new TextDecoder().decode(body),
+        contentType,
+        page,
+        revalidated: takeRevalidated?.() ?? [],
+      })
 
       return { stream: empty() }
+    },
+    async handleRscRevalidate(target: string, page: unknown) {
+      calls.revalidate.push({ target, page })
+
+      return { rscPayload: `payload for ${target}` }
     },
   }
 }
@@ -505,5 +533,152 @@ describe('host functions already installed', () => {
     })
 
     expect(await engine.callHost('greet')).toBe('from the handler')
+  })
+})
+
+describe('revalidating part of a page', () => {
+  const manifest = manifestOf({ '/': [], '/orders/[id]': ['app/layout'] })
+
+  test('a request naming a region gets that region alone', async () => {
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({ engine: engine as never, manifest })(
+      new Request('http://x/orders/7', {
+        headers: { 'X-RSC': '1', 'X-RSC-Revalidate': 'orders' },
+      }),
+    )
+
+    expect(await res!.text()).toBe('payload for orders')
+    expect(engine.calls.rsc).toHaveLength(0)
+  })
+
+  test('rendered against the page it belongs to', async () => {
+    // A section is a region *of a page*, so it needs that page's props — the
+    // orders list for order 7, not for whatever page happens to be first.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      new Request('http://x/orders/7', {
+        headers: { 'X-RSC': '1', 'X-RSC-Revalidate': 'orders' },
+      }),
+    )
+
+    expect(engine.calls.revalidate[0]).toMatchObject({
+      target: 'orders',
+      page: { component: 'app/orders/[id]/page', props: { id: '7' } },
+    })
+  })
+
+  test('says which region it is answering with', async () => {
+    // The client applies it to a named boundary; an answer that does not say
+    // which one would have to be guessed at.
+    const res = await createRscHandler({ engine: fakeEngine() as never, manifest })(
+      new Request('http://x/', { headers: { 'X-RSC': '1', 'X-RSC-Revalidate': 'orders' } }),
+    )
+
+    expect(res?.headers.get('X-RSC-Revalidate')).toBe('orders')
+  })
+
+  test('is only ever a payload request, never a document one', async () => {
+    // The header can arrive on a navigation. Answering a document request with
+    // a bare region replaces the page with a fragment.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      new Request('http://x/', { headers: { 'X-RSC-Revalidate': 'orders' } }),
+    )
+
+    expect(engine.calls.revalidate).toHaveLength(0)
+    expect(engine.calls.html).toHaveLength(1)
+  })
+})
+
+describe('what an action marks while it runs', () => {
+  const manifest = manifestOf({ '/': [], '/orders/[id]': ['app/layout'] })
+
+  const invoke = (engine: ReturnType<typeof fakeEngine>) =>
+    createRscHandler({ engine: engine as never, manifest })(
+      new Request('http://x/_rsc/action', {
+        method: 'POST',
+        headers: { 'X-RSC-Action': 'a#b', 'X-RSC-Referer': '/orders/7' },
+        body: '[]',
+      }),
+    )
+
+  test('comes back with the action, rather than being fetched afterwards', async () => {
+    // One round trip: the answer the user is waiting on carries the
+    // re-rendered region with it. Telling the client to go and ask means the
+    // result arrives before the screen is right.
+    const engine = fakeEngine(() => revalidate('orders'))
+
+    await invoke(engine)
+
+    expect(engine.calls.action[0]).toMatchObject({ revalidated: ['orders'] })
+  })
+
+  test('marking nothing marks nothing', async () => {
+    const engine = fakeEngine()
+
+    await invoke(engine)
+
+    expect(engine.calls.action[0]).toMatchObject({ revalidated: [] })
+  })
+
+  test('the same region marked twice is one region', async () => {
+    const engine = fakeEngine(() => {
+      revalidate('orders')
+      revalidate('orders')
+    })
+
+    await invoke(engine)
+
+    expect(engine.calls.action[0]).toMatchObject({ revalidated: ['orders'] })
+  })
+
+  test('marking outside an action is ignored rather than fatal', () => {
+    // Shared code may mark; being called during an ordinary render must not
+    // make it throw.
+    expect(() => revalidate('orders')).not.toThrow()
+  })
+
+  test('marks belong to the action that made them', async () => {
+    // Two actions in flight at once must not see each other's marks. Global
+    // state would hand one request the other's regions.
+    const first = fakeEngine(async () => {
+      revalidate('orders')
+      // Yield mid-action, so the other request is running when this one reads.
+      await new Promise((r) => setTimeout(r, 5))
+    })
+    const second = fakeEngine(async () => {
+      revalidate('invoices')
+      await new Promise((r) => setTimeout(r, 5))
+    })
+
+    await Promise.all([invoke(first), invoke(second)])
+
+    expect(first.calls.action[0]).toMatchObject({ revalidated: ['orders'] })
+    expect(second.calls.action[0]).toMatchObject({ revalidated: ['invoices'] })
+  })
+})
+
+describe('marking across module copies', () => {
+  test('a second copy of the module marks into the same place', async () => {
+    // The app's actions are bundled into the server bundle; the host running
+    // them is not. So this module is loaded twice, and a store per copy means
+    // the action marks in one and the host reads the other. Nothing errors —
+    // the action's answer simply never carries anything back, which reads as
+    // revalidation not being implemented.
+    const other = (await import('../../resources/revalidate.ts?copy=2')) as typeof import('../../resources/revalidate.ts')
+
+    // Genuinely a different module object, or this proves nothing.
+    expect(other.revalidate).not.toBe(revalidate)
+
+    const taken = await withRevalidation(async (take) => {
+      other.revalidate('orders')
+
+      return take()
+    })
+
+    expect(taken).toEqual(['orders'])
   })
 })

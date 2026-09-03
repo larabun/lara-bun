@@ -19,7 +19,7 @@ interface SlotOverride {
 }
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell" | "rsc-payload" | "rsc-revalidate";
+  type: "ping" | "call" | "list" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell" | "rsc-payload";
   /** Which part to render on its own: all, page, or a slot name. */
   target?: string;
   function?: string;
@@ -139,22 +139,6 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
         return JSON.stringify({
           error: err instanceof Error ? err.message : String(err),
         });
-      }
-    }
-
-    case "rsc-revalidate": {
-      if (!rscHandler) {
-        return '{"error":"RSC not enabled."}';
-      }
-      if (!message.target || !message.page) {
-        return '{"error":"rsc-revalidate needs a target and the page it belongs to"}';
-      }
-      try {
-        const result = await rscHandler.handleRscRevalidate(message.target, message.page);
-
-        return JSON.stringify({ result });
-      } catch (err) {
-        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
       }
     }
 

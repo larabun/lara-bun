@@ -1152,3 +1152,53 @@ describe('what an action invalidated, rendered into its own answer', () => {
     await expect(failing).rejects.toThrow('modal')
   })
 })
+
+describe('a section: a named region of a page', () => {
+  const LEDGER = {
+    component: 'app/ledger/page',
+    props: {},
+    layouts: LAYOUTS,
+    loadings: [],
+    parallelSlots: {},
+  }
+
+  test('renders in place, inside a boundary the client can swap', async () => {
+    const { rscPayload } = await engine.handleRscPayload(
+      'app/ledger/page', {}, LAYOUTS, [], {}, 0, '/ledger',
+    )
+
+    expect(rscPayload).toContain('orders render')
+    expect(rscPayload).toContain('SlotBoundary')
+  })
+
+  test('is rendered on its own, without the page around it', async () => {
+    // The point of naming it: one region re-rendered, not the whole page.
+    const { rscPayload } = await engine.handleRscRevalidate('orders', LEDGER)
+
+    expect(rscPayload).toContain('orders render')
+    expect(rscPayload).not.toContain('Ledger')
+  })
+
+  test('does not send its own boundary back, so refreshes do not nest', async () => {
+    // The client replaces what is inside the boundary. Returning the wrapper
+    // would put a new boundary inside the old one, once per refresh, for ever.
+    const first = await engine.handleRscRevalidate('orders', LEDGER)
+    const second = await engine.handleRscRevalidate('orders', LEDGER)
+
+    expect(first.rscPayload).not.toContain('SlotBoundary')
+    expect(second.rscPayload).not.toContain('SlotBoundary')
+  })
+
+  test('an unknown name says which names there are', async () => {
+    // Naming one that does not exist is a typo, and rendering nothing would
+    // look like the mutation having failed to change anything.
+    await expect(engine.handleRscRevalidate('nope', LEDGER)).rejects.toThrow('orders')
+  })
+
+  test('a slot still resolves, so both kinds of region work', async () => {
+    const withSlot = { ...LEDGER, parallelSlots: { modal: 'app/@modal/default' } }
+
+    expect((await engine.handleRscRevalidate('modal', withSlot)).rscPayload)
+      .toContain('modal-default')
+  })
+})

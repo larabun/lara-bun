@@ -15,6 +15,7 @@
 //   Bun.serve({ fetch: (req) => rsc(req).then((r) => r ?? new Response('', { status: 404 })) })
 
 import { matchIntercept, matchRoute, retentionKey, sharedDepth } from './routing.ts'
+import { pathKey } from './prerender.ts'
 // Re-exported, not redefined: routing.ts is the one implementation, shared with
 // the prerenderer and the generated bundle, and this stays the adapter's
 // public surface so a host imports from one place.
@@ -80,6 +81,14 @@ export interface RscHostOptions {
    * engine cannot supply anything for.
    */
   props?: (match: MatchedRoute, request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>
+  /**
+   * Where the prerenderer wrote its pages, if this build has any.
+   *
+   * Checked before rendering: a page that was frozen at build time is served
+   * from disk, and anything not found there falls through to being rendered
+   * now. So a partial prerender is a valid state, not a broken one.
+   */
+  prerendered?: string
   /** Serve a built browser asset. Return null for anything not found. */
   assets?: (pathname: string, request: Request) => Promise<Response | null> | Response | null
   /**
@@ -152,6 +161,12 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     if (request.method !== 'GET' && request.method !== 'HEAD') return null
 
+    if (options.prerendered) {
+      const frozen = await servePrerendered(request, url, options.prerendered)
+
+      if (frozen) return frozen
+    }
+
     // An intercepted navigation renders the page you are already on, with the
     // interceptor dropped into one of its slots — so the modal opens over it
     // and the url changes. Only ever on a client navigation: a hard load has
@@ -211,6 +226,63 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       headers: withVersion({
         'Content-Type': FLIGHT_TYPE,
         [HEADER.segmentDepth]: String(segmentDepth),
+        [HEADER.layouts]: chain.join(','),
+        Vary: HEADER.rsc,
+      }),
+    })
+  }
+
+  /**
+   * A page rendered at build time, if there is one for this url.
+   *
+   * The payload has to match the depth the client shares, not simply exist.
+   * Serving the whole document to a client that already holds the layouts
+   * replaces the root — and replacing the root unmounts everything retained
+   * behind it, so going back stops restoring what you had.
+   */
+  async function servePrerendered(request: Request, url: URL, dir: string): Promise<Response | null> {
+    const { readFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const key = pathKey(url.pathname)
+    const read = async (name: string) => {
+      try {
+        return await readFile(join(dir, name), 'utf-8')
+      } catch {
+        return null
+      }
+    }
+
+    if (request.headers.get(HEADER.rsc) === null) {
+      const html = await read(`${key}.html`)
+
+      return html === null
+        ? null
+        : new Response(html, {
+            headers: withVersion({ 'Content-Type': HTML_TYPE, Vary: HEADER.rsc }),
+          })
+    }
+
+    const meta = await read(`${key}.meta.json`)
+
+    // Both or neither: without the chain there is no way to know which depth a
+    // payload is for, and guessing means handing the client a segment for a
+    // boundary it does not have.
+    if (meta === null) return null
+
+    const chain = (JSON.parse(meta).layouts ?? []) as string[]
+    const shared = sharedDepth(request.headers.get(HEADER.segments), chain)
+
+    // The variant for exactly this depth, or the whole document. Anything else
+    // would be a payload for a boundary the client is not holding.
+    const variant = shared > 0 ? await read(`${key}.seg${shared}.flight`) : null
+    const payload = variant ?? (await read(`${key}.flight`))
+
+    if (payload === null) return null
+
+    return new Response(payload, {
+      headers: withVersion({
+        'Content-Type': FLIGHT_TYPE,
+        [HEADER.segmentDepth]: String(variant ? shared : 0),
         [HEADER.layouts]: chain.join(','),
         Vary: HEADER.rsc,
       }),

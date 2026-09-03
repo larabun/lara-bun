@@ -52,7 +52,8 @@
     "./hono": "./resources/hono.ts",
     "./manifest": "./resources/manifest.ts",
     "./routing": "./resources/routing.ts",
-    "./headers": "./resources/headers.ts"
+    "./headers": "./resources/headers.ts",
+    "./prerender": "./resources/prerender.ts"
   },
   "version": "0.1.0",
   "description": "File-based React Server Components routing for Vite \u2014 a router, a build, and a worker that any backend can drive.",

@@ -23,6 +23,15 @@ use Illuminate\Support\Facades\File;
  */
 class RscExportCommand extends Command
 {
+    /**
+     * Filename an exported payload sits under, beside its page's index.html.
+     *
+     * Not configurable: the client is built to ask for this name and the
+     * export writes it, so the two have to agree — a knob that changed one
+     * without the other would produce a site whose every navigation 404s.
+     */
+    public const PAYLOAD_NAME = 'index.rsc';
+
     protected $signature = 'rsc:export
         {--out= : Directory to write the static site into, defaulting to rsc.export_path}
         {--force : Export anyway, leaving routes that need a server broken}';
@@ -130,7 +139,7 @@ class RscExportCommand extends Command
             $base = $file->getPath().'/'.substr($name, 0, -strlen('.html'));
 
             if (is_file($base.'.flight')) {
-                File::copy($base.'.flight', $dir.'/index.rsc');
+                File::copy($base.'.flight', $dir.'/'.self::PAYLOAD_NAME);
             }
 
             $written++;

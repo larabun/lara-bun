@@ -11,7 +11,9 @@
  */
 
 use Illuminate\Support\Facades\Config;
+use LaravelRsc\Console\RscExportCommand;
 use LaravelRsc\Support\BuildEnvironment;
+use LaravelRsc\Support\EnginePath;
 
 test('passes every convention the plugin will not assume', function () {
     $env = BuildEnvironment::forVite();
@@ -38,14 +40,26 @@ test('the route marker is the file Laravel actually writes', function () {
         ->and(preg_match('/'.$env['RSC_ROUTE_CONFIG_PATTERN'].'/', 'return route()->props(fn () => []);'))->toBe(1);
 });
 
-test('follows configuration rather than hardcoding', function () {
+test('follows configuration where there is a choice to make', function () {
     Config::set('rsc.host_global', 'callHost');
-    Config::set('rsc.package_alias', 'my-engine');
 
-    $env = BuildEnvironment::forVite();
+    expect(BuildEnvironment::forVite()['RSC_HOST_GLOBAL'])->toBe('callHost');
+});
 
-    expect($env['RSC_HOST_GLOBAL'])->toBe('callHost')
-        ->and($env['RSC_PACKAGE_ALIAS'])->toBe('my-engine');
+test('and states the package name rather than taking it as a setting', function () {
+    // The alias exists so a vendored copy can be imported by the name it
+    // publishes under. That name is not the application's to choose, and a
+    // setting that disagreed with it would simply fail to resolve.
+    expect(BuildEnvironment::forVite()['RSC_PACKAGE_ALIAS'])->toBe(EnginePath::PACKAGE);
+});
+
+test('an export build asks for payloads by the name the export writes', function () {
+    // The client is built to request this and the export writes it; a setting
+    // that changed one without the other would 404 every navigation.
+    Config::set('rsc.output', 'export');
+
+    expect(BuildEnvironment::forVite()['RSC_STATIC_PAYLOADS'])
+        ->toBe(RscExportCommand::PAYLOAD_NAME);
 });
 
 test('extra values win, so a caller can ask for a development build', function () {

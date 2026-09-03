@@ -48,13 +48,6 @@ return [
     // two can never disagree about what the global is called.
     'host_global' => env('RSC_HOST_GLOBAL', 'rpc'),
 
-    // Bare-specifier prefix for importing the client runtime, as in
-    // `import Link from 'rsc-router/Link'`. That is the engine's npm package
-    // name; the alias exists because this package installs through Composer
-    // rather than node_modules, and becomes unnecessary once rsc-router is
-    // installed from npm, where the name resolves on its own.
-    'package_alias' => env('RSC_PACKAGE_ALIAS', 'rsc-router'),
-
     // What `rsc:build` produces.
     //
     //   'server' — the default: pages are served by this app, and a payload is
@@ -68,9 +61,6 @@ return [
 
     // Where an exported site is written, relative to the project root.
     'export_path' => env('RSC_EXPORT_PATH', 'dist'),
-
-    // Filename an exported payload sits under, beside its page's index.html.
-    'export_payload_name' => env('RSC_EXPORT_PAYLOAD', 'index.rsc'),
 
     // Public dir + URL for the browser-facing client bundle. Served directly by
     // the web server (never through PHP); `assets_url` is the Vite base.

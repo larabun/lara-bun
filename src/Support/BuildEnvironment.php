@@ -2,6 +2,8 @@
 
 namespace LaravelRsc\Support;
 
+use LaravelRsc\Console\RscExportCommand;
+
 /**
  * The environment the Vite build runs under.
  *
@@ -27,11 +29,13 @@ class BuildEnvironment
             'RSC_ASSETS_DIR' => config('rsc.assets_dir'),
             'RSC_ASSETS_URL' => config('rsc.assets_url'),
             'RSC_HOST_GLOBAL' => config('rsc.host_global', 'rpc'),
-            'RSC_PACKAGE_ALIAS' => config('rsc.package_alias', 'rsc-router'),
+            // The package's own name, not a setting: the alias only exists so a
+            // vendored copy can be imported by the name it publishes under.
+            'RSC_PACKAGE_ALIAS' => EnginePath::PACKAGE,
             // Set only for an export, where the client has to ask for a
             // payload by url because there is no server to read a header.
             'RSC_STATIC_PAYLOADS' => config('rsc.output') === 'export'
-                ? (string) config('rsc.export_payload_name', 'index.rsc')
+                ? RscExportCommand::PAYLOAD_NAME
                 : '',
             'RSC_ROUTE_CONFIG_FILE' => 'route.php',
             'RSC_ROUTE_CONFIG_PATTERN' => 'props\s*\(\s*(fn|function)\s*\(',

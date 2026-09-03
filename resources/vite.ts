@@ -201,6 +201,143 @@ function log(...args: unknown[]): void {
   console.error('[rsc-routes]', ...args)
 }
 
+
+// ── The route manifest ───────────────────────────────────────────────────────
+
+/**
+ * What the plugin knows about the route tree, written out for a host to read.
+ *
+ * The plugin already walks app/ to generate the entries, and every host has to
+ * know the same things — which url a component answers, what layouts wrap it,
+ * which slots and sections belong to it. Laravel scans the tree a second time
+ * to work that out; a JS host would have to write a third. This is the one
+ * answer, emitted where both can read it.
+ *
+ * Urls are expressed as segments rather than as a pattern string, because the
+ * pattern is the host's dialect: Laravel writes {slug}, Hono writes :slug, and
+ * neither is the plugin's business.
+ */
+
+interface RouteSegment {
+  type: 'static' | 'param' | 'catchAll'
+  value: string
+}
+
+interface ManifestRoute {
+  component: string
+  segments: RouteSegment[]
+  layouts: string[]
+  loadings: string[]
+  slots: Record<string, string>
+  sections: string[]
+}
+
+interface ManifestIntercept {
+  component: string
+  slot: string
+  segments: RouteSegment[]
+  /** (.) same level, (..) one up, (...) from the root. */
+  marker: string
+}
+
+/** `[...path]` → catchAll, `[id]` → param, `(group)` → nothing at all. */
+function urlSegments(componentName: string): RouteSegment[] {
+  const parts = componentName.split('/').slice(1, -1)
+  const segments: RouteSegment[] = []
+
+  for (const part of parts) {
+    // A route group organises files without appearing in the url.
+    if (part.startsWith('(') && part.endsWith(')')) continue
+    // A slot directory is not part of its page's url either.
+    if (part.startsWith('@')) continue
+
+    if (part.startsWith('[...') && part.endsWith(']')) {
+      segments.push({ type: 'catchAll', value: part.slice(4, -1) })
+      continue
+    }
+
+    if (part.startsWith('[') && part.endsWith(']')) {
+      segments.push({ type: 'param', value: part.slice(1, -1) })
+      continue
+    }
+
+    // An interception marker says which url this replaces, not what it is
+    // called: (.)photo intercepts the sibling /photo. Left in place the
+    // manifest would claim a route at /(.)photo, which nothing can navigate to.
+    segments.push({ type: 'static', value: part.replace(/^\(\.{1,3}\)/, '') })
+  }
+
+  return segments
+}
+
+/** Whether a component sits under an interception marker: (.) (..) (...) */
+function isIntercept(componentName: string): boolean {
+  return componentName.split('/').some((part) => /^\(\.{1,3}\)/.test(part))
+}
+
+/** The slot directory a component lives under, if any. */
+function slotOf(componentName: string): string | null {
+  const part = componentName.split('/').find((p) => p.startsWith('@'))
+
+  return part ? part.slice(1) : null
+}
+
+/**
+ * Everything the plugin discovered, as a host needs it.
+ *
+ * Ancestry is by path prefix: a layout at app/docs applies to everything under
+ * app/docs, which is the same rule the composition uses.
+ */
+function routeManifest(): { version: number; routes: ManifestRoute[]; intercepts: ManifestIntercept[] } {
+  const names = [...components.keys()]
+  const dirOf = (name: string) => name.split('/').slice(0, -1).join('/')
+
+  const ancestors = (name: string, base: string) =>
+    names
+      .filter((n) => n.endsWith('/' + base) && !isIntercept(n) && dirOf(name).startsWith(dirOf(n)))
+      .sort((a, b) => a.length - b.length)
+
+  const routes: ManifestRoute[] = []
+  const intercepts: ManifestIntercept[] = []
+
+  for (const name of names) {
+    if (name.endsWith('/page') && isIntercept(name)) {
+      const slot = slotOf(name)
+
+      if (slot) {
+        const marker = name.split('/').find((p) => /^\(\.{1,3}\)/.test(p))?.match(/^\(\.{1,3}\)/)?.[0] ?? '(.)'
+
+        intercepts.push({ component: name, slot, segments: urlSegments(name), marker })
+      }
+
+      continue
+    }
+
+    if (!name.endsWith('/page') || slotOf(name)) continue
+
+    const slots: Record<string, string> = {}
+
+    for (const candidate of names) {
+      const slot = slotOf(candidate)
+      // A slot belongs to the layout in the directory that declares it, so it
+      // applies to a page only if that directory is on the page's path.
+      if (!slot || isIntercept(candidate) || !candidate.endsWith('/default')) continue
+      if (dirOf(name).startsWith(candidate.split('/@')[0])) slots[slot] = candidate
+    }
+
+    routes.push({
+      component: name,
+      segments: urlSegments(name),
+      layouts: ancestors(name, 'layout').map((n) => n),
+      loadings: ancestors(name, 'loading').map((n) => n),
+      slots,
+      sections: names.filter((n) => SECTION_FILE.test(n + '.tsx') && dirOf(n) === dirOf(name)),
+    })
+  }
+
+  return { version: 1, routes, intercepts }
+}
+
 // ── Discovery ────────────────────────────────────────────────────────────────
 
 const ROUTE_FILES = ['page', 'layout', 'loading', 'default']
@@ -1073,6 +1210,11 @@ export function rscRoutes(options: RscRoutesOptions = {}): Plugin[] {
       writeFileSync(join(genDir, 'entry.rsc.tsx'), generateEntryRsc())
       writeFileSync(join(genDir, 'entry.ssr.tsx'), generateEntrySsr())
       writeFileSync(join(genDir, 'entry.browser.tsx'), generateEntryBrowser())
+
+      // Written beside the entries, for a host to read instead of walking the
+      // route tree itself. Laravel scans it a second time today; a JS host
+      // would otherwise have to write a third walk of the same directories.
+      writeFileSync(join(outDir, 'routes.json'), JSON.stringify(routeManifest(), null, 2))
 
       return {
         // Public URL for browser-facing client assets (served from public/ by

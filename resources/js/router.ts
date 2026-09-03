@@ -29,20 +29,23 @@ export function prefetch(url: string, cacheForMs?: number): void {
 }
 
 /**
- * Ask the server for the current page again.
+ * Ask the server for part of the current page again.
  *
- * Without `full`, the layouts already mounted stay and only the page below
- * them is re-rendered — so anything living in a layout, a count in a sidebar
- * say, will not move until you ask for the whole document.
+ *   refresh()          the page, leaving the layouts mounted
+ *   refresh('all')     the whole document
+ *   refresh('orders')  one parallel slot
+ *
+ * The page form leaves the layouts alone, so anything living in one — a count
+ * in a sidebar, say — will not move until you ask for 'all'.
  */
-export function refresh(opts?: { full?: boolean }): Promise<void> {
+export function refresh(target?: string): Promise<void> {
   const fn = (window as any).__rsc_refresh;
 
   if (!fn) {
     throw new Error("RSC navigation not initialized. Ensure createViteRscApp has been called.");
   }
 
-  return fn(opts);
+  return fn(target);
 }
 
 const router = { visit, prefetch, refresh };

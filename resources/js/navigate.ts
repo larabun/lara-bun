@@ -483,25 +483,11 @@ export async function navigate(
 }
 
 /**
- * Ask the server for this page again.
- *
- * A navigation to where you already are, with two differences: the prefetch
- * cache is skipped, because refreshing is a request for what the server says
- * now rather than what it said a moment ago; and no history entry is added,
- * because you have not gone anywhere.
- *
- * By default the layouts you are already holding stay mounted and only the
- * page below them is re-rendered — which is what makes it cheap, and also
- * means a count living in a layout will not move. `full` gives up the chain so
- * the server sends the whole document, at the cost of the pages retained
- * behind it.
- */
-/**
  * Put something the server re-rendered on screen.
  *
  * The trees arrive with an action's answer rather than being fetched, so this
- * is the same apply path a navigation uses — only without a request, a url
- * change or a history entry.
+ * is the same apply path a navigation uses — without a request, a url change
+ * or a history entry.
  */
 export function applyRevalidated(target: string, tree: ReactNode): void {
   const url = window.location.pathname + window.location.search;
@@ -523,14 +509,48 @@ export function applyRevalidated(target: string, tree: ReactNode): void {
   setSlot(target, tree);
 }
 
-export async function refresh(opts?: { full?: boolean }): Promise<void> {
+/**
+ * Ask the server for part of this page again.
+ *
+ *   refresh()          the page, leaving the layouts mounted
+ *   refresh('all')     the whole document, layouts included
+ *   refresh('orders')  one parallel slot, by the name its directory gave it
+ *
+ * The same words an action uses, so a thing can be invalidated from either
+ * side. This is the path for a refresh nobody mutated anything to earn — a
+ * button, a poll, a message saying that table has moved; what an action
+ * invalidated travels back inside the action's own answer instead.
+ *
+ * A slot is the only region smaller than a page the server can name, so two
+ * tables refresh apart from each other only if they are two slots. The page
+ * form leaves the layouts alone, which is what makes it cheap and also why a
+ * count living in a layout will not move until you ask for 'all'.
+ */
+export async function refresh(target = 'page'): Promise<void> {
   const url = window.location.pathname + window.location.search;
+
+  if (target !== 'page' && target !== 'all') {
+    const response = await fetch(payloadUrl(url), {
+      headers: { "X-RSC": "true", "X-RSC-Version": version, "X-RSC-Revalidate": target },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Could not revalidate ${target}: the server answered ${response.status}`);
+    }
+
+    setSlot(target, await deserializeResponse(response));
+
+    return;
+  }
+
   const interceptSlot = matchIntercept(url);
   const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
 
+  // Never from the cache: refreshing asks what the server says now, not what
+  // it said a moment ago.
   cache.delete(cacheKey);
 
-  if (opts?.full) {
+  if (target === 'all') {
     heldLayouts = [];
   }
 

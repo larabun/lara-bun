@@ -19,7 +19,9 @@ interface SlotOverride {
 }
 
 interface IncomingMessage {
-  type: "ping" | "call" | "list" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell" | "rsc-payload";
+  type: "ping" | "call" | "list" | "rsc" | "rsc-stream" | "rsc-html-stream" | "rsc-action" | "rsc-ppr-shell" | "rsc-payload" | "rsc-revalidate";
+  /** Which part to render on its own: all, page, or a slot name. */
+  target?: string;
   function?: string;
   args?: Record<string, unknown>;
   page?: Record<string, unknown>;
@@ -140,6 +142,22 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
       }
     }
 
+    case "rsc-revalidate": {
+      if (!rscHandler) {
+        return '{"error":"RSC not enabled."}';
+      }
+      if (!message.target || !message.page) {
+        return '{"error":"rsc-revalidate needs a target and the page it belongs to"}';
+      }
+      try {
+        const result = await rscHandler.handleRscRevalidate(message.target, message.page);
+
+        return JSON.stringify({ result });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
     case "rsc-payload": {
       if (!rscHandler) {
         return '{"error":"RSC not enabled."}';
@@ -178,6 +196,20 @@ async function handleMessage(message: IncomingMessage): Promise<string> {
         }
 
         try {
+          // A target asks for one part of this page rather than the whole of
+          // it, and needs the same host connection a page does.
+          if (message.target) {
+            const result = await rscHandler.handleRscRevalidate(message.target, {
+              component: message.component,
+              props: message.props ?? {},
+              layouts: message.layouts ?? [],
+              loadings: message.loadings ?? [],
+              parallelSlots: message.parallelSlots ?? {},
+            });
+
+            return JSON.stringify({ result });
+          }
+
           const metadata = await rscHandler.resolveMetadata(
             message.component,
             message.props ?? {},
@@ -285,6 +317,10 @@ type RscHandlerModule = {
     page?: IncomingMessage["page"],
     takeRevalidated?: () => string[],
   ) => Promise<{ stream: ReadableStream }>;
+  handleRscRevalidate: (
+    target: string,
+    page: NonNullable<IncomingMessage["page"]>,
+  ) => Promise<{ rscPayload: string }>;
   handleRscPprShell: (
     component: string,
     props: Record<string, unknown>,

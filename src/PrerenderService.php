@@ -81,6 +81,8 @@ class PrerenderService
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
+            $rscResponse->getLoadings(),
+            $rscResponse->getParallelSlots(),
         );
 
         if ($shell['timedOut']) {
@@ -99,8 +101,11 @@ class PrerenderService
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
-            [],
-            [],
+            // Not empty: a page whose layout declares a parallel slot renders
+            // without it otherwise, and nothing says so — the page comes out
+            // whole apart from the missing region.
+            $rscResponse->getLoadings(),
+            $rscResponse->getParallelSlots(),
             0,
             '',
             $shipsClientJs,
@@ -154,6 +159,8 @@ class PrerenderService
                 $rscResponse->getLayouts(),
                 $depth,
                 '/'.ltrim($url, '/'),
+                $rscResponse->getLoadings(),
+                $rscResponse->getParallelSlots(),
             );
 
             File::put("{$outputPath}/{$path}.seg{$depth}.flight", $segment['rscPayload']);
@@ -266,6 +273,8 @@ class PrerenderService
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
+            $rscResponse->getLoadings(),
+            $rscResponse->getParallelSlots(),
         );
 
         // A timeout is the normal path for a PPR page: the shell render is
@@ -329,6 +338,8 @@ class PrerenderService
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
             $rscResponse->getLayouts(),
+            $rscResponse->getLoadings(),
+            $rscResponse->getParallelSlots(),
         );
 
         // A timeout is the normal path for a PPR page: the shell render is

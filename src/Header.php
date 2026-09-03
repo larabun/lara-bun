@@ -24,6 +24,9 @@ final class Header
      * layout that differs, so a navigation within the same section does not
      * resend the chrome around it.
      */
+    /** Which part of the page to render on its own: all, page, or a slot name. */
+    public const X_RSC_REVALIDATE = 'X-RSC-Revalidate';
+
     public const X_RSC_SEGMENTS = 'X-RSC-Segments';
 
     /** Response: which boundary depth the payload replaces. 0 is the whole document. */

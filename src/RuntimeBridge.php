@@ -173,15 +173,38 @@ class RuntimeBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{rscPayload: string}
      */
-    public function rscPayload(string $component, array $props, array $layouts, int $from, string $pageKey): array
+    /**
+     * Render one part of a page on its own.
+     *
+     * For a client asking to refresh something nobody mutated anything to
+     * earn — a button, a poll, a message saying that table has moved. What an
+     * action invalidated does not come through here: that travels back inside
+     * the action's own answer.
+     *
+     * @param  array{component: string, props: array<string, mixed>, layouts: array<int, mixed>, loadings: array<int, string>, parallelSlots: array<string, string>}  $page
+     * @return array{rscPayload: string}
+     */
+    public function rscRevalidate(string $target, array $page): array
+    {
+        return $this->rsc(
+            $page['component'],
+            $page['props'],
+            $page['layouts'],
+            $page['loadings'],
+            $page['parallelSlots'],
+            $target,
+        );
+    }
+
+    public function rscPayload(string $component, array $props, array $layouts, int $from, string $pageKey, array $loadings = [], array $parallelSlots = []): array
     {
         $response = $this->send(json_encode([
             'type' => 'rsc-payload',
             'component' => $component,
             'props' => $props,
             'layouts' => $layouts,
-            'loadings' => [],
-            'parallelSlots' => [],
+            'loadings' => $loadings,
+            'parallelSlots' => $parallelSlots,
             'from' => $from,
             'pageKey' => $pageKey,
         ], JSON_THROW_ON_ERROR));
@@ -216,7 +239,15 @@ class RuntimeBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{body: string, rscPayload: string, clientChunks: string[], usedDynamicApis?: bool}
      */
-    public function rsc(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = []): array
+    /**
+     * Render a page, or one named part of it.
+     *
+     * A target routes the same request to a partial render. It shares this
+     * path rather than having its own because a slot can call back into the
+     * host exactly like a page can — and without the callback channel below,
+     * any slot that fetches anything fails.
+     */
+    public function rsc(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], ?string $target = null): array
     {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
@@ -238,6 +269,7 @@ class RuntimeBridge
                 'props' => $props,
                 'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
                 'callbackId' => $callbackId,
+                'target' => $target,
             ], JSON_THROW_ON_ERROR));
 
             while (true) {

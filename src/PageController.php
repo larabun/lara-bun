@@ -3,11 +3,18 @@
 namespace LaravelRsc;
 
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Route;
 
 class PageController
 {
-    public function handle(Request $request): RscResponse
+    /**
+     * A page, or one part of it.
+     *
+     * The narrow return type is a plain response: a request for one part
+     * answers with that part's payload, not with something to be rendered.
+     */
+    public function handle(Request $request): RscResponse|Response
     {
         $route = $request->route();
         $intercepts = $route->defaults['_rsc_intercepts'] ?? [];
@@ -23,7 +30,35 @@ class PageController
             return $this->handleIntercept($request, $intercepts, $interceptSlot, $refererUrl);
         }
 
+        // A client asking for one part of this page back, without mutating
+        // anything to earn it. What an action invalidated does not come
+        // through here — that travels back inside the action's own answer.
+        $revalidate = $request->header(Header::X_RSC_REVALIDATE);
+
+        if ($revalidate !== null && $request->hasHeader(Header::X_RSC)) {
+            return $this->revalidate($route, $revalidate);
+        }
+
         return $this->buildResponse($route);
+    }
+
+    /** Render one part of this page and answer with it alone. */
+    protected function revalidate(\Illuminate\Routing\Route $route, string $target): Response
+    {
+        $page = $this->buildResponse($route);
+
+        $rendered = app(RuntimeBridge::class)->rscRevalidate($target, [
+            'component' => $page->getComponent(),
+            'props' => $page->getProps(),
+            'layouts' => $page->getLayouts(),
+            'loadings' => $page->getLoadings(),
+            'parallelSlots' => $page->getParallelSlots(),
+        ]);
+
+        return new Response($rendered['rscPayload'], 200, [
+            'Content-Type' => 'text/x-component',
+            Header::X_RSC_REVALIDATE => $target,
+        ]);
     }
 
     protected function buildResponse(\Illuminate\Routing\Route $route): RscResponse

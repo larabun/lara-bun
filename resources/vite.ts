@@ -720,6 +720,24 @@ function clientReferenceNames(payload: string): string[] {
 // The segment variant of a prerendered route needs the payload and nothing
 // else. handleRsc also renders the HTML, which for that variant is built and
 // thrown away — a whole SSR pass per route for output nobody reads.
+/**
+ * Render one thing on its own, for a client asking to refresh it.
+ *
+ * The same targets an action can mark. This is the path for a refresh nobody
+ * mutated anything to earn — a button, a poll, a websocket saying the orders
+ * table moved.
+ */
+export async function handleRscRevalidate(
+  target: string,
+  page: PageContext,
+): Promise<{ rscPayload: string }> {
+  applyHost()
+
+  const flight = renderToReadableStream(await renderRevalidated(target, page))
+
+  return { rscPayload: await new Response(flight).text() }
+}
+
 export async function handleRscPayload(
   component: string,
   props: Record<string, unknown> = {},

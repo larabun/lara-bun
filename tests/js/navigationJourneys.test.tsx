@@ -536,7 +536,7 @@ describe('asking for the page again', () => {
     await go('/b')
 
     await act(async () => {
-      await refresh({ full: true })
+      await refresh('all')
     })
 
     const asked = requests.at(-1)!
@@ -550,7 +550,7 @@ describe('asking for the page again', () => {
     await go('/deep')
 
     await act(async () => {
-      await refresh({ full: true })
+      await refresh('all')
     })
 
     expect(window.location.pathname).toBe('/deep')

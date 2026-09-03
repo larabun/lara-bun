@@ -441,3 +441,39 @@ describe('route interception', () => {
     expect(engine.calls.rsc[0]).toMatchObject({ slots: { modal: 'app/@modal/default' } })
   })
 })
+
+describe('where the route table comes from', () => {
+  test('defaults to the one the bundle carries', async () => {
+    // An adapter passes the engine and nothing else. Requiring the manifest
+    // separately is the version-skew bug waiting to happen.
+    const engine = Object.assign(fakeEngine(), {
+      manifest: () => manifestOf({ '/only-in-bundle': [] }),
+    })
+
+    const res = await createRscHandler({ engine: engine as never })(
+      new Request('http://x/only-in-bundle'),
+    )
+
+    expect(res?.status).toBe(200)
+  })
+
+  test('an explicit one still wins, for a host that builds its own', async () => {
+    const engine = Object.assign(fakeEngine(), {
+      manifest: () => manifestOf({ '/from-bundle': [] }),
+    })
+
+    const handle = createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/from-option': [] }),
+    })
+
+    expect(await handle(new Request('http://x/from-option'))).not.toBeNull()
+    expect(await handle(new Request('http://x/from-bundle'))).toBeNull()
+  })
+
+  test('says so when there is no table at all', async () => {
+    // Rather than matching nothing and 404ing every page, which reads as a
+    // routing bug in the app.
+    expect(() => createRscHandler({ engine: fakeEngine() as never })).toThrow(/No route table/)
+  })
+})

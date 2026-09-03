@@ -14,10 +14,20 @@
 //   const rsc = createRscHandler({ engine, manifest, assets })
 //   Bun.serve({ fetch: (req) => rsc(req).then((r) => r ?? new Response('', { status: 404 })) })
 
-import type { ManifestRoute, RouteManifest, RouteSegment } from './manifest.ts'
+import { matchIntercept, matchRoute, sharedDepth } from './routing.ts'
+// Re-exported, not redefined: routing.ts is the one implementation, shared with
+// the prerenderer and the generated bundle, and this stays the adapter's
+// public surface so a host imports from one place.
+export { matchIntercept, matchRoute, sharedDepth } from './routing.ts'
+export type { MatchedRoute } from './routing.ts'
+import { FLIGHT_TYPE, HEADER, HTML_TYPE } from './headers.ts'
+import type { MatchedRoute } from './routing.ts'
+import type { RouteManifest } from './manifest.ts'
 
 /** The built server bundle. Only the parts a host calls. */
 export interface RscEngine {
+  /** The route table this bundle was built from. */
+  manifest?(): RouteManifest
   installHostFn(fn: (name: string, ...args: unknown[]) => unknown): void
   handleRscStream(
     component: string,
@@ -46,17 +56,15 @@ export interface RscEngine {
   ): Promise<{ stream: ReadableStream }>
 }
 
-/** A matched route and the params its url segments bound. */
-export interface MatchedRoute {
-  route: ManifestRoute
-  params: Record<string, string>
-}
-
 export interface RscHostOptions {
   /** The built server bundle — `import * as engine from './build/rsc/index.js'`. */
   engine: RscEngine
-  /** routes.json, as the build wrote it. */
-  manifest: RouteManifest
+  /**
+   * The route table. Defaults to the one the bundle was built with, which is
+   * almost always what you want — a manifest passed separately can go stale
+   * against the bundle it is describing.
+   */
+  manifest?: RouteManifest
   /**
    * Functions the app's server components call as `await rpc('name', ...args)`.
    *
@@ -83,119 +91,15 @@ export interface RscHostOptions {
   version?: string
 }
 
-/** The url prefix the browser posts server actions to. Not negotiable. */
-const ACTION_PATH = '/_rsc/action'
-
-/**
- * Match a pathname against the manifest's segments.
- *
- * The manifest stores segments rather than a pattern string, because the
- * pattern is the host's dialect — Laravel writes `{slug}`, Hono writes
- * `:slug`, and neither is the build's business. Matching them directly means
- * no dialect at all.
- *
- * Static segments beat dynamic ones at the same position: /docs/new is the
- * page called new, not the page called [slug] with slug=new.
- */
-export function matchRoute(manifest: RouteManifest, pathname: string): MatchedRoute | null {
-  const parts = pathname.split('/').filter(Boolean)
-  let best: MatchedRoute | null = null
-  let bestScore = -1
-
-  for (const route of manifest.routes) {
-    const bound = bindSegments(route.segments, parts)
-
-    if (!bound) continue
-
-    // More static segments wins; a catch-all is the weakest possible match.
-    const score = route.segments.reduce(
-      (n, s) => n + (s.type === 'static' ? 2 : s.type === 'param' ? 1 : 0),
-      0,
-    )
-
-    if (score > bestScore) {
-      best = { route, params: bound }
-      bestScore = score
-    }
-  }
-
-  return best
-}
-
-/**
- * The interceptor registered for a slot, if this url has one.
- *
- * Matched against the url being navigated *to*: `(.)posts/[slug]` intercepts
- * /posts/anything, and the params it binds are the target's, not the page the
- * modal opens over.
- */
-export function matchIntercept(
-  manifest: RouteManifest,
-  pathname: string,
-  slot: string,
-): { component: string; params: Record<string, string> } | null {
-  const parts = pathname.split('/').filter(Boolean)
-
-  for (const intercept of manifest.intercepts) {
-    if (intercept.slot !== slot) continue
-
-    const params = bindSegments(intercept.segments, parts)
-
-    if (params) return { component: intercept.component, params }
-  }
-
-  return null
-}
-
-function bindSegments(segments: RouteSegment[], parts: string[]): Record<string, string> | null {
-  const params: Record<string, string> = {}
-
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i]
-
-    if (segment.type === 'catchAll') {
-      // Swallows the rest, including none of it.
-      params[segment.value] = parts.slice(i).join('/')
-
-      return params
-    }
-
-    if (i >= parts.length) return null
-
-    if (segment.type === 'static') {
-      if (parts[i] !== segment.value) return null
-      continue
-    }
-
-    params[segment.value] = decodeURIComponent(parts[i])
-  }
-
-  return segments.length === parts.length ? params : null
-}
-
-/**
- * How much of the layout chain the client already holds.
- *
- * It sends the chain outermost-first; the shared prefix is what it can keep.
- * Answering with a whole document instead is not merely wasteful — it replaces
- * the root, and replacing the root unmounts every page retained behind the
- * current one, so a half-typed form does not survive going back.
- */
-export function sharedDepth(held: string | null, chain: string[]): number {
-  if (!held) return 0
-
-  const mounted = held.split(',').filter(Boolean)
-  let shared = 0
-
-  while (shared < mounted.length && shared < chain.length && mounted[shared] === chain[shared]) {
-    shared++
-  }
-
-  return shared
-}
-
 export function createRscHandler(options: RscHostOptions): (request: Request) => Promise<Response | null> {
-  const { engine, manifest, rpc = {}, assets, version } = options
+  const { engine, rpc = {}, assets, version } = options
+  const manifest = options.manifest ?? engine.manifest?.()
+
+  if (!manifest) {
+    throw new Error(
+      'No route table. Pass `manifest`, or build with a plugin version that embeds one in the bundle.',
+    )
+  }
 
   // Revalidation targets are per-request: an action marks what it invalidated
   // while it runs, and the answer carries the re-rendered regions back with it
@@ -230,7 +134,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
   }
 
   function withVersion(headers: Record<string, string>): Record<string, string> {
-    return version ? { ...headers, 'X-RSC-Version': version } : headers
+    return version ? { ...headers, [HEADER.version]: version } : headers
   }
 
   return async function handle(request: Request): Promise<Response | null> {
@@ -242,7 +146,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       if (asset) return asset
     }
 
-    if (request.method === 'POST' && url.pathname === ACTION_PATH) {
+    if (request.method === 'POST' && url.pathname === HEADER.actionPath) {
       return await handleAction(request, url)
     }
 
@@ -252,9 +156,9 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     // interceptor dropped into one of its slots — so the modal opens over it
     // and the url changes. Only ever on a client navigation: a hard load has
     // no referer to open over and gets the real page.
-    const interceptSlot = request.headers.get('X-RSC-Intercept')
+    const interceptSlot = request.headers.get(HEADER.intercept)
 
-    if (interceptSlot !== null && request.headers.get('X-RSC') !== null) {
+    if (interceptSlot !== null && request.headers.get(HEADER.rsc) !== null) {
       return await handleIntercept(request, url, interceptSlot)
     }
 
@@ -268,7 +172,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     // A payload request says so with a header on the page's own url, so one
     // route serves both the document and the navigation that follows it.
-    if (request.headers.get('X-RSC') === null) {
+    if (request.headers.get(HEADER.rsc) === null) {
       const { htmlStream } = await engine.handleRscHtmlStream(
         match.route.component,
         props,
@@ -280,14 +184,14 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
       return new Response(htmlStream, {
         headers: withVersion({
-          'Content-Type': 'text/html; charset=utf-8',
-          'X-RSC-Layouts': chain.join(','),
-          Vary: 'X-RSC',
+          'Content-Type': HTML_TYPE,
+          [HEADER.layouts]: chain.join(','),
+          Vary: HEADER.rsc,
         }),
       })
     }
 
-    const from = sharedDepth(request.headers.get('X-RSC-Segments'), chain)
+    const from = sharedDepth(request.headers.get(HEADER.segments), chain)
 
     // Proposed by the host, decided by the engine: an interceptor can force a
     // wider render than the client asked for, so what goes back is the depth
@@ -305,10 +209,10 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     return new Response(stream, {
       headers: withVersion({
-        'Content-Type': 'text/x-component; charset=utf-8',
-        'X-RSC-Segment-Depth': String(segmentDepth),
-        'X-RSC-Layouts': chain.join(','),
-        Vary: 'X-RSC',
+        'Content-Type': FLIGHT_TYPE,
+        [HEADER.segmentDepth]: String(segmentDepth),
+        [HEADER.layouts]: chain.join(','),
+        Vary: HEADER.rsc,
       }),
     })
   }
@@ -318,7 +222,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     if (!intercept) return new Response('No interceptor for this url', { status: 404 })
 
-    const referer = request.headers.get('X-RSC-Referer')
+    const referer = request.headers.get(HEADER.referer)
     const under = referer ? matchRoute(manifest, new URL(referer, url.origin).pathname) : null
 
     // Without a page to open over there is nothing to intercept: render the
@@ -340,7 +244,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       loadings,
       slots,
       overrides,
-      sharedDepth(request.headers.get('X-RSC-Segments'), chain),
+      sharedDepth(request.headers.get(HEADER.segments), chain),
       // Its own retention key: the same url intercepted and not intercepted are
       // two different things to go back to, and one must not restore the other.
       `__intercept:${slot}:${url.pathname}`,
@@ -348,27 +252,27 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     return new Response(stream, {
       headers: withVersion({
-        'Content-Type': 'text/x-component; charset=utf-8',
-        'X-RSC-Segment-Depth': String(segmentDepth),
-        'X-RSC-Layouts': chain.join(','),
-        Vary: 'X-RSC',
+        'Content-Type': FLIGHT_TYPE,
+        [HEADER.segmentDepth]: String(segmentDepth),
+        [HEADER.layouts]: chain.join(','),
+        Vary: HEADER.rsc,
       }),
     })
   }
 
   async function handleAction(request: Request, url: URL): Promise<Response> {
-    const actionId = request.headers.get('X-RSC-Action')
+    const actionId = request.headers.get(HEADER.action)
 
     if (!actionId) return new Response('Missing X-RSC-Action', { status: 400 })
 
     // The body travels as application/octet-stream so a host that parses
     // multipart cannot consume it first; its real type rides in a header.
     const body = new Uint8Array(await request.arrayBuffer())
-    const contentType = request.headers.get('X-RSC-Content-Type') ?? 'text/plain;charset=UTF-8'
+    const contentType = request.headers.get(HEADER.contentType) ?? 'text/plain;charset=UTF-8'
 
     // Where it was invoked from, so anything the action invalidates can be
     // re-rendered against the page that is actually on screen.
-    const referer = request.headers.get('X-RSC-Referer')
+    const referer = request.headers.get(HEADER.referer)
     const match = referer ? matchRoute(manifest, new URL(referer, url.origin).pathname) : null
     const page = match ? pageContext(match, await propsFor(match, request)) : undefined
 

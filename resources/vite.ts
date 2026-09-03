@@ -613,6 +613,18 @@ ${paramEntries.join('\n')}
 }
 
 /**
+ * The route table this bundle was built from.
+ *
+ * Embedded rather than read back from routes.json, so a host cannot pair a
+ * fresh bundle with a stale manifest — the two came out of the same build and
+ * now cannot be separated. The file is still written, because a host that
+ * cannot import a JavaScript module has no other way to read it.
+ */
+export function manifest(): any {
+  return ${JSON.stringify(routeManifest())}
+}
+
+/**
  * The param sets a route declares, or null when it declares none.
  *
  * Null and [] are different answers: no generateStaticParams means the route

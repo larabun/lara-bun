@@ -1226,3 +1226,18 @@ describe('the urls a route declares', () => {
     expect(await engine.getStaticParams('app/page')).toBeNull()
   })
 })
+
+describe('the route table the bundle carries', () => {
+  test('is the one this build produced', async () => {
+    // Embedded so a host cannot pair a fresh bundle with a stale routes.json:
+    // the two came out of the same build and now cannot be separated. A host
+    // that cannot import a JS module still reads the file.
+    const embedded = engine.manifest()
+    const onDisk = JSON.parse(readFileSync(join(outDir, 'routes.json'), 'utf-8'))
+
+    expect(embedded.routes.map((r: { component: string }) => r.component).sort()).toEqual(
+      onDisk.routes.map((r: { component: string }) => r.component).sort(),
+    )
+    expect(embedded.intercepts).toEqual(onDisk.intercepts)
+  })
+})

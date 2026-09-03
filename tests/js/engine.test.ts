@@ -726,12 +726,12 @@ describe('package alias', () => {
  * across after the migration: the manifest was never installed, matchIntercept
  * always returned null, and every intercepted link did a full-page navigation.
  *
- * PHP's side is covered by PageScannerInterceptTest and RouteInterceptionTest,
- * and the shape it publishes by InterceptManifestTest. This is the handoff
- * between them — the part that was untested and therefore the part that broke.
+ * Generated from the plugin's own walk of app/ now, rather than read from a
+ * file the host wrote before the build that consumed it. This is the handoff —
+ * the part that was untested and therefore the part that broke.
  */
 describe('intercept manifest reaches the browser entry', () => {
-  function buildApp(manifest: string | null): { entry: string; cleanup: () => void } {
+  function buildApp(withInterceptor: boolean): { entry: string; cleanup: () => void } {
     const app = mkdtempSync(join(tmpdir(), 'larabun-icpt-'))
     const buildDir = mkdtempSync(join(packageRoot, 'bootstrap/rsc/icpt-'))
 
@@ -742,8 +742,24 @@ describe('intercept manifest reaches the browser entry', () => {
     )
     writeFileSync(join(app, 'app/page.tsx'), 'export default function P() { return <main>hi</main> }\n')
 
-    const manifestPath = join(buildDir, 'intercept-manifest.json')
-    if (manifest !== null) writeFileSync(manifestPath, manifest)
+    if (withInterceptor) {
+      // A real interceptor on disk: discovery is what produces the manifest
+      // now, so there is no file for a host to write.
+      mkdirSync(join(app, 'app/@modal/(.)shop/item/[id]'), { recursive: true })
+      writeFileSync(
+        join(app, 'app/@modal/default.tsx'),
+        'export default function D() { return <div>no modal</div> }\n',
+      )
+      writeFileSync(
+        join(app, 'app/@modal/(.)shop/item/[id]/page.tsx'),
+        'export default function M() { return <div>modal</div> }\n',
+      )
+      mkdirSync(join(app, 'app/shop/item/[id]'), { recursive: true })
+      writeFileSync(
+        join(app, 'app/shop/item/[id]/page.tsx'),
+        'export default function I() { return <main>item</main> }\n',
+      )
+    }
 
     const configPath = join(buildDir, 'vite.rsc.config.mjs')
     writeFileSync(
@@ -776,9 +792,7 @@ describe('intercept manifest reaches the browser entry', () => {
   }
 
   test('patterns the host publishes are baked into the entry', () => {
-    const { entry, cleanup } = buildApp(
-      JSON.stringify([{ urlPattern: '/shop/item/[id]', slot: 'modal' }]),
-    )
+    const { entry, cleanup } = buildApp(true)
 
     // Passed to the bootstrap, not merely present in the file.
     expect(entry).toContain('createViteRscApp(document, [{"urlPattern":"/shop/item/[id]","slot":"modal"}], ')
@@ -787,20 +801,13 @@ describe('intercept manifest reaches the browser entry', () => {
   }, 120_000)
 
   test('an app with no interceptors still boots', () => {
-    const { entry, cleanup } = buildApp(null)
+    const { entry, cleanup } = buildApp(false)
 
     expect(entry).toContain('createViteRscApp(document, [], ')
 
     cleanup()
   }, 120_000)
 
-  test('an unreadable manifest degrades to no interception, not a failed build', () => {
-    const { entry, cleanup } = buildApp('{ not json')
-
-    expect(entry).toContain('createViteRscApp(document, [], ')
-
-    cleanup()
-  }, 120_000)
 })
 
 /**

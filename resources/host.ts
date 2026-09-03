@@ -122,6 +122,31 @@ export function matchRoute(manifest: RouteManifest, pathname: string): MatchedRo
   return best
 }
 
+/**
+ * The interceptor registered for a slot, if this url has one.
+ *
+ * Matched against the url being navigated *to*: `(.)posts/[slug]` intercepts
+ * /posts/anything, and the params it binds are the target's, not the page the
+ * modal opens over.
+ */
+export function matchIntercept(
+  manifest: RouteManifest,
+  pathname: string,
+  slot: string,
+): { component: string; params: Record<string, string> } | null {
+  const parts = pathname.split('/').filter(Boolean)
+
+  for (const intercept of manifest.intercepts) {
+    if (intercept.slot !== slot) continue
+
+    const params = bindSegments(intercept.segments, parts)
+
+    if (params) return { component: intercept.component, params }
+  }
+
+  return null
+}
+
 function bindSegments(segments: RouteSegment[], parts: string[]): Record<string, string> | null {
   const params: Record<string, string> = {}
 
@@ -223,6 +248,16 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     if (request.method !== 'GET' && request.method !== 'HEAD') return null
 
+    // An intercepted navigation renders the page you are already on, with the
+    // interceptor dropped into one of its slots — so the modal opens over it
+    // and the url changes. Only ever on a client navigation: a hard load has
+    // no referer to open over and gets the real page.
+    const interceptSlot = request.headers.get('X-RSC-Intercept')
+
+    if (interceptSlot !== null && request.headers.get('X-RSC') !== null) {
+      return await handleIntercept(request, url, interceptSlot)
+    }
+
     const match = matchRoute(manifest, url.pathname)
 
     if (!match) return null
@@ -266,6 +301,49 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       {},
       from,
       url.pathname,
+    )
+
+    return new Response(stream, {
+      headers: withVersion({
+        'Content-Type': 'text/x-component; charset=utf-8',
+        'X-RSC-Segment-Depth': String(segmentDepth),
+        'X-RSC-Layouts': chain.join(','),
+        Vary: 'X-RSC',
+      }),
+    })
+  }
+
+  async function handleIntercept(request: Request, url: URL, slot: string): Promise<Response> {
+    const intercept = matchIntercept(manifest, url.pathname, slot)
+
+    if (!intercept) return new Response('No interceptor for this url', { status: 404 })
+
+    const referer = request.headers.get('X-RSC-Referer')
+    const under = referer ? matchRoute(manifest, new URL(referer, url.origin).pathname) : null
+
+    // Without a page to open over there is nothing to intercept: render the
+    // interceptor on its own rather than answering with the wrong page.
+    const component = under ? under.route.component : intercept.component
+    const props = under ? await propsFor(under, request) : intercept.params
+    const chain = under ? under.route.layouts : []
+    const slots = under ? under.route.slots : {}
+    const loadings = under ? under.route.loadings : []
+
+    const overrides = under
+      ? { [slot]: { component: intercept.component, props: intercept.params } }
+      : {}
+
+    const { stream, segmentDepth } = await engine.handleRscStream(
+      component,
+      props,
+      chain.map((layout) => ({ component: layout, props: {} })),
+      loadings,
+      slots,
+      overrides,
+      sharedDepth(request.headers.get('X-RSC-Segments'), chain),
+      // Its own retention key: the same url intercepted and not intercepted are
+      // two different things to go back to, and one must not restore the other.
+      `__intercept:${slot}:${url.pathname}`,
     )
 
     return new Response(stream, {

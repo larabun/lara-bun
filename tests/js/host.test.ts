@@ -53,8 +53,17 @@ function fakeEngine() {
     installHostFn(fn: (name: string, ...args: unknown[]) => unknown) {
       hostFn = fn
     },
-    async handleRscStream(component: string, props: unknown, layouts: unknown, l: unknown, s: unknown, o: unknown, from: number) {
-      calls.rsc.push({ component, props, from })
+    async handleRscStream(
+      component: string,
+      props: unknown,
+      layouts: unknown,
+      loadings: unknown,
+      slots: unknown,
+      overrides: unknown,
+      from: number,
+      pageKey?: string,
+    ) {
+      calls.rsc.push({ component, props, layouts, slots, overrides, from, pageKey })
 
       // The engine decides the real depth; here it agrees with the proposal.
       return { stream: empty(), segmentDepth: from }
@@ -308,5 +317,127 @@ describe('host functions', () => {
     createRscHandler({ engine: engine as never, manifest, rpc: { known: () => 1 } })
 
     expect(engine.callHost('typo')).rejects.toThrow(/No host function named "typo"/)
+  })
+})
+
+describe('route interception', () => {
+  const manifest: RouteManifest = {
+    ...manifestOf({ '/': [], '/feed': ['app/layout'], '/posts/[slug]': ['app/layout'] }),
+    intercepts: [
+      {
+        component: 'app/@modal/(.)posts/[slug]/page',
+        slot: 'modal',
+        segments: segments('/posts/[slug]'),
+        marker: '(.)',
+      },
+    ],
+  }
+
+  // The page the modal opens over declares the slot.
+  manifest.routes.find((r) => r.component === 'app/feed/page')!.slots = { modal: 'app/@modal/default' }
+
+  const intercepting = (headers: Record<string, string>) =>
+    new Request('http://x/posts/hello', { headers: { 'X-RSC': '1', ...headers } })
+
+  test('renders the page you were on, with the interceptor in its slot', async () => {
+    // The modal opens *over* the feed: the component rendered is still the
+    // feed's. Rendering the interceptor instead replaces the page behind it,
+    // which is a navigation, not an interception.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      intercepting({ 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' }),
+    )
+
+    expect(engine.calls.rsc[0]).toMatchObject({
+      component: 'app/feed/page',
+      overrides: { modal: { component: 'app/@modal/(.)posts/[slug]/page', props: { slug: 'hello' } } },
+    })
+  })
+
+  test('the interceptor gets the target url params, not the page it opens over', async () => {
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      intercepting({ 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' }),
+    )
+
+    const call = engine.calls.rsc[0] as { props: unknown; overrides: Record<string, { props: unknown }> }
+
+    expect(call.overrides.modal.props).toEqual({ slug: 'hello' })
+    // The feed has no params of its own.
+    expect(call.props).toEqual({})
+  })
+
+  test('retains under a key of its own', async () => {
+    // /posts/hello intercepted and /posts/hello navigated to are two different
+    // things to go back to. One key for both and returning to the modal
+    // restores the full page, or the other way round.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      intercepting({ 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' }),
+    )
+
+    expect(engine.calls.rsc[0]).toMatchObject({ pageKey: '__intercept:modal:/posts/hello' })
+  })
+
+  test('falls back to the interceptor alone when there is no page to open over', async () => {
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      intercepting({ 'X-RSC-Intercept': 'modal' }),
+    )
+
+    expect(engine.calls.rsc[0]).toMatchObject({
+      component: 'app/@modal/(.)posts/[slug]/page',
+      props: { slug: 'hello' },
+    })
+  })
+
+  test('a slot with no interceptor for this url is a 404, not the plain page', async () => {
+    const res = await createRscHandler({ engine: fakeEngine() as never, manifest })(
+      intercepting({ 'X-RSC-Intercept': 'sidebar', 'X-RSC-Referer': '/feed' }),
+    )
+
+    expect(res?.status).toBe(404)
+  })
+
+  test('a plain request for the same url gets the real page', async () => {
+    // A hard load, or opening the link in a new tab. Nothing to open over, and
+    // the header the client sends on an intercepted navigation is absent.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      new Request('http://x/posts/hello', { headers: { 'X-RSC': '1' } }),
+    )
+
+    expect(engine.calls.rsc[0]).toMatchObject({ component: 'app/posts/[slug]/page' })
+  })
+
+  test('only ever intercepts a client navigation, never a document load', async () => {
+    // The header can arrive on a full page load — a restored tab, a proxy that
+    // replays headers. Without the X-RSC check that serves an interception as
+    // the whole document: a modal with no page behind it and no way back.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      new Request('http://x/posts/hello', { headers: { 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' } }),
+    )
+
+    expect(engine.calls.rsc).toHaveLength(0)
+    expect(engine.calls.html[0]).toMatchObject({ component: 'app/posts/[slug]/page' })
+  })
+
+  test('the slots a page declares reach the render', async () => {
+    // Parallel slots are not interception: the feed renders its @modal/default
+    // whether or not anything is intercepting.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      new Request('http://x/feed', { headers: { 'X-RSC': '1' } }),
+    )
+
+    expect(engine.calls.rsc[0]).toMatchObject({ slots: { modal: 'app/@modal/default' } })
   })
 })

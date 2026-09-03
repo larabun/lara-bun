@@ -277,11 +277,11 @@ export default function Form<T extends Record<string, unknown> = Record<string, 
   );
 }
 
-// The barrel this replaces exported these names. It could not simply be called
-// Form.ts: on a case-insensitive filesystem that is the same module as
-// Form.tsx, so re-exporting "./Form" from it resolved to itself. Renaming the
-// component to FormComponent.tsx avoided the collision, at the cost of the
-// alias path `<pkg>/Form` matching only the barrel — by case-insensitive luck
-// on macOS, and nothing at all on Linux.
-export { default as Form } from "./Form";
+// Also by name, because both spellings are in use: `import Form` and
+// `import { Form }`. This was a re-export of "./Form" — from inside Form.tsx,
+// so the module named itself. It survived on the bundler tolerating a circular
+// self-reference, left over from when a separate barrel re-exported a
+// FormComponent.tsx that a case-insensitive filesystem would not let be called
+// Form.ts. There is one file now, and it can just export what it declares.
+export { Form };
 export { useForm } from "./useForm";

@@ -125,3 +125,19 @@ export function sharedDepth(held: string | null, chain: string[]): number {
 
   return shared
 }
+
+/**
+ * What a page is remembered as, for retention and for the prefetch cache.
+ *
+ * The same url intercepted and not intercepted are two different things to go
+ * back to — a modal over the feed, and the post on its own page — so they
+ * cannot share a key or restoring one returns the other.
+ *
+ * Shared because both halves compute it: the host stores under this key and
+ * the client looks under it. Written out at each of the seven places that
+ * needed it, they only had to disagree once, and the symptom is a navigation
+ * that silently rebuilds a page it was holding.
+ */
+export function retentionKey(path: string, interceptSlot?: string | null): string {
+  return interceptSlot ? `__intercept:${interceptSlot}:${path}` : path
+}

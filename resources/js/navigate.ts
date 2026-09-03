@@ -8,6 +8,9 @@
 
 import { reportReachable } from "./onlineStore";
 import { clearSlots, setSlot } from "./slotStore";
+// Shared with the host: it stores a page under this key and the client looks
+// under it, so the format cannot live in two places.
+import { retentionKey as retentionKeyFor } from "../routing";
 
 type ReactNode = unknown;
 type Deserializer = (stream: ReadableStream, options: Record<string, unknown>) => Promise<ReactNode>;
@@ -184,7 +187,7 @@ export function retentionKey(url: string, interceptSlot: string | null): string 
     path = url.split("#")[0];
   }
 
-  return interceptSlot ? `__intercept:${interceptSlot}:${path}` : path;
+  return retentionKeyFor(path, interceptSlot);
 }
 
 export function getCallServer(): CallServerFn {
@@ -306,7 +309,7 @@ export function isPrefetched(url: string): boolean {
   if (isExternalUrl(url)) return false;
 
   const interceptSlot = matchIntercept(url);
-  const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
+  const cacheKey = retentionKeyFor(url, interceptSlot);
 
   return isUsable(cache.get(cacheKey), claimedChain(interceptSlot));
 }
@@ -390,7 +393,7 @@ export async function navigate(
   let nextLayouts: string[] | null = null;
 
   try {
-    const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
+    const cacheKey = retentionKeyFor(url, interceptSlot);
     const cached = cache.get(cacheKey);
     let treePromise: Promise<ReactNode>;
 
@@ -544,7 +547,7 @@ export async function refresh(target = 'page'): Promise<void> {
   }
 
   const interceptSlot = matchIntercept(url);
-  const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
+  const cacheKey = retentionKeyFor(url, interceptSlot);
 
   // Never from the cache: refreshing asks what the server says now, not what
   // it said a moment ago.
@@ -566,7 +569,7 @@ export function prefetch(url: string, cacheForMs?: number): void {
   if (interceptSlot) {
     // Intercepted route — only prefetch the intercepted variant
     const currentUrl = window.location.pathname + window.location.search;
-    const cacheKey = `__intercept:${interceptSlot}:${url}`;
+    const cacheKey = retentionKeyFor(url, interceptSlot);
     prefetchUrl(cacheKey, url, ttl, interceptSlot, currentUrl);
   } else {
     prefetchUrl(url, url, ttl);
@@ -639,7 +642,7 @@ export function cancelPrefetch(url: string): void {
   if (isExternalUrl(url)) return;
 
   const interceptSlot = matchIntercept(url);
-  const cacheKey = interceptSlot ? `__intercept:${interceptSlot}:${url}` : url;
+  const cacheKey = retentionKeyFor(url, interceptSlot);
   const controller = prefetchControllers.get(cacheKey);
 
   if (!controller) return;

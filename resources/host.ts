@@ -14,7 +14,7 @@
 //   const rsc = createRscHandler({ engine, manifest, assets })
 //   Bun.serve({ fetch: (req) => rsc(req).then((r) => r ?? new Response('', { status: 404 })) })
 
-import { matchIntercept, matchRoute, sharedDepth } from './routing.ts'
+import { matchIntercept, matchRoute, retentionKey, sharedDepth } from './routing.ts'
 // Re-exported, not redefined: routing.ts is the one implementation, shared with
 // the prerenderer and the generated bundle, and this stays the adapter's
 // public surface so a host imports from one place.
@@ -245,9 +245,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       slots,
       overrides,
       sharedDepth(request.headers.get(HEADER.segments), chain),
-      // Its own retention key: the same url intercepted and not intercepted are
-      // two different things to go back to, and one must not restore the other.
-      `__intercept:${slot}:${url.pathname}`,
+      retentionKey(url.pathname, slot),
     )
 
     return new Response(stream, {

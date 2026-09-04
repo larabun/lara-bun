@@ -17,8 +17,6 @@
 //   out/docs/index.rsc
 //   out/assets/…              the browser bundle
 
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
 import { pathKey } from './prerender.ts'
 import type { PrerenderResult } from './prerender.ts'
 import type { RouteManifest } from './manifest.ts'
@@ -26,14 +24,24 @@ import type { RouteManifest } from './manifest.ts'
 export interface ExportOptions {
   /** What prerender() decided, so this can refuse what it cannot serve. */
   results: PrerenderResult[]
-  /** Where prerender() wrote. */
-  from: string
-  /** Where the site goes. */
-  to: string
+  /** Reads what prerender() wrote. `prerenderedFrom` in `rsc-router/files`. */
+  read: (name: string) => Promise<string | null> | string | null
+  /**
+   * Writes the site, keyed by its url path — `docs/index.html`, not an
+   * absolute one. `writeTo` in `rsc-router/files` puts those under a
+   * directory; a deploy that uploads straight to a bucket writes keys.
+   */
+  write: (path: string, contents: string) => Promise<void> | void
   /** The route table, for what the build decided about payload urls. */
   manifest: RouteManifest
-  /** The browser bundle, and the url it is served from. */
-  assets?: { dir: string; url?: string }
+  /**
+   * Brings the browser bundle along, if this export has to carry it.
+   *
+   * A callback rather than a directory pair: copying a tree of built files is
+   * a filesystem operation by nature, and a deploy that uploads them has its
+   * own tooling for it. `copyAssets` in `rsc-router/files` does the local one.
+   */
+  assets?: () => Promise<void> | void
   /**
    * Export anyway, leaving out whatever is not static.
    *
@@ -67,7 +75,7 @@ function describe(type: PrerenderResult['type']): string {
 }
 
 export async function exportSite(options: ExportOptions): Promise<{ pages: number; refused: PrerenderResult[] }> {
-  const { results, from, to, manifest, assets, force = false } = options
+  const { results, read, write, manifest, assets, force = false } = options
   const refused = results.filter((r) => r.type !== 'static')
 
   if (refused.length > 0 && !force) throw new NotExportable(refused)
@@ -85,6 +93,19 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
     )
   }
 
+  const copy = async (name: string, into: string) => {
+    const contents = await read(name)
+
+    // Missing where the results said it would be: the prerender output and the
+    // results it returned disagree, which is not something to paper over with
+    // a half-written site.
+    if (contents === null) {
+      throw new Error(`Nothing to export at ${name}. Prerender and export must read the same output.`)
+    }
+
+    await write(into, contents)
+  }
+
   let pages = 0
 
   for (const result of results) {
@@ -93,11 +114,10 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
     const key = pathKey(result.url)
     // The root is the out dir itself; everything else is a directory with an
     // index, so /docs stays /docs rather than becoming /docs.html.
-    const dir = key === 'index' ? to : join(to, key)
+    const dir = key === 'index' ? '' : `${key}/`
 
-    await mkdir(dir, { recursive: true })
-    await copy(join(from, `${key}.html`), join(dir, 'index.html'))
-    await copy(join(from, `${key}.flight`), join(dir, payloadName))
+    await copy(`${key}.html`, `${dir}index.html`)
+    await copy(`${key}.flight`, `${dir}${payloadName}`)
 
     // One file per depth a client might already hold, addressed by name
     // because a file server cannot vary on a header. Without these every
@@ -105,40 +125,19 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
     // the pages retained behind it — so going back does not restore the form
     // you were filling in.
     for (let depth = 1; ; depth++) {
-      const variant = join(from, `${key}.seg${depth}.flight`)
+      const variant = await read(`${key}.seg${depth}.flight`)
 
-      if (!(await exists(variant))) break
+      if (variant === null) break
 
-      await copy(variant, join(dir, payloadName.replace(/^index\./, `index.seg${depth}.`)))
+      await write(`${dir}${payloadName.replace(/^index\./, `index.seg${depth}.`)}`, variant)
     }
 
     pages++
   }
 
-  if (assets?.dir) {
-    const url = (assets.url ?? '/assets/').replace(/^\/+|\/+$/g, '')
-
-    if (url !== '') {
-      const target = join(to, url)
-
-      await mkdir(dirname(target), { recursive: true })
-      await cp(assets.dir, target, { recursive: true })
-    }
-  }
+  await assets?.()
 
   return { pages, refused }
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await readFile(path)
 
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function copy(from: string, to: string): Promise<void> {
-  await writeFile(to, await readFile(from))
-}

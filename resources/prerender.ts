@@ -15,8 +15,6 @@
 // The file layout matches the one Laravel writes, so both hosts serve the same
 // shapes and anything that reads them works for either.
 
-import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
 import type { ManifestRoute, RouteManifest } from './manifest.ts'
 
 /** What a prerenderer needs from the built bundle, beyond serving a request. */
@@ -54,8 +52,15 @@ export interface PrerenderEngine {
 
 export interface PrerenderOptions {
   engine: PrerenderEngine
-  /** Where to write. Served from here at runtime by `prerenderedFrom`. */
-  outDir: string
+  /**
+   * Where the output goes, as a sink rather than a directory.
+   *
+   * `writeTo` in `rsc-router/files` is the one for a disk, which is what a
+   * build normally wants. A function because the read side is one — a host
+   * that supplies a reader should be able to supply the matching writer —
+   * and because a test can hand it a Map instead of a temp directory.
+   */
+  write: (name: string, contents: string) => Promise<void> | void
   /** The route table. Defaults to the one the bundle carries. */
   manifest?: RouteManifest
   /**
@@ -176,7 +181,7 @@ export async function urlsToBuild(
 }
 
 export async function prerender(options: PrerenderOptions): Promise<PrerenderResult[]> {
-  const { engine, outDir, version } = options
+  const { engine, write, version } = options
   const manifest = options.manifest ?? engine.manifest?.()
 
   if (!manifest) {
@@ -346,10 +351,4 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
     )
   }
 
-  async function write(name: string, contents: string): Promise<void> {
-    const path = join(outDir, name)
-
-    await mkdir(dirname(path), { recursive: true })
-    await writeFile(path, contents)
-  }
 }

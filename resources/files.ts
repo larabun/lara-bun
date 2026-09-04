@@ -16,8 +16,8 @@
 //     prerendered: prerenderedFrom('./build/static'),
 //   })
 
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 /**
  * Serve built browser assets out of the build's public directory.
@@ -81,4 +81,40 @@ function contentTypeOf(pathname: string): string {
   if (pathname.endsWith('.woff2')) return 'font/woff2'
 
   return 'application/octet-stream'
+}
+
+/**
+ * Write build output into a directory.
+ *
+ * The sink `prerender` and `exportSite` take. Names are relative and may
+ * contain directories — `docs/index.html` — so each one's parent is created
+ * as it goes.
+ */
+export function writeTo(dir: string) {
+  return async (name: string, contents: string): Promise<void> => {
+    const path = join(dir, name)
+
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, contents)
+  }
+}
+
+/**
+ * Copy the built browser bundle into an exported site.
+ *
+ * Separate from the export itself because copying a tree of files is a
+ * filesystem operation by nature — a deploy that uploads them to a bucket
+ * has its own way to do that, and passes its own callback instead.
+ */
+export function copyAssets(from: string, to: string, url = '/assets/') {
+  return async (): Promise<void> => {
+    const at = url.replace(/^\/+|\/+$/g, '')
+
+    if (at === '') return
+
+    const target = join(to, at)
+
+    await mkdir(dirname(target), { recursive: true })
+    await cp(from, target, { recursive: true })
+  }
 }

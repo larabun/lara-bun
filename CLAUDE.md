@@ -126,6 +126,14 @@ one request's region into another's answer is not. Nothing reaches that
 fallback on Node, Bun or Deno, so it is exported and tested directly — a
 fallback no test enters is the one that fails on the platform it exists for.
 
+`prerender` and `exportSite` take a `write` sink and a `read` source too, and
+`rsc-router/files` holds every disk version — `assetsFrom`, `prerenderedFrom`,
+`writeTo`, `copyAssets`. That is not load-bearing for portability: a build runs
+where there is a filesystem, always. It is here because the read side was
+already a function and the write side being a directory was an odd seam, and
+because the export tests now run against a Map instead of temp directories that
+outlive a failure.
+
 Serving a frozen page comes *after* the branches for a named region and an
 interception. A frozen page is a whole page, and both of those ask for
 something smaller: answering a revalidate request with the document puts the

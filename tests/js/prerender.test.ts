@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { prerender, pathKey, urlFor, urlsToBuild } from '../../resources/prerender.ts'
 import { exportSite } from '../../resources/export.ts'
-import { prerenderedFrom } from '../../resources/files.ts'
+import { prerenderedFrom, writeTo } from '../../resources/files.ts'
 import type { PrerenderResult } from '../../resources/prerender.ts'
 import type { RouteManifest } from '../../resources/manifest.ts'
 import { createRscHandler } from '../../resources/host.ts'
@@ -52,7 +52,7 @@ beforeAll(async () => {
   engine.installHostFn(async () => ({ display: 'ramon' }))
 
   outDir = mkdtempSync(join(tmpdir(), 'rsc-prerender-'))
-  results = await prerender({ engine, outDir, version: 'build-1' })
+  results = await prerender({ engine, write: writeTo(outDir), version: 'build-1' })
   // Every fixture route gets a shell probe, and the slow ones are slow on
   // purpose — the budget has to cover the build plus all of them.
 }, 180_000)
@@ -208,7 +208,7 @@ describe('which pages can be frozen', () => {
         .map((r: object) => ({ ...r, loadings: [] })),
     }
 
-    const [result] = await prerender({ engine, manifest: bare, outDir: mkdtempSync(join(tmpdir(), 'rsc-bare-')) })
+    const [result] = await prerender({ engine, manifest: bare, write: () => {} })
 
     expect(result.type).toBe('dynamic')
     expect(result.reason).toMatch(/host/)
@@ -230,7 +230,7 @@ describe('routes whose urls were never listed', () => {
     // the route matches. This is most of PPR's value — the routes you can
     // enumerate are the ones you could already freeze whole.
     const dir = mkdtempSync(join(tmpdir(), 'rsc-pattern-'))
-    const results = await prerender({ engine, manifest: withoutParams(), outDir: dir })
+    const results = await prerender({ engine, manifest: withoutParams(), write: writeTo(dir) })
 
     expect(results.find((r) => r.component === 'app/item/[id]/page')?.type).toBe('ppr')
     expect(existsSync(join(dir, 'item/_id_.ppr.html'))).toBe(true)
@@ -248,7 +248,7 @@ describe('routes whose urls were never listed', () => {
     // The photo page prints its id directly. A shell for it would contain the
     // placeholder the build invented, served as though it were a real id.
     const dir = mkdtempSync(join(tmpdir(), 'rsc-pattern-'))
-    const results = await prerender({ engine, manifest: withoutParams(), outDir: dir })
+    const results = await prerender({ engine, manifest: withoutParams(), write: writeTo(dir) })
     const photo = results.find((r) => r.component === 'app/photo/[id]/page')
 
     expect(photo?.type).toBe('dynamic')
@@ -281,7 +281,7 @@ describe('a route that ships no client runtime', () => {
 
     const results = await prerender({
       engine,
-      outDir: dir,
+      write: writeTo(dir),
       manifest: {
         ...manifest,
         routes: manifest.routes
@@ -407,149 +407,140 @@ describe('exporting the site as files', () => {
   const forExport = (payloadName = 'index.rsc'): RouteManifest =>
     ({ version: 1, build: { output: 'export', exportPath: 'dist', payloadName }, routes: [], intercepts: [] })
 
-  /** A prerender output with just the files the exporter copies. */
-  function frozen(keys: string[]): string {
-    const dir = mkdtempSync(join(tmpdir(), 'rsc-frozen-'))
+  /**
+   * A prerender output and a site, both in memory.
+   *
+   * No temp directories: the export reads and writes through functions, so a
+   * Map is a complete substitute for a disk and the test says what it means
+   * without cleanup that can outlive a failure.
+   */
+  function inMemory(frozen: string[]) {
+    const source = new Map<string, string>()
 
-    for (const key of keys) {
-      mkdirSync(join(dir, key, '..'), { recursive: true })
-      writeFileSync(join(dir, `${key}.html`), `<html><body>${key}</body></html>`)
-      writeFileSync(join(dir, `${key}.flight`), `payload:${key}`)
+    for (const key of frozen) {
+      source.set(`${key}.html`, `<html><body>${key}</body></html>`)
+      source.set(`${key}.flight`, `payload:${key}`)
     }
 
-    return dir
+    const site = new Map<string, string>()
+
+    return {
+      source,
+      site,
+      read: (name: string) => source.get(name) ?? null,
+      write: (path: string, contents: string) => {
+        site.set(path, contents)
+      },
+    }
   }
 
   test('lays each route out as a directory with an index', async () => {
     // So urls stay extensionless: /docs, not /docs.html.
-    const from = frozen(['index', 'docs'])
-    const to = mkdtempSync(join(tmpdir(), 'rsc-site-'))
+    const io = inMemory(['index', 'docs'])
 
-    const { pages } = await exportSite({ results: exportable, from, to, manifest: forExport() })
+    const { pages } = await exportSite({ results: exportable, ...io, manifest: forExport() })
 
     expect(pages).toBe(2)
-    expect(readFileSync(join(to, 'index.html'), 'utf-8')).toContain('index')
-    expect(readFileSync(join(to, 'docs/index.html'), 'utf-8')).toContain('docs')
-
-    rmSync(from, { recursive: true, force: true })
-    rmSync(to, { recursive: true, force: true })
+    expect(io.site.get('index.html')).toContain('index')
+    expect(io.site.get('docs/index.html')).toContain('docs')
   })
 
   test('puts the payload beside it, under the name the client asks for', async () => {
     // A static host cannot read the header that would otherwise select a
     // payload, so the client was built to ask for a file instead.
-    const from = frozen(['index'])
-    const to = mkdtempSync(join(tmpdir(), 'rsc-site-'))
+    const io = inMemory(['index'])
 
-    await exportSite({ results: exportable.slice(0, 1), from, to, manifest: forExport('index.rsc') })
+    await exportSite({ results: exportable.slice(0, 1), ...io, manifest: forExport('index.rsc') })
 
-    expect(readFileSync(join(to, 'index.rsc'), 'utf-8')).toBe('payload:index')
-
-    rmSync(from, { recursive: true, force: true })
-    rmSync(to, { recursive: true, force: true })
+    expect(io.site.get('index.rsc')).toBe('payload:index')
   })
 
   test('refuses a site that is not fully static, naming what is not', async () => {
     // The failure it prevents is silent both ways: a shell serves a page that
     // loads and stays empty, and a missing route is a 404 at a url that
     // worked yesterday.
-    const from = frozen(['index'])
-    const to = mkdtempSync(join(tmpdir(), 'rsc-site-'))
+    const io = inMemory(['index'])
 
     const results: PrerenderResult[] = [
       ...exportable.slice(0, 1),
       { url: '/dashboard', component: 'app/dashboard/page', type: 'ppr', reason: null },
     ]
 
-    const refusal = exportSite({ results, from, to, manifest: forExport() })
+    const refusal = exportSite({ results, ...io, manifest: forExport() })
 
     await expect(refusal).rejects.toThrow(/\/dashboard/)
     await expect(refusal).rejects.toThrow(/nothing on a static host will fill it/)
-
-    rmSync(from, { recursive: true, force: true })
-    rmSync(to, { recursive: true, force: true })
   })
 
   test('exports the rest when told to, and still says what it left out', async () => {
-    const from = frozen(['index'])
-    const to = mkdtempSync(join(tmpdir(), 'rsc-site-'))
+    const io = inMemory(['index'])
 
     const { pages, refused } = await exportSite({
       results: [
         ...exportable.slice(0, 1),
         { url: '/dashboard', component: 'app/dashboard/page', type: 'ppr', reason: null },
       ],
-      from,
-      to,
+      ...io,
       manifest: forExport(),
       force: true,
     })
 
     expect(pages).toBe(1)
     expect(refused.map((r) => r.url)).toEqual(['/dashboard'])
-
-    rmSync(from, { recursive: true, force: true })
-    rmSync(to, { recursive: true, force: true })
   })
 
   test('refuses a build whose client asks for payloads the wrong way', async () => {
     // Exporting a server build ships a client that asks with a header no
     // static host reads, so every navigation quietly falls back to a full
     // page load. The files would all be present and correct.
-    const from = frozen(['index'])
-    const to = mkdtempSync(join(tmpdir(), 'rsc-site-'))
+    const io = inMemory(['index'])
 
     await expect(
-      exportSite({ results: exportable.slice(0, 1), from, to, manifest: forExport('') }),
+      exportSite({ results: exportable.slice(0, 1), ...io, manifest: forExport('') }),
     ).rejects.toThrow(/output: 'export'/)
-
-    rmSync(from, { recursive: true, force: true })
-    rmSync(to, { recursive: true, force: true })
   })
 
   test('brings a payload for every depth a client might hold', async () => {
     // Addressed by name, because a file server cannot vary on a header.
     // Without them every navigation on the exported site is a whole document,
     // which replaces the root and unmounts whatever was retained behind it.
-    const from = mkdtempSync(join(tmpdir(), 'rsc-frozen-'))
+    const io = inMemory(['docs'])
 
-    writeFileSync(join(from, 'docs.html'), '<html></html>')
-    writeFileSync(join(from, 'docs.flight'), 'whole')
-    writeFileSync(join(from, 'docs.seg1.flight'), 'from depth 1')
-    writeFileSync(join(from, 'docs.seg2.flight'), 'from depth 2')
+    io.source.set('docs.seg1.flight', 'from depth 1')
+    io.source.set('docs.seg2.flight', 'from depth 2')
 
-    const to = mkdtempSync(join(tmpdir(), 'rsc-site-'))
+    await exportSite({ results: exportable.slice(1), ...io, manifest: forExport() })
 
-    await exportSite({ results: exportable.slice(1), from, to, manifest: forExport() })
-
-    expect(readFileSync(join(to, 'docs/index.rsc'), 'utf-8')).toBe('whole')
-    expect(readFileSync(join(to, 'docs/index.seg1.rsc'), 'utf-8')).toBe('from depth 1')
-    expect(readFileSync(join(to, 'docs/index.seg2.rsc'), 'utf-8')).toBe('from depth 2')
-
-    rmSync(from, { recursive: true, force: true })
-    rmSync(to, { recursive: true, force: true })
+    expect(io.site.get('docs/index.rsc')).toBe('payload:docs')
+    expect(io.site.get('docs/index.seg1.rsc')).toBe('from depth 1')
+    expect(io.site.get('docs/index.seg2.rsc')).toBe('from depth 2')
   })
 
-  test('brings the browser bundle the exported html references', async () => {
-    const from = frozen(['index'])
-    const to = mkdtempSync(join(tmpdir(), 'rsc-site-'))
-    const assets = mkdtempSync(join(tmpdir(), 'rsc-assets-'))
+  test('says so when the output it was told about is not there', async () => {
+    // The results and the output disagree — a build half-cleaned, or two runs
+    // pointed at different directories. Writing a site with holes it does not
+    // know about is worse than stopping.
+    const io = inMemory([])
 
-    writeFileSync(join(assets, 'app.js'), 'console.log(1)')
+    await expect(
+      exportSite({ results: exportable.slice(0, 1), ...io, manifest: forExport() }),
+    ).rejects.toThrow(/Nothing to export/)
+  })
+
+  test('brings the browser bundle along when asked', async () => {
+    const io = inMemory(['index'])
+    let copied = false
 
     await exportSite({
       results: exportable.slice(0, 1),
-      from,
-      to,
+      ...io,
       manifest: forExport(),
-      assets: { dir: assets, url: '/assets/' },
+      assets: () => {
+        copied = true
+      },
     })
 
-    expect(existsSync(join(to, 'assets/app.js'))).toBe(true)
-
-    rmSync(from, { recursive: true, force: true })
-    rmSync(to, { recursive: true, force: true })
-    rmSync(assets, { recursive: true, force: true })
+    expect(copied).toBe(true)
   })
 })
 

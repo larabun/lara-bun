@@ -42,6 +42,6 @@ measure performance
 
 standard to follow web standards
 
-/Users/ramonmalcolm/ventorva/packages/homeport/docs
+cloudflare release a new doc library nimbus, wondering if we should use it for our documentation. it will be for vite-plugin-rsc-router, see example /Users/ramonmalcolm/ventorva/packages/homeport/docs. Laravel adapter documentation will fall under it. Also am going to start extracting code now and create new repo, they moving from lara bun, should we create a mono repo? should the laravel adapter live in the same repo or in its own repo. should it publish under vite-plugin-rsc-router on npm, that name is available or should I create a org? You can look at other options such as starlight if you prefer or build your own doc etc, i will be guided by you
 
-laravel have route generation helper/autocomplete does the js instances have this?
+laravel have route generation helper/autocomplete does the js instances have this?  

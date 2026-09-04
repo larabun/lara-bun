@@ -62,12 +62,15 @@ test('the ambient declaration is a script, not a module', function () {
         ->and($statements)->toBe([]);
 });
 
-test('the engine ships its own ambient types without redeclaring the host global', function () {
-    // Two ambient declarations of the same function conflict. The engine owns
-    // Metadata; the host owns the global, whose name it alone knows.
-    $engineTypes = file_get_contents(__DIR__.'/../../resources/types.d.ts');
+test('and declares nothing the engine already declares', function () {
+    // Two ambient declarations of the same name conflict, so the split is: the
+    // engine owns Metadata and GenerateMetadata, this host owns the global —
+    // whose name it alone knows, since it configures it.
+    //
+    // Only this half can be asserted here. The engine is its own package now,
+    // and the other half of the split is asserted in its suite.
+    $types = ActionManifest::renderTypes('rpc');
 
-    expect($engineTypes)->toContain('interface Metadata')
-        ->and($engineTypes)->toContain('type GenerateMetadata')
-        ->and($engineTypes)->not->toContain('declare function rpc');
+    expect($types)->not->toContain('interface Metadata')
+        ->and($types)->not->toContain('GenerateMetadata');
 });

@@ -13,28 +13,32 @@
 use Illuminate\Support\Collection;
 use LaravelRsc\RouteManifest;
 
-/** The fixture the JS suite builds, which has the awkward cases in it. */
-function fixtureApp(): string
-{
-    return dirname(__DIR__, 2).'/tests/fixtures/rsc-app/app';
-}
-
+/**
+ * A real manifest, checked in.
+ *
+ * It was produced by the engine's own test app — the one with the awkward
+ * cases in it: route groups that vanish from urls, slot directories that are
+ * not url segments, an interceptor that is not a route. The engine lives in
+ * its own repository now, so this is a copy rather than something built here.
+ *
+ * It used to read the engine's build output, and skipped when that was
+ * missing. A test that skips is a test that stops reporting: this file went on
+ * passing through a change to RouteManifest's own constructor, because on a
+ * machine without the build it never ran at all.
+ *
+ * The shape is the contract, and it is written down in the engine's
+ * manifest.ts. Nothing here needs the app on disk: paths to a host's route
+ * config travel in the manifest.
+ */
 function fixtureManifest(): string
 {
-    return dirname(__DIR__, 2).'/bootstrap/rsc/vite-test/routes.json';
+    return dirname(__DIR__, 2).'/tests/fixtures/routes.json';
 }
 
 function fixturePages(): Collection
 {
-    return collect((new RouteManifest(fixtureManifest(), fixtureApp()))->pages())
-        ->keyBy('urlPattern');
+    return collect((new RouteManifest(fixtureManifest()))->pages())->keyBy('urlPattern');
 }
-
-beforeEach(function () {
-    if (! is_file(fixtureManifest())) {
-        $this->markTestSkipped('fixture not built; run: bun test tests/js/routeManifest.test.ts');
-    }
-});
 
 test('a page carries the layouts that wrap it, outermost first', function () {
     $pages = fixturePages();
@@ -91,7 +95,7 @@ test('route.php stays this host’s business, found beside the page', function (
 test('a missing manifest says how to make one', function () {
     // Routing depends on a build artifact now, so the failure has to name the
     // command rather than quietly registering no routes at all.
-    $read = new RouteManifest('/nonexistent/routes.json', fixtureApp());
+    $read = new RouteManifest('/nonexistent/routes.json');
 
     expect(fn () => $read->pages())->toThrow(RuntimeException::class, 'rsc:build');
 });
@@ -112,7 +116,7 @@ test('an unsupported interception marker is refused, not guessed', function () {
         ]],
     ]));
 
-    expect(fn () => (new RouteManifest($dir.'/routes.json', fixtureApp()))->pages())
+    expect(fn () => (new RouteManifest($dir.'/routes.json'))->pages())
         ->toThrow(RuntimeException::class, '(..)');
 
     unlink($dir.'/routes.json');

@@ -9,10 +9,13 @@ The package is `larabun/laravel-rsc` (namespace `LaravelRsc\`). The routing laye
 ## Architecture
 
 - `src/` — PHP package code (Laravel service provider, RuntimeBridge, RSC pipeline)
-- `resources/` — TypeScript/JS (Bun worker, RSC handler, build script, client components)
-- `resources/js/` — Client-side components (Link, navigate, createRscApp)
-- `resources/views/` — Blade templates (rsc-app shell)
 - `tests/` — Pest PHP tests (Unit + Feature)
+
+The JavaScript half is a separate package, `@rsc-router/core`, in its own
+repository (`~/Herd/rsc-router`). This package is one host for it and carries
+no copy: `EnginePath` resolves it from the app's `node_modules`, and the
+commands that need it name the package to install rather than failing on a
+path.
 
 ## Key Conventions
 

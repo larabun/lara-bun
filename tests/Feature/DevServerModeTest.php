@@ -64,10 +64,35 @@ test('the engine directory is the one holding the plugin, not the package root',
     // In dev the worker runs the Vite plugin itself, which resolves js/ against
     // this. rsc:serve used to build the path by hand and passed the Composer
     // package root, one level above — so the client runtime could not be found.
+    //
+    // The npm package publishes its source under src/, so this is a level
+    // below the package root as well: pointing at the root finds nothing, and
+    // finding nothing is indistinguishable from not being installed.
+    $engine = sys_get_temp_dir().'/rsc-engine-'.uniqid();
+
+    mkdir($engine.'/js', 0755, true);
+    touch($engine.'/vite.ts');
+    touch($engine.'/worker.ts');
+
+    putenv("RSC_ENGINE_DIR={$engine}");
+
     $dir = EnginePath::directory();
 
-    expect($dir)->not->toBeNull()
+    putenv('RSC_ENGINE_DIR');
+
+    expect($dir)->toBe($engine)
         ->and(is_file($dir.'/vite.ts'))->toBeTrue()
-        ->and(is_file($dir.'/worker.ts'))->toBeTrue()
         ->and(is_dir($dir.'/js'))->toBeTrue();
+
+    unlink($engine.'/vite.ts');
+    unlink($engine.'/worker.ts');
+    rmdir($engine.'/js');
+    rmdir($engine);
+});
+
+test('and is null when the engine is not installed', function () {
+    // This package no longer carries a copy of the engine, so "not found" is a
+    // real state rather than an impossible one. The commands that need it say
+    // which package to install rather than failing on a path.
+    expect(EnginePath::directory())->toBeNull();
 });

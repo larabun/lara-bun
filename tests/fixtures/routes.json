@@ -1,0 +1,311 @@
+{
+  "version": 1,
+  "build": {
+    "output": "server",
+    "exportPath": "dist",
+    "payloadName": ""
+  },
+  "routes": [
+    {
+      "component": "app/page",
+      "segments": [],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/ledger/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "ledger"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [
+        "app/ledger/orders.section"
+      ],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/plain/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "plain"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": false
+    },
+    {
+      "component": "app/slow/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "slow"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading",
+        "app/slow/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/slow3/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "slow3"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading",
+        "app/slow3/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/slow2/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "slow2"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/(marketing)/promo/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "promo"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/item/[id]/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "item"
+        },
+        {
+          "type": "param",
+          "value": "id"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/static/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "static"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/feed/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "feed"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/nested/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "nested"
+        }
+      ],
+      "layouts": [
+        "app/layout",
+        "app/nested/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": false,
+      "clientJs": true
+    },
+    {
+      "component": "app/photo/[id]/page",
+      "segments": [
+        {
+          "type": "static",
+          "value": "photo"
+        },
+        {
+          "type": "param",
+          "value": "id"
+        }
+      ],
+      "layouts": [
+        "app/layout"
+      ],
+      "loadings": [
+        "app/loading"
+      ],
+      "slots": {
+        "modal": "app/@modal/default"
+      },
+      "sections": [],
+      "config": null,
+      "ancestorConfigs": [],
+      "staticParams": true,
+      "clientJs": true
+    }
+  ],
+  "intercepts": [
+    {
+      "component": "app/@modal/(.)photo/[id]/page",
+      "slot": "modal",
+      "segments": [
+        {
+          "type": "static",
+          "value": "photo"
+        },
+        {
+          "type": "param",
+          "value": "id"
+        }
+      ],
+      "marker": "(.)"
+    }
+  ]
+}

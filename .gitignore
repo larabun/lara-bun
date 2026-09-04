@@ -31,3 +31,8 @@ bootstrap/rsc/plain-*
 # Written into the fixture app by the build
 tests/fixtures/rsc-app/rsc-env.d.ts
 tests/fixtures/rsc-app/rsc-types.d.ts
+
+# Build and test scratch. Temp directories from the old JS suite were committed
+# here before these rules existed; the suite moved out with the engine.
+bootstrap/
+bun.lock

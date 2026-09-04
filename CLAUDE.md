@@ -117,6 +117,21 @@ directories. `rsc-router/files` has the disk versions (`assetsFrom`,
 `prerenderedFrom`); an edge host passes a KV or static-binding reader and never
 loads that module.
 
+`revalidate.ts` reaches for async context lazily — the platform's global first,
+then `node:async_hooks` — so it loads where there is neither. What it falls
+back to holds one store and keeps it across the action's awaits, which is right
+for one action and ambiguous for two: an overlap poisons the scope until both
+finish and both come back empty. Losing a refresh is recoverable; re-rendering
+one request's region into another's answer is not. Nothing reaches that
+fallback on Node, Bun or Deno, so it is exported and tested directly — a
+fallback no test enters is the one that fails on the platform it exists for.
+
+Serving a frozen page comes *after* the branches for a named region and an
+interception. A frozen page is a whole page, and both of those ask for
+something smaller: answering a revalidate request with the document puts the
+entire page inside the region, and answering an interception with it replaces
+the page the modal was opening over. Both are silent.
+
 ### The Engine Is a Separate npm Package
 The JavaScript half — plugin, build CLI, worker, client runtime — publishes as
 `rsc-router` and is backend-agnostic; this Composer package is one host for it.

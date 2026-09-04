@@ -552,3 +552,56 @@ describe('exporting the site as files', () => {
     rmSync(assets, { recursive: true, force: true })
   })
 })
+
+describe('a frozen page and a request for less than one', () => {
+  const withFrozen = (engine: unknown) =>
+    createRscHandler({
+      engine: engine as never,
+      prerendered: prerenderedFrom(outDir),
+    })
+
+  test('a request naming a region is not answered with the whole page', async () => {
+    // /static is frozen, so a whole-page payload is sitting right there. Handed
+    // back for a revalidate request, the client puts an entire page inside the
+    // named region.
+    const res = await withFrozen(engine)(
+      new Request('http://x/static', {
+        headers: { 'X-RSC': '1', 'X-RSC-Revalidate': 'modal' },
+      }),
+    )
+
+    expect(res?.headers.get('X-RSC-Revalidate')).toBe('modal')
+    expect(res?.headers.get('X-RSC-Segment-Depth')).toBeNull()
+  }, 20_000)
+})
+
+describe('a frozen page and an interception', () => {
+  test('an intercepted request is not answered with the frozen page', async () => {
+    // The modal would be replaced by the whole page it was opening over.
+    const handle = createRscHandler({
+      engine,
+      prerendered: prerenderedFrom(outDir),
+      manifest: {
+        ...engine.manifest(),
+        intercepts: [
+          {
+            component: 'app/@modal/(.)photo/[id]/page',
+            slot: 'modal',
+            segments: [
+              { type: 'static', value: 'static' },
+            ],
+            marker: '(.)',
+          },
+        ],
+      },
+    })
+
+    const res = await handle(
+      new Request('http://x/static', {
+        headers: { 'X-RSC': '1', 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' },
+      }),
+    )
+
+    expect(res?.headers.get('X-RSC-Revalidate')).toBe('modal')
+  }, 20_000)
+})

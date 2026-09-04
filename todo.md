@@ -36,3 +36,12 @@ announce targetted rerender etc
 Does our client library tree shake etc?
 
 do a final code clean up and optimization to reduce size and increase performance without breaking
+
+can bun do static serving
+measure performance
+
+standard to follow web standards
+
+/Users/ramonmalcolm/ventorva/packages/homeport/docs
+
+laravel have route generation helper/autocomplete does the js instances have this?

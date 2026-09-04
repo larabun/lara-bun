@@ -12,7 +12,7 @@ import { join } from 'node:path'
 
 const packageRoot = join(import.meta.dir, '../..')
 import { createRscHandler, matchRoute, sharedDepth } from '../../resources/host.ts'
-import { revalidate, withRevalidation } from '../../resources/revalidate.ts'
+import { resolveScope, revalidate, singleFlightScope, withRevalidation } from '../../resources/revalidate.ts'
 import { retentionKey } from '../../resources/routing.ts'
 import type { RouteManifest } from '../../resources/manifest.ts'
 
@@ -869,5 +869,125 @@ describe('running where there is no filesystem', () => {
 
     expect(res?.status).toBe(200)
     expect(engine.calls.html).toHaveLength(1)
+  })
+})
+
+describe('marking where the runtime has no async context', () => {
+  // Exercised directly. Setting globalThis.AsyncLocalStorage aside does not
+  // reach it — the `node:async_hooks` import still succeeds here — so a test
+  // written that way passes against the real thing and proves nothing.
+
+  /** What withRevalidation does with whichever scope it resolved. */
+  async function collect(scope: ReturnType<typeof singleFlightScope>, action: () => Promise<void>) {
+    const marked = new Set<string>()
+
+    return await scope.run(marked, async () => {
+      await action()
+
+      return [...marked]
+    })
+  }
+
+  const mark = (scope: ReturnType<typeof singleFlightScope>, target: string) =>
+    scope.getStore()?.add(target)
+
+  test('still collects what one action marked, across its awaits', async () => {
+    // Where the marks actually are: after an await, not before one. A scope
+    // that restored when the function returned would lose every one of them.
+    const scope = singleFlightScope()
+
+    const taken = await collect(scope, async () => {
+      await new Promise((r) => setTimeout(r, 5))
+      mark(scope, 'orders')
+      await new Promise((r) => setTimeout(r, 5))
+      mark(scope, 'invoices')
+    })
+
+    expect(taken.sort()).toEqual(['invoices', 'orders'])
+  })
+
+  test('and discards both when two overlap, rather than mixing them', async () => {
+    // Without async context there is no telling whose marks are whose.
+    // Re-rendering one request's region into another's answer is the failure
+    // worth refusing; a lost refresh the client can ask for again.
+    const scope = singleFlightScope()
+
+    const [first, second] = await Promise.all([
+      collect(scope, async () => {
+        mark(scope, 'orders')
+        await new Promise((r) => setTimeout(r, 20))
+      }),
+      collect(scope, async () => {
+        await new Promise((r) => setTimeout(r, 5))
+        mark(scope, 'invoices')
+      }),
+    ])
+
+    expect(first).toEqual([])
+    expect(second).toEqual([])
+  })
+
+  test('and stays poisoned until the last one finishes', async () => {
+    // The overlap is ambiguous for as long as either action is still running.
+    // Lifting it when the first finishes lets the other's remaining marks
+    // through — the half of the ambiguity that arrives last.
+    const scope = singleFlightScope()
+
+    const [slow] = await Promise.all([
+      collect(scope, async () => {
+        await new Promise((r) => setTimeout(r, 30))
+        // Marked after the other action has already finished.
+        mark(scope, 'orders')
+      }),
+      collect(scope, async () => {
+        await new Promise((r) => setTimeout(r, 5))
+      }),
+    ])
+
+    expect(slow).toEqual([])
+  })
+
+  test('prefers async context the platform exposes globally', async () => {
+    // A Worker has it on globalThis rather than as node:async_hooks. Reaching
+    // for the import first would work here and fail there.
+    class Ambient {
+      static used = false
+      getStore() {
+        return undefined
+      }
+      run<T>(_store: unknown, fn: () => T): T {
+        Ambient.used = true
+
+        return fn()
+      }
+    }
+
+    const resolved = await resolveScope({ AsyncLocalStorage: Ambient })
+
+    resolved.run(new Set(), () => null)
+
+    expect(Ambient.used).toBe(true)
+  })
+
+  test('and is not what this runtime actually uses', async () => {
+    // Bun, Node and Deno all have async context. If this ever picks the
+    // fallback here, the resolution order broke and concurrent actions became
+    // unreliable without anything failing.
+    const marks = await Promise.all([
+      withRevalidation(async (take) => {
+        revalidate('orders')
+        await new Promise((r) => setTimeout(r, 20))
+
+        return take()
+      }),
+      withRevalidation(async (take) => {
+        await new Promise((r) => setTimeout(r, 5))
+        revalidate('invoices')
+
+        return take()
+      }),
+    ])
+
+    expect(marks).toEqual([['orders'], ['invoices']])
   })
 })

@@ -215,12 +215,6 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     if (request.method !== 'GET' && request.method !== 'HEAD') return null
 
-    if (options.prerendered) {
-      const frozen = await servePrerendered(request, url, options.prerendered)
-
-      if (frozen) return frozen
-    }
-
     // One named region of this page, asked for without mutating anything to
     // earn it. What an action invalidated does not come through here — that
     // travels back inside the action's own answer, which is the whole point of
@@ -239,6 +233,16 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
 
     if (interceptSlot !== null && request.headers.get(HEADER.rsc) !== null) {
       return await handleIntercept(request, url, interceptSlot)
+    }
+
+    // Only now. A frozen page is a whole page, and both requests above ask for
+    // something smaller than one: answering a named region with the whole
+    // document puts the entire page inside that region, and answering an
+    // interception with it replaces the page the modal was opening over.
+    if (options.prerendered) {
+      const frozen = await servePrerendered(request, url, options.prerendered)
+
+      if (frozen) return frozen
     }
 
     const match = matchRoute(manifest, url.pathname)

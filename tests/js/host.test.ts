@@ -7,6 +7,10 @@
 // rendered output.
 
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+const packageRoot = join(import.meta.dir, '../..')
 import { createRscHandler, matchRoute, sharedDepth } from '../../resources/host.ts'
 import { revalidate, withRevalidation } from '../../resources/revalidate.ts'
 import { retentionKey } from '../../resources/routing.ts'
@@ -809,5 +813,61 @@ describe('the key a page is remembered by', () => {
 
   test('and an interception is still its own thing', () => {
     expect(retentionKey('/posts/1/', 'modal')).toBe('__intercept:modal:/posts/1')
+  })
+})
+
+describe('running where there is no filesystem', () => {
+  test('the adapter names no platform module', () => {
+    // A Worker reads its assets from a binding, not from a disk. Anything the
+    // handler imports has to exist there — and a bundler that finds `node:fs`
+    // in the graph fails the build, or worse, ships a shim that returns
+    // nothing and turns every asset into a silent 404.
+    const source = readFileSync(join(packageRoot, 'resources/host.ts'), 'utf-8')
+
+    expect(source).not.toContain('node:')
+  })
+
+  test('and neither do the pieces it is built from', () => {
+    for (const shared of ['routing.ts', 'headers.ts', 'manifest.ts']) {
+      expect(readFileSync(join(packageRoot, 'resources', shared), 'utf-8')).not.toContain('node:')
+    }
+  })
+
+  test('prerendered pages come from whatever the host can read', async () => {
+    // A store, a binding, a map in memory — the handler only asks for a name.
+    const store = new Map([
+      ['docs.html', '<html><body>from a store</body></html>'],
+      ['docs.meta.json', JSON.stringify({ layouts: ['app/layout'] })],
+      ['docs.seg1.flight', 'segment payload'],
+    ])
+
+    const handle = createRscHandler({
+      engine: fakeEngine() as never,
+      manifest: manifestOf({ '/docs': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })
+
+    const document = await handle(new Request('http://x/docs'))
+    expect(await document!.text()).toContain('from a store')
+
+    const payload = await handle(
+      new Request('http://x/docs', { headers: { 'X-RSC': '1', 'X-RSC-Segments': 'app/layout' } }),
+    )
+
+    expect(await payload!.text()).toBe('segment payload')
+    expect(payload!.headers.get('X-RSC-Segment-Depth')).toBe('1')
+  })
+
+  test('and a reader that finds nothing falls through to rendering', async () => {
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/docs': ['app/layout'] }),
+      prerendered: () => null,
+    })(new Request('http://x/docs'))
+
+    expect(res?.status).toBe(200)
+    expect(engine.calls.html).toHaveLength(1)
   })
 })

@@ -34,3 +34,5 @@ add mcp
 announce targetted rerender etc
 
 Does our client library tree shake etc?
+
+do a final code clean up and optimization to reduce size and increase performance without breaking

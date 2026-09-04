@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { prerender, pathKey, urlFor, urlsToBuild } from '../../resources/prerender.ts'
 import { exportSite } from '../../resources/export.ts'
+import { prerenderedFrom } from '../../resources/files.ts'
 import type { PrerenderResult } from '../../resources/prerender.ts'
 import type { RouteManifest } from '../../resources/manifest.ts'
 import { createRscHandler } from '../../resources/host.ts'
@@ -332,7 +333,7 @@ describe('what gets written', () => {
 
 describe('serving what was written', () => {
   const handler = () =>
-    createRscHandler({ engine, prerendered: outDir, version: 'build-1' })
+    createRscHandler({ engine, prerendered: prerenderedFrom(outDir), version: 'build-1' })
 
   test('a plain request gets the frozen document', async () => {
     const res = await handler()(new Request('http://x/static'))
@@ -379,7 +380,7 @@ describe('serving what was written', () => {
     // already shows, and the page never finishes loading.
     const handle = createRscHandler({
       engine,
-      prerendered: outDir,
+      prerendered: prerenderedFrom(outDir),
       rpc: { slowData: async () => ({ value: 'resolved at request time' }) },
     })
 

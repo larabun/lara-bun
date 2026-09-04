@@ -97,6 +97,26 @@ always returns a whole document therefore has no retention at any depth — whic
 is what the Hono spike looked like before it read `X-RSC-Segments`, and it read
 as an `<html>` problem when it was a protocol one.
 
+### The Host Adapter Assumes No Platform, Not Just No Framework
+`rsc-router/host` takes a `Request` and returns a `Response`, so binding it to
+a framework is one line and there is no per-framework module — a `hono.ts`
+existed briefly and earned nothing but two chances to go stale:
+
+    app.all('*', async (c) => (await rsc(c.req.raw)) ?? c.notFound())   // Hono
+    .all('*', async ({ request, status }) => (await rsc(request)) ?? status(404))  // Elysia
+    Bun.serve({ fetch: async (req) => (await rsc(req)) ?? new Response('', { status: 404 }) })
+
+Nothing under `host.ts`, `routing.ts`, `headers.ts` or `manifest.ts` imports
+`node:` anything, and `tests/js/host.test.ts` fails if that changes. A Worker
+has no filesystem, and a bundler that finds `node:fs` in the graph either fails
+the build or ships a shim that returns nothing — which turns every asset into a
+silent 404.
+
+So `assets` and `prerendered` are functions the host supplies rather than
+directories. `rsc-router/files` has the disk versions (`assetsFrom`,
+`prerenderedFrom`); an edge host passes a KV or static-binding reader and never
+loads that module.
+
 ### The Engine Is a Separate npm Package
 The JavaScript half — plugin, build CLI, worker, client runtime — publishes as
 `rsc-router` and is backend-agnostic; this Composer package is one host for it.

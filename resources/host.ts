@@ -88,13 +88,17 @@ export interface RscHostOptions {
    */
   props?: (match: MatchedRoute, request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>
   /**
-   * Where the prerenderer wrote its pages, if this build has any.
+   * Reads what the prerenderer wrote, if this build has any.
    *
-   * Checked before rendering: a page that was frozen at build time is served
-   * from disk, and anything not found there falls through to being rendered
-   * now. So a partial prerender is a valid state, not a broken one.
+   * A function rather than a directory, because not every host has a
+   * filesystem: on an edge runtime these live in a KV store or a static-asset
+   * binding. `prerenderedFrom` in `rsc-router/files` is the one for a disk.
+   *
+   * Checked before rendering, and anything it cannot find falls through to
+   * being rendered now — so a partial prerender is a valid state, not a
+   * broken one.
    */
-  prerendered?: string
+  prerendered?: (name: string) => Promise<string | null> | string | null
   /** Serve a built browser asset. Return null for anything not found. */
   assets?: (pathname: string, request: Request) => Promise<Response | null> | Response | null
   /**
@@ -306,17 +310,13 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
    * replaces the root — and replacing the root unmounts everything retained
    * behind it, so going back stops restoring what you had.
    */
-  async function servePrerendered(request: Request, url: URL, dir: string): Promise<Response | null> {
-    const { readFile } = await import('node:fs/promises')
-    const { join } = await import('node:path')
+  async function servePrerendered(
+    request: Request,
+    url: URL,
+    source: NonNullable<RscHostOptions['prerendered']>,
+  ): Promise<Response | null> {
     const key = pathKey(url.pathname)
-    const read = async (name: string) => {
-      try {
-        return await readFile(join(dir, name), 'utf-8')
-      } catch {
-        return null
-      }
-    }
+    const read = async (name: string) => await source(name)
 
     if (request.headers.get(HEADER.rsc) === null) {
       // A frozen page first; then a shell, under this url or under the route's
@@ -488,53 +488,4 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       headers: withVersion({ 'Content-Type': 'text/x-component; charset=utf-8' }),
     })
   }
-}
-
-/**
- * Serve built browser assets out of the build's public directory.
- *
- * `dir` is the browser's root, not the asset folder: a request for
- * /assets/x.js reads <dir>/assets/x.js. Stripping the prefix instead reads
- * <dir>/x.js, which is a 404 for every asset and a page that renders and then
- * never hydrates — nothing logs, because the failed request is the browser's.
- *
- * Supplied rather than assumed: in production these belong in front of the
- * application, on whatever already serves static files. This exists so a
- * development server and a single-file binary do not each write it.
- */
-export function assetsFrom(dir: string, prefix = '/assets/'): RscHostOptions['assets'] {
-  return async (pathname) => {
-    if (!pathname.startsWith(prefix)) return null
-
-    // No traversal out of the asset directory, whatever the url claims.
-    if (pathname.includes('..')) return null
-
-    const { readFile } = await import('node:fs/promises')
-    const { join } = await import('node:path')
-
-    try {
-      const bytes = await readFile(join(dir, pathname))
-
-      return new Response(bytes, {
-        headers: {
-          'Content-Type': contentTypeOf(pathname),
-          // Content-hashed by the build, so this is safe and is the difference
-          // between a warm navigation and a cold one.
-          'Cache-Control': 'public, max-age=31536000, immutable',
-        },
-      })
-    } catch {
-      return null
-    }
-  }
-}
-
-function contentTypeOf(pathname: string): string {
-  if (pathname.endsWith('.js')) return 'text/javascript; charset=utf-8'
-  if (pathname.endsWith('.css')) return 'text/css; charset=utf-8'
-  if (pathname.endsWith('.map')) return 'application/json; charset=utf-8'
-  if (pathname.endsWith('.svg')) return 'image/svg+xml'
-  if (pathname.endsWith('.woff2')) return 'font/woff2'
-
-  return 'application/octet-stream'
 }

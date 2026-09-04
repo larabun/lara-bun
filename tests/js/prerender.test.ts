@@ -259,6 +259,47 @@ describe('routes whose urls were never listed', () => {
   }, 60_000)
 })
 
+describe('a route that ships no client runtime', () => {
+  test('is refused when the tree renders a client component', () => {
+    // Inert markup otherwise — a button that does nothing. The fixture's root
+    // layout renders <Nav>, which is exactly how this happens in practice:
+    // inherited from a shared layout rather than written on the page.
+    const plain = resultFor('/plain')
+
+    expect(plain?.type).toBe('error')
+    expect(plain?.reason).toMatch(/Nav/)
+    expect(plain?.reason).toMatch(/shared layout/)
+  })
+
+  test('renders to html with no bootstrap when nothing needs one', async () => {
+    // The floor this buys back is React itself, on a page with nothing to
+    // hydrate. Rendered without the fixture's layout, since that layout is
+    // what pulls a client component in.
+    const manifest = engine.manifest()
+    const dir = mkdtempSync(join(tmpdir(), 'rsc-plain-'))
+
+    const results = await prerender({
+      engine,
+      outDir: dir,
+      manifest: {
+        ...manifest,
+        routes: manifest.routes
+          .filter((r: { component: string }) => r.component === 'app/plain/page')
+          .map((r: object) => ({ ...r, layouts: [], loadings: [], slots: {} })),
+      },
+    })
+
+    expect(results[0].type).toBe('static')
+
+    const html = readFileSync(join(dir, 'plain.html'), 'utf-8')
+
+    expect(html).toContain('A page that ships no JavaScript')
+    expect(html).not.toMatch(/<script/)
+
+    rmSync(dir, { recursive: true, force: true })
+  }, 30_000)
+})
+
 describe('what gets written', () => {
   test('a variant for every depth a client might already hold', () => {
     // Without them every navigation to a prerendered route is a whole

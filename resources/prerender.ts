@@ -262,6 +262,8 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       return said('dynamic', 'renders its params before it can paint, and lists no urls to build')
     }
 
+    const shipsJs = route.clientJs !== false
+
     const rendered = await engine.handleRsc(
       route.component,
       props,
@@ -274,8 +276,19 @@ export async function prerender(options: PrerenderOptions): Promise<PrerenderRes
       route.slots,
       0,
       url,
-      true,
+      shipsJs,
     )
+
+    // A client component without a runtime is inert markup — a button that
+    // does nothing. Refused rather than shipped, and named, because they are
+    // usually inherited from a shared layout rather than written on the page.
+    if (!shipsJs && rendered.clientComponents.length > 0) {
+      return said(
+        'error',
+        `ships no client runtime, but the tree renders ${rendered.clientComponents.join(', ')}. ` +
+          'These usually come from a shared layout rather than the page itself.',
+      )
+    }
 
     const key = pathKey(url)
 

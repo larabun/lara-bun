@@ -393,6 +393,7 @@ function routeManifest(): RouteManifest {
       config: configIn(join(sourceDir, dirOf(name))),
       ancestorConfigs: ancestorConfigs(dirOf(name)),
       staticParams: hasStaticParams(components.get(name)!.absPath),
+      clientJs: shipsClientJs(components.get(name)!.absPath),
     })
   }
 
@@ -544,6 +545,20 @@ function discover(dir: string): void {
 function hasMetadata(absPath: string): boolean {
   const src = readFileSync(absPath, 'utf-8')
   return /export\s+(const\s+metadata|(async\s+)?function\s+generateMetadata)/.test(src)
+}
+
+/**
+ * Whether a route ships the client runtime at all.
+ *
+ * Opting out buys back everything React costs on a page that has nothing to
+ * hydrate — react-dom alone is most of it. Declared rather than inferred: a
+ * page with no client components today may gain one tomorrow, and the build
+ * refusing that is the point.
+ */
+function shipsClientJs(absPath: string): boolean {
+  const src = readFileSync(absPath, 'utf-8')
+
+  return !/export\s+const\s+clientJs\s*(:[^=]+)?=\s*false/.test(src)
 }
 
 /**

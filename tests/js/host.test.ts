@@ -36,6 +36,8 @@ function manifestOf(specs: Record<string, string[]>): RouteManifest {
       sections: [],
       config: null,
       ancestorConfigs: [],
+      staticParams: false,
+      clientJs: true,
     })),
     intercepts: [],
   }
@@ -75,8 +77,18 @@ function fakeEngine(onAction?: () => void | Promise<void>) {
       // The engine decides the real depth; here it agrees with the proposal.
       return { stream: empty(), segmentDepth: from }
     },
-    async handleRscHtmlStream(component: string, props: unknown) {
-      calls.html.push({ component, props })
+    async handleRscHtmlStream(
+      component: string,
+      props: unknown,
+      layouts: unknown,
+      loadings: unknown,
+      slots: unknown,
+      overrides: unknown,
+      nonce: unknown,
+      pageKey: unknown,
+      bootstrap?: boolean,
+    ) {
+      calls.html.push({ component, props, bootstrap })
 
       return { htmlStream: empty() }
     },
@@ -680,5 +692,79 @@ describe('marking across module copies', () => {
     })
 
     expect(taken).toEqual(['orders'])
+  })
+})
+
+describe('a client built to ask for payload files', () => {
+  const exportBuilt = (): RouteManifest => ({
+    ...manifestOf({ '/': [], '/docs': ['app/layout'] }),
+    build: { output: 'export', exportPath: 'dist', payloadName: 'index.rsc' },
+  })
+
+  test('is answered by a server too', async () => {
+    // Previewing an export, or one build served both ways. Without this the
+    // page renders and every navigation 404s in the console — the only place
+    // it shows.
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({ engine: engine as never, manifest: exportBuilt() })(
+      new Request('http://x/docs/index.rsc'),
+    )
+
+    expect(res?.headers.get('Content-Type')).toStartWith('text/x-component')
+    expect(engine.calls.rsc[0]).toMatchObject({ component: 'app/docs/page' })
+  })
+
+  test('at the root as well', async () => {
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest: exportBuilt() })(
+      new Request('http://x/index.rsc'),
+    )
+
+    expect(engine.calls.rsc[0]).toMatchObject({ component: 'app/page' })
+  })
+
+  test('and a server build still reads the header', async () => {
+    // With no payload filename, a url ending in index.rsc is just a url.
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/': [] }),
+    })(new Request('http://x/index.rsc'))
+
+    expect(res).toBeNull()
+  })
+})
+
+describe('serving a route that ships no client runtime', () => {
+  const manifest = () => {
+    const m = manifestOf({ '/': [], '/plain': [] })
+
+    m.routes.find((r) => r.component === 'app/plain/page')!.clientJs = false
+
+    return m
+  }
+
+  test('renders it without a bootstrap', async () => {
+    // Not only at build time: a route serving on demand has to ship the same
+    // thing it would have been frozen as, or the two disagree about whether
+    // React is on the page.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest: manifest() })(
+      new Request('http://x/plain'),
+    )
+
+    expect(engine.calls.html[0]).toMatchObject({ bootstrap: false })
+  })
+
+  test('and every other route still gets one', async () => {
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest: manifest() })(new Request('http://x/'))
+
+    expect(engine.calls.html[0]).toMatchObject({ bootstrap: true })
   })
 })

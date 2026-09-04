@@ -40,6 +40,15 @@ export interface ManifestRoute {
    * only the bundle can run it.
    */
   staticParams: boolean
+  /**
+   * Whether this route ships the client runtime.
+   *
+   * False renders to HTML and stops: no bootstrap, so no React, no Flight
+   * client, no router. A client component on such a route is inert markup — a
+   * button that does nothing — so the build refuses the combination rather
+   * than shipping it.
+   */
+  clientJs: boolean
 }
 
 export interface ManifestIntercept {

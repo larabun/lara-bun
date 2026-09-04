@@ -49,6 +49,9 @@ export interface RscEngine {
     loadings?: string[],
     parallelSlots?: Record<string, string>,
     slotOverrides?: Record<string, unknown>,
+    nonce?: string,
+    pageKey?: string,
+    bootstrap?: boolean,
   ): Promise<{ htmlStream: ReadableStream }>
   handleRscRevalidate?(target: string, page: unknown): Promise<{ rscPayload: string }>
   handleAction(
@@ -154,8 +157,33 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     return version ? { ...headers, [HEADER.version]: version } : headers
   }
 
+  // A build made for export ships a client that asks for payloads by url,
+  // because a static host cannot read a header. Serving that build from a
+  // server is a reasonable thing to do — previewing an export, or one build
+  // used both ways — and without this every navigation 404s in the console
+  // while the page itself looks fine.
+  const payloadName = manifest.build?.payloadName || ''
+
+  /** The page a payload url belongs to, if this is one. */
+  function pageForPayload(pathname: string): string | null {
+    if (payloadName === '' || !pathname.endsWith('/' + payloadName)) return null
+
+    return pathname.slice(0, -(payloadName.length + 1)) || '/'
+  }
+
   return async function handle(request: Request): Promise<Response | null> {
-    const url = new URL(request.url)
+    let url = new URL(request.url)
+    const asPayload = pageForPayload(url.pathname)
+
+    if (asPayload !== null) {
+      // Rewritten to the page it is asking about, with the header the rest of
+      // this handler reads — one path through, however the client asked.
+      url = new URL(asPayload + url.search, url.origin)
+      const headers = new Headers(request.headers)
+
+      headers.set(HEADER.rsc, '1')
+      request = new Request(url, { method: request.method, headers })
+    }
 
     if (assets) {
       const asset = await assets(url.pathname, request)
@@ -213,6 +241,12 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
         match.route.loadings,
         match.route.slots,
         {},
+        undefined,
+        url.pathname,
+        // A route that ships no runtime gets no bootstrap and no segment
+        // boundary — the boundary is itself a client component, so leaving it
+        // in means no page could ever be JS-free.
+        match.route.clientJs !== false,
       )
 
       return new Response(htmlStream, {

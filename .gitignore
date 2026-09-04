@@ -26,6 +26,7 @@ bootstrap/rsc/output-*
 bootstrap/rsc/host-*
 bootstrap/rsc/cfgman-*
 bootstrap/rsc/params-*
+bootstrap/rsc/plain-*
 
 # Written into the fixture app by the build
 tests/fixtures/rsc-app/rsc-env.d.ts

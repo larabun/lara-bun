@@ -61,6 +61,22 @@ class PageController
         ]);
     }
 
+    /**
+     * The page an interception opens over, or null when there is none to find.
+     *
+     * Narrow on purpose: a failure to resolve the referer is a reason to render
+     * the interceptor on its own, and a failure to render is not. Catching both
+     * together turned a broken render into a modal with no page behind it.
+     */
+    protected function resolveReferer(string $refererUrl): ?RscResponse
+    {
+        try {
+            return $this->buildResponse(Route::getRoutes()->match(Request::create($refererUrl, 'GET')));
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     protected function buildResponse(\Illuminate\Routing\Route $route): RscResponse
     {
         $component = $route->defaults['_rsc_component'];
@@ -93,7 +109,7 @@ class PageController
      *
      * @param  list<array{slot: string, component: string, interceptedUrl: string}>  $intercepts
      */
-    protected function handleIntercept(Request $request, array $intercepts, string $slot, ?string $refererUrl): RscResponse
+    protected function handleIntercept(Request $request, array $intercepts, string $slot, ?string $refererUrl): RscResponse|Response
     {
         $intercept = null;
 
@@ -109,24 +125,34 @@ class PageController
             abort(404);
         }
 
-        // Resolve the current page from the referer URL
-        if ($refererUrl !== null) {
-            try {
-                $refererRequest = Request::create($refererUrl, 'GET');
-                $refererRoute = Route::getRoutes()->match($refererRequest);
+        $under = $refererUrl === null ? null : $this->resolveReferer($refererUrl);
 
-                // Build response from the referer's page (current page stays visible)
-                $response = $this->buildResponse($refererRoute);
+        // The interceptor alone, dropped into the slot of a page that stays
+        // exactly where it is.
+        //
+        // Re-rendering that page to place the modal rebuilds everything below
+        // the layout declaring the slot, so opening a modal from a half-filled
+        // form throws the form away. The page is already mounted and still
+        // correct; only the slot is new.
+        if ($under !== null) {
+            $rendered = app(RuntimeBridge::class)->rscRevalidate($slot, [
+                'component' => $under->getComponent(),
+                // The target url's params, not the page's: a modal for photo 123
+                // opened from the feed is about photo 123.
+                'props' => $request->route()->parameters(),
+                'layouts' => [],
+                'loadings' => [],
+                // Named as the slot so the renderer finds it there, pointing at
+                // the interceptor rather than the default.
+                'parallelSlots' => [$slot => $intercept['component']],
+            ]);
 
-                // Override the matching slot with the interceptor component.
-                // The interceptor receives the target URL's route params.
-                $targetParams = $request->route()->parameters();
-                $response->overrideSlot($slot, $intercept['component'], $targetParams);
-
-                return $response;
-            } catch (\Throwable) {
-                // Referer resolution failed — fall through to interceptor-only render
-            }
+            return new Response($rendered['rscPayload'], 200, [
+                'Content-Type' => 'text/x-component',
+                // Says what this payload is, so the client fills the slot with
+                // it rather than replacing a segment of the page.
+                Header::X_RSC_REVALIDATE => $slot,
+            ]);
         }
 
         // Fallback: render just the interceptor component (no referer available)

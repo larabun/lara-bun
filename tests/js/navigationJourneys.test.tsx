@@ -784,6 +784,41 @@ describe('an interception that only fills the slot', () => {
     expect(returned.value).toBe('survives the modal')
   })
 
+  test('a hovered modal link still opens as a modal when clicked', async () => {
+    // A prefetch is a real request and comes back as the interceptor alone.
+    // An entry that forgets which region it holds is applied as a whole
+    // document, and the modal renders *as* the page with nothing around it.
+    // Only after a hover, which is why a scripted click never finds it.
+    await boot('/deep')
+
+    await act(async () => {
+      prefetch('/deep/item/1')
+    })
+
+    await go('/deep/item/1')
+
+    // The page it opened over is still there, and the interceptor is in the
+    // slot rather than standing in for the whole page.
+    expect(container.querySelector('input[aria-label="/deep"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="/deep/item/1"]')).not.toBeNull()
+  })
+
+  test('and still does when the click beats the prefetch', async () => {
+    // The prefetch fills in what its payload is when the response lands, and a
+    // click can land first. Reading that before it settles leaves the entry
+    // saying "whole document", so the modal renders as the page — which is
+    // what a real hover-then-click does and an awaited prefetch never does.
+    await boot('/deep')
+
+    // Deliberately not awaited: still in flight when the navigation starts.
+    prefetch('/deep/item/1')
+
+    await go('/deep/item/1')
+
+    expect(container.querySelector('input[aria-label="/deep"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="/deep/item/1"]')).not.toBeNull()
+  })
+
   test('leaving to somewhere else is an ordinary navigation', async () => {
     // Only the url the modal was opened over is free to return to; anything
     // else still has to be fetched, and the slot still has to empty.

@@ -10,24 +10,23 @@ beforeEach(function () {
     $this->app->instance(RuntimeBridge::class, $this->bridgeMock);
 });
 
-test('intercept with referer renders referer page with slot override', function () {
+test('intercept with referer renders the interceptor alone, for the slot', function () {
+    // The page underneath is already mounted and still correct. Re-rendering it
+    // to place the modal rebuilds everything below the layout declaring the
+    // slot, so opening a modal from a half-filled form throws the form away.
     $this->bridgeMock
-        ->shouldReceive('rscStream')
+        ->shouldReceive('rscRevalidate')
         ->once()
-        ->withArgs(function (string $component, array $props, array $layouts, array $loadings, array $parallelSlots, array $slotOverrides) {
-            // Should render the FEED page (from referer), not the photo page.
-            // The slot override should contain the interceptor with target URL params.
-            return $component === 'app/feed/page'
-                && isset($slotOverrides['modal'])
-                && $slotOverrides['modal']['component'] === 'app/@modal/(.)photo/[id]/page'
-                && $slotOverrides['modal']['props']['id'] === '123';
+        ->withArgs(function (string $target, array $page) {
+            return $target === 'modal'
+                // Pointed at the interceptor rather than the slot's default,
+                // and given the target url's params rather than the page's.
+                && $page['parallelSlots'] === ['modal' => 'app/@modal/(.)photo/[id]/page']
+                && $page['props']['id'] === '123';
         })
-        ->andReturnUsing(function () {
-            return (function () {
-                yield ['clientChunks' => [], 'metadata' => null];
-                yield '0:["$","div",null,{"children":"Feed with modal"}]';
-            })();
-        });
+        ->andReturn(['rscPayload' => '0:["$","div",null,{"children":"Photo modal"}]']);
+
+    $this->bridgeMock->shouldNotReceive('rscStream');
 
     $registrar = new PageRouteRegistrar(app('router'));
 
@@ -51,7 +50,11 @@ test('intercept with referer renders referer page with slot override', function 
         'Accept' => '*/*',
         Header::X_RSC_INTERCEPT => 'modal',
         Header::X_RSC_REFERER => '/feed',
-    ])->assertStatus(200);
+    ])
+        ->assertStatus(200)
+        // Says which region it is, so the client fills the slot with it rather
+        // than replacing a segment of the page.
+        ->assertHeader(Header::X_RSC_REVALIDATE, 'modal');
 });
 
 test('intercept without referer renders just the interceptor', function () {

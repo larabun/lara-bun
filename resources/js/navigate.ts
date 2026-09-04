@@ -28,6 +28,16 @@ interface CacheEntry {
   segmentDepth: number;
   layouts: string[] | null;
   /**
+   * The slot this payload fills, when it is one region rather than a segment.
+   *
+   * A prefetch is a real request and comes back as whatever the host answers.
+   * An interception answers with the interceptor alone, and an entry that
+   * forgets that is applied as a whole document — so a hovered modal link
+   * renders the modal *as* the page, with nothing around it. Only after a
+   * hover, which is why a scripted click never finds it.
+   */
+  slot: string | null;
+  /**
    * The chain held when this was prefetched. A partial payload is only valid
    * against the chain it was rendered for; navigate somewhere else first and
    * it no longer composes.
@@ -510,6 +520,8 @@ export async function navigate(
   let nextLayouts: string[] | null = null;
   /** The slot this answer fills, when it is one region rather than a segment. */
   let slotPayload: string | null = null;
+  /** The cache entry this navigation is using, whose metadata settles with it. */
+  let reused: CacheEntry | null = null;
   const previousUrl = window.location.pathname + window.location.search;
 
   try {
@@ -528,8 +540,13 @@ export async function navigate(
 
     if (usable) {
       treePromise = cached!.tree;
-      segmentDepth = cached!.segmentDepth;
-      nextLayouts = cached!.layouts;
+      // Read after the tree resolves, not now. A prefetch fills these in when
+      // its response lands, and a click can land first — hover a modal link
+      // and click it quickly and the entry still says depth 0, so the
+      // interceptor is applied as a whole document and the modal renders *as*
+      // the page. The fields are set before the tree promise resolves, so
+      // waiting for it is what makes them true.
+      reused = cached!;
       cache.delete(cacheKey);
     } else {
       cache.delete(cacheKey);
@@ -570,6 +587,12 @@ export async function navigate(
     }
 
     const tree = await treePromise;
+
+    if (reused) {
+      segmentDepth = reused.segmentDepth;
+      nextLayouts = reused.layouts;
+      slotPayload = reused.slot;
+    }
 
     if (controller.signal.aborted) return;
 
@@ -745,6 +768,7 @@ function prefetchUrl(
     expiresAt: Date.now() + ttl,
     segmentDepth: 0,
     layouts: null,
+    slot: null,
     heldWhenFetched: chain.join(","),
   };
 
@@ -756,6 +780,8 @@ function prefetchUrl(
       // is not a small loss: the entry then claims a segment is a whole
       // document, and rendering a layout-less page as the document root does
       // not warn — it hangs the renderer.
+      entry.slot = response.headers.get("X-RSC-Revalidate");
+
       const local = staticFetches.get(response) ?? null;
 
       entry.segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? local?.depth ?? 0) || 0;

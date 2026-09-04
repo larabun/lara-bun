@@ -12,7 +12,7 @@ import { join } from 'node:path'
 
 const packageRoot = join(import.meta.dir, '../..')
 import { createRscHandler, matchRoute, sharedDepth } from '../../resources/host.ts'
-import { resolveScope, revalidate, singleFlightScope, withRevalidation } from '../../resources/revalidate.ts'
+import { resolveScope, revalidate, withRevalidation } from '../../resources/revalidate.ts'
 import { retentionKey } from '../../resources/routing.ts'
 import type { RouteManifest } from '../../resources/manifest.ts'
 
@@ -872,84 +872,11 @@ describe('running where there is no filesystem', () => {
   })
 })
 
-describe('marking where the runtime has no async context', () => {
-  // Exercised directly. Setting globalThis.AsyncLocalStorage aside does not
-  // reach it — the `node:async_hooks` import still succeeds here — so a test
-  // written that way passes against the real thing and proves nothing.
-
-  /** What withRevalidation does with whichever scope it resolved. */
-  async function collect(scope: ReturnType<typeof singleFlightScope>, action: () => Promise<void>) {
-    const marked = new Set<string>()
-
-    return await scope.run(marked, async () => {
-      await action()
-
-      return [...marked]
-    })
-  }
-
-  const mark = (scope: ReturnType<typeof singleFlightScope>, target: string) =>
-    scope.getStore()?.add(target)
-
-  test('still collects what one action marked, across its awaits', async () => {
-    // Where the marks actually are: after an await, not before one. A scope
-    // that restored when the function returned would lose every one of them.
-    const scope = singleFlightScope()
-
-    const taken = await collect(scope, async () => {
-      await new Promise((r) => setTimeout(r, 5))
-      mark(scope, 'orders')
-      await new Promise((r) => setTimeout(r, 5))
-      mark(scope, 'invoices')
-    })
-
-    expect(taken.sort()).toEqual(['invoices', 'orders'])
-  })
-
-  test('and discards both when two overlap, rather than mixing them', async () => {
-    // Without async context there is no telling whose marks are whose.
-    // Re-rendering one request's region into another's answer is the failure
-    // worth refusing; a lost refresh the client can ask for again.
-    const scope = singleFlightScope()
-
-    const [first, second] = await Promise.all([
-      collect(scope, async () => {
-        mark(scope, 'orders')
-        await new Promise((r) => setTimeout(r, 20))
-      }),
-      collect(scope, async () => {
-        await new Promise((r) => setTimeout(r, 5))
-        mark(scope, 'invoices')
-      }),
-    ])
-
-    expect(first).toEqual([])
-    expect(second).toEqual([])
-  })
-
-  test('and stays poisoned until the last one finishes', async () => {
-    // The overlap is ambiguous for as long as either action is still running.
-    // Lifting it when the first finishes lets the other's remaining marks
-    // through — the half of the ambiguity that arrives last.
-    const scope = singleFlightScope()
-
-    const [slow] = await Promise.all([
-      collect(scope, async () => {
-        await new Promise((r) => setTimeout(r, 30))
-        // Marked after the other action has already finished.
-        mark(scope, 'orders')
-      }),
-      collect(scope, async () => {
-        await new Promise((r) => setTimeout(r, 5))
-      }),
-    ])
-
-    expect(slow).toEqual([])
-  })
-
-  test('prefers async context the platform exposes globally', async () => {
-    // A Worker has it on globalThis rather than as node:async_hooks. Reaching
-    // for the import first would work here and fail there.
+describe('where marking finds its async context', () => {
+  test('prefers the one the platform exposes globally', async () => {
+    // A Worker has it on globalThis rather than as node:async_hooks — and so
+    // does the engine, which assigns it there for React's edge build.
+    // Reaching for the import first would work here and fail there.
     class Ambient {
       static used = false
       getStore() {
@@ -969,10 +896,9 @@ describe('marking where the runtime has no async context', () => {
     expect(Ambient.used).toBe(true)
   })
 
-  test('and is not what this runtime actually uses', async () => {
-    // Bun, Node and Deno all have async context. If this ever picks the
-    // fallback here, the resolution order broke and concurrent actions became
-    // unreliable without anything failing.
+  test('and keeps two overlapping actions apart', async () => {
+    // The reason it is scoped at all: two requests can be in flight, and
+    // marking is per-request state.
     const marks = await Promise.all([
       withRevalidation(async (take) => {
         revalidate('orders')
@@ -989,5 +915,182 @@ describe('marking where the runtime has no async context', () => {
     ])
 
     expect(marks).toEqual([['orders'], ['invoices']])
+  })
+})
+
+describe('marking across module copies', () => {
+  test('a second copy of the module marks into the same place', async () => {
+    // The app's actions are bundled into the server bundle; the host running
+    // them is not. So this module is loaded twice, and a store per copy means
+    // the action marks in one and the host reads the other. Nothing errors —
+    // the action's answer simply never carries anything back, which reads as
+    // revalidation not being implemented.
+    const other = (await import('../../resources/revalidate.ts?copy=2')) as typeof import('../../resources/revalidate.ts')
+
+    // Genuinely a different module object, or this proves nothing.
+    expect(other.revalidate).not.toBe(revalidate)
+
+    const taken = await withRevalidation(async (take) => {
+      other.revalidate('orders')
+
+      return take()
+    })
+
+    expect(taken).toEqual(['orders'])
+  })
+})
+
+describe('a client built to ask for payload files', () => {
+  const exportBuilt = (): RouteManifest => ({
+    ...manifestOf({ '/': [], '/docs': ['app/layout'] }),
+    build: { output: 'export', exportPath: 'dist', payloadName: 'index.rsc' },
+  })
+
+  test('is answered by a server too', async () => {
+    // Previewing an export, or one build served both ways. Without this the
+    // page renders and every navigation 404s in the console — the only place
+    // it shows.
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({ engine: engine as never, manifest: exportBuilt() })(
+      new Request('http://x/docs/index.rsc'),
+    )
+
+    expect(res?.headers.get('Content-Type')).toStartWith('text/x-component')
+    expect(engine.calls.rsc[0]).toMatchObject({ component: 'app/docs/page' })
+  })
+
+  test('at the root as well', async () => {
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest: exportBuilt() })(
+      new Request('http://x/index.rsc'),
+    )
+
+    expect(engine.calls.rsc[0]).toMatchObject({ component: 'app/page' })
+  })
+
+  test('and a server build still reads the header', async () => {
+    // With no payload filename, a url ending in index.rsc is just a url.
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/': [] }),
+    })(new Request('http://x/index.rsc'))
+
+    expect(res).toBeNull()
+  })
+})
+
+describe('serving a route that ships no client runtime', () => {
+  const manifest = () => {
+    const m = manifestOf({ '/': [], '/plain': [] })
+
+    m.routes.find((r) => r.component === 'app/plain/page')!.clientJs = false
+
+    return m
+  }
+
+  test('renders it without a bootstrap', async () => {
+    // Not only at build time: a route serving on demand has to ship the same
+    // thing it would have been frozen as, or the two disagree about whether
+    // React is on the page.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest: manifest() })(
+      new Request('http://x/plain'),
+    )
+
+    expect(engine.calls.html[0]).toMatchObject({ bootstrap: false })
+  })
+
+  test('and every other route still gets one', async () => {
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest: manifest() })(new Request('http://x/'))
+
+    expect(engine.calls.html[0]).toMatchObject({ bootstrap: true })
+  })
+})
+
+describe('the key a page is remembered by', () => {
+  test('is the same however the url is written', async () => {
+    // A static host serves /orders as a directory, so the browser's url ends
+    // in a slash while the build wrote the page down as /orders. Unequal keys
+    // mean the retained page is never the one found on the way back: it stays
+    // hidden in the document while a second copy renders beside it.
+    expect(retentionKey('/orders/')).toBe(retentionKey('/orders'))
+    expect(retentionKey('http://x/orders/')).toBe(retentionKey('/orders'))
+  })
+
+  test('keeps the root distinguishable from nothing', () => {
+    expect(retentionKey('/')).toBe('/')
+    expect(retentionKey('http://x/')).toBe('/')
+  })
+
+  test('keeps a query, which is part of what makes the page', () => {
+    expect(retentionKey('/search/?q=a')).toBe('/search?q=a')
+    expect(retentionKey('/search?q=a')).not.toBe(retentionKey('/search?q=b'))
+  })
+
+  test('and an interception is still its own thing', () => {
+    expect(retentionKey('/posts/1/', 'modal')).toBe('__intercept:modal:/posts/1')
+  })
+})
+
+describe('running where there is no filesystem', () => {
+  test('the adapter names no platform module', () => {
+    // A Worker reads its assets from a binding, not from a disk. Anything the
+    // handler imports has to exist there — and a bundler that finds `node:fs`
+    // in the graph fails the build, or worse, ships a shim that returns
+    // nothing and turns every asset into a silent 404.
+    const source = readFileSync(join(packageRoot, 'resources/host.ts'), 'utf-8')
+
+    expect(source).not.toContain('node:')
+  })
+
+  test('and neither do the pieces it is built from', () => {
+    for (const shared of ['routing.ts', 'headers.ts', 'manifest.ts']) {
+      expect(readFileSync(join(packageRoot, 'resources', shared), 'utf-8')).not.toContain('node:')
+    }
+  })
+
+  test('prerendered pages come from whatever the host can read', async () => {
+    // A store, a binding, a map in memory — the handler only asks for a name.
+    const store = new Map([
+      ['docs.html', '<html><body>from a store</body></html>'],
+      ['docs.meta.json', JSON.stringify({ layouts: ['app/layout'] })],
+      ['docs.seg1.flight', 'segment payload'],
+    ])
+
+    const handle = createRscHandler({
+      engine: fakeEngine() as never,
+      manifest: manifestOf({ '/docs': ['app/layout'] }),
+      prerendered: (name) => store.get(name) ?? null,
+    })
+
+    const document = await handle(new Request('http://x/docs'))
+    expect(await document!.text()).toContain('from a store')
+
+    const payload = await handle(
+      new Request('http://x/docs', { headers: { 'X-RSC': '1', 'X-RSC-Segments': 'app/layout' } }),
+    )
+
+    expect(await payload!.text()).toBe('segment payload')
+    expect(payload!.headers.get('X-RSC-Segment-Depth')).toBe('1')
+  })
+
+  test('and a reader that finds nothing falls through to rendering', async () => {
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({
+      engine: engine as never,
+      manifest: manifestOf({ '/docs': ['app/layout'] }),
+      prerendered: () => null,
+    })(new Request('http://x/docs'))
+
+    expect(res?.status).toBe(200)
+    expect(engine.calls.html).toHaveLength(1)
   })
 })

@@ -45,10 +45,15 @@ let warned = false
 /**
  * AsyncLocalStorage, wherever this happens to be running.
  *
- * Node, Bun and Deno have it as `node:async_hooks`. A Worker exposes it
- * globally, and only with the right compatibility flags. Importing it
- * statically means this module fails to load on a runtime that has neither —
- * so it is reached for lazily, and there is something to fall back to.
+ * The global first, because that is where a Worker has it — and where the
+ * engine puts it, since @vitejs/plugin-rsc assigns
+ * `globalThis.AsyncLocalStorage` for React's edge build. Then the module,
+ * which is where Node, Bun and Deno have it.
+ *
+ * There is no third branch on purpose. The engine bundle imports
+ * `node:async_hooks` statically, so async context is a requirement of the
+ * whole system rather than of this file: a runtime without it cannot load the
+ * engine at all, and a fallback here would be code that can never run.
  */
 export async function resolveScope(
   // Injectable so the branch a Worker takes can be tested from a runtime that
@@ -59,97 +64,9 @@ export async function resolveScope(
 
   if (Ambient) return new Ambient()
 
-  try {
-    const { AsyncLocalStorage } = await import('node:async_hooks')
+  const { AsyncLocalStorage } = await import('node:async_hooks')
 
-    return new AsyncLocalStorage<Set<string>>() as Scope
-  } catch {
-    return singleFlightScope()
-  }
-}
-
-/**
- * The fallback, for a runtime with no async context at all.
- *
- * It holds one store and keeps it across the action's awaits, which is right
- * while one action is in flight and wrong the moment two overlap — the second
- * would collect the first's marks. So an overlap is detected and both are
- * emptied: the region is not re-rendered, and the client can still ask for it.
- *
- * Losing a refresh is recoverable. Re-rendering one request's region into
- * another's answer is not, so the safe failure is the one taken here.
- *
- * Exported to be tested. Every runtime this is developed on has async context,
- * so nothing reaches this by accident — and a fallback no test enters is the
- * one that fails on the platform it exists for.
- */
-export function singleFlightScope(): Scope {
-  let current: Set<string> | undefined
-  let running = 0
-  let poisoned = false
-
-  return {
-    // Poisoned, nothing is marked at all: revalidate() finds no store and
-    // does nothing, which is what makes the ambiguity safe rather than
-    // merely detected.
-    getStore: () => (poisoned ? undefined : current),
-    run<T>(store: Set<string>, fn: () => T): T {
-      const interrupted = current
-
-      if (running > 0) {
-        poisoned = true
-
-        // What was collected before the overlap is just as unattributable as
-        // what comes after it.
-        interrupted?.clear()
-        store.clear()
-
-        if (!warned) {
-          warned = true
-          console.warn(
-            '[rsc-router] Two server actions overlapped on a runtime with no async context, so ' +
-              'what they marked for revalidation could not be told apart and was discarded. ' +
-              'Enable AsyncLocalStorage — nodejs_compat on Workers — to mark reliably.',
-          )
-        }
-      }
-
-      running++
-      current = store
-
-      const restore = () => {
-        running--
-        current = interrupted
-
-        // Only once nothing is in flight: lifting it while the other action is
-        // still running would let its remaining marks through, which is the
-        // half of the ambiguity that arrives last.
-        if (running === 0) poisoned = false
-
-        if (poisoned) store.clear()
-      }
-
-      let result: T
-
-      try {
-        result = fn()
-      } catch (error) {
-        restore()
-        throw error
-      }
-
-      // Held across the action's awaits, not merely its synchronous part:
-      // restoring when fn() *returns* would drop every mark made after the
-      // first await, which is where all of them are.
-      if (result instanceof Promise) {
-        return result.finally(restore) as T
-      }
-
-      restore()
-
-      return result
-    },
-  }
+  return new AsyncLocalStorage<Set<string>>() as Scope
 }
 
 /** The scope, once resolved. Null before the first action runs. */

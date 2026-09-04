@@ -117,14 +117,13 @@ directories. `rsc-router/files` has the disk versions (`assetsFrom`,
 `prerenderedFrom`); an edge host passes a KV or static-binding reader and never
 loads that module.
 
-`revalidate.ts` reaches for async context lazily — the platform's global first,
-then `node:async_hooks` — so it loads where there is neither. What it falls
-back to holds one store and keeps it across the action's awaits, which is right
-for one action and ambiguous for two: an overlap poisons the scope until both
-finish and both come back empty. Losing a refresh is recoverable; re-rendering
-one request's region into another's answer is not. Nothing reaches that
-fallback on Node, Bun or Deno, so it is exported and tested directly — a
-fallback no test enters is the one that fails on the platform it exists for.
+`revalidate.ts` reaches for async context lazily: the platform's global first,
+because that is where a Worker has it and where the engine puts it, then
+`node:async_hooks`. There is deliberately no third branch. The engine bundle
+imports `node:async_hooks` statically, so async context is a requirement of the
+whole system rather than of that file — a runtime without it cannot load the
+engine at all, and a fallback there would be code that can never run. One was
+written and then removed on exactly that evidence.
 
 Verified on workerd (`~/Herd/rsc-cf-spike`): SSR, hydration, a server action,
 partial navigation, interception, and assets from the platform's binding. Two

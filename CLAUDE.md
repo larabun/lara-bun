@@ -126,6 +126,17 @@ one request's region into another's answer is not. Nothing reaches that
 fallback on Node, Bun or Deno, so it is exported and tested directly — a
 fallback no test enters is the one that fails on the platform it exists for.
 
+Verified on workerd (`~/Herd/rsc-cf-spike`): SSR, hydration, a server action,
+partial navigation, interception, and assets from the platform's binding. Two
+settings are required and only one of them fails loudly.
+`compatibility_flags = ["nodejs_compat"]`, because @vitejs/plugin-rsc emits a
+static `node:async_hooks` import into both bundles — without it the Worker does
+not load. And `[define]` for NODE_ENV rather than `[vars]`: wrangler
+substitutes `process.env.NODE_ENV` at bundle time, so a var arrives too late
+and the Worker serves a development payload to a production client. Every page
+renders, nothing logs, nothing is interactive. The tell is React's debug rows
+in the payload — `grep -c ':D{'` returns 0 on a production build.
+
 `prerender` and `exportSite` take a `write` sink and a `read` source too, and
 `rsc-router/files` holds every disk version — `assetsFrom`, `prerenderedFrom`,
 `writeTo`, `copyAssets`. That is not load-bearing for portability: a build runs

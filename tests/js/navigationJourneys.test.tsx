@@ -35,6 +35,7 @@ import {
   setStaticRoutes,
 } from '../../resources/js/navigate.ts'
 import { SegmentBoundary } from '../../resources/js/SegmentBoundary.tsx'
+import { SlotBoundary } from '../../resources/js/SlotBoundary.tsx'
 import { clearSegments, restoreSegments, setSegment } from '../../resources/js/segmentStore.ts'
 
 // ── The app the server renders ───────────────────────────────────────────────
@@ -80,6 +81,13 @@ function renderRoute(url: string, from: number): ReactNode {
   for (let i = chain.length - 1; i >= from; i--) {
     element = (
       <div data-layout={chain[i]}>
+        {/* The layout that declares the slot renders it, filled with its
+            default until something intercepts into it. */}
+        {i + 1 === SLOT_OWNER_DEPTH && (
+          <SlotBoundary name="modal">
+            <span data-slot="default" />
+          </SlotBoundary>
+        )}
         <SegmentBoundary depth={i + 1} pageKey={url}>
           {element}
         </SegmentBoundary>
@@ -163,7 +171,13 @@ async function boot(url: string) {
   history.replaceState({}, '', url)
 
   setDeserializer(async (stream: ReadableStream) => {
-    const [page, depth] = (await new Response(stream).text()).split('|')
+    const body = await new Response(stream).text()
+
+    // A host that answers an interception with the interceptor alone marks it
+    // as such; everything else is a page at some depth.
+    if (body.startsWith('slot:')) return <span data-slot={body.slice(5)} />
+
+    const [page, depth] = body.split('|')
 
     return renderRoute(page, Number(depth))
   })
@@ -664,5 +678,122 @@ describe('a site served as files', () => {
     await go('/b')
 
     expect(applied.at(-1)).toMatchObject({ depth: 2 })
+  })
+})
+
+// ── A host that answers an interception with the interceptor alone ───────────
+
+describe('an interception that only fills the slot', () => {
+  /**
+   * Answers an intercepted request with the interceptor and nothing else,
+   * saying so with the header that names the region.
+   *
+   * Re-rendering the page underneath would put the modal on screen at the
+   * cost of rebuilding everything below the layout that owns the slot — so
+   * opening a modal from a half-filled form throws the form away.
+   */
+  function installSlotHost() {
+    ;(globalThis as { fetch: unknown }).fetch = async (
+      input: unknown,
+      init?: { headers?: Record<string, string> },
+    ) => {
+      const url = new URL(String(input), 'https://example.test').pathname
+      const slot = init?.headers?.['X-RSC-Intercept']
+      const held = init?.headers?.['X-RSC-Segments'] ?? null
+
+      requests.push({ url, held, depth: slot ? -1 : sharedDepth(held, ROUTES[url]) })
+
+      if (slot) {
+        return new Response(`slot:${url}`, {
+          headers: { 'Content-Type': 'text/x-component', 'X-RSC-Revalidate': slot },
+        })
+      }
+
+      const depth = sharedDepth(held, ROUTES[url])
+
+      return new Response(`${url}|${depth}`, {
+        headers: {
+          'Content-Type': 'text/x-component',
+          'X-RSC-Segment-Depth': String(depth),
+          'X-RSC-Layouts': ROUTES[url].join(','),
+        },
+      })
+    }
+  }
+
+  beforeEach(() => {
+    installSlotHost()
+  })
+
+  test('leaves the page underneath exactly as it was', async () => {
+    // The whole point. The page was never replaced, so what the user typed
+    // into it is still there behind the modal.
+    await boot('/deep')
+
+    const field = container.querySelector('input[aria-label="/deep"]') as HTMLInputElement
+
+    await act(async () => {
+      field.value = 'half typed'
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    await go('/deep/item/1')
+
+    const still = container.querySelector('input[aria-label="/deep"]') as HTMLInputElement
+
+    expect(still.value).toBe('half typed')
+    expect(hidden(still)).toBe(false)
+  })
+
+  test('and puts the interceptor in the slot', async () => {
+    await boot('/deep')
+    await go('/deep/item/1')
+
+    expect(container.querySelector('[data-slot="/deep/item/1"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="default"]')).toBeNull()
+  })
+
+  test('closing it asks the server for nothing at all', async () => {
+    // The page underneath never left, so closing is a matter of emptying the
+    // slot. Fetching here would rebuild a page that is already on screen.
+    await boot('/deep')
+    await go('/deep/item/1')
+    requests = []
+
+    await go('/deep')
+
+    expect(requests).toEqual([])
+    expect(container.querySelector('[data-slot="default"]')).not.toBeNull()
+  })
+
+  test('and what was typed is still there after closing', async () => {
+    await boot('/deep')
+
+    const field = container.querySelector('input[aria-label="/deep"]') as HTMLInputElement
+
+    await act(async () => {
+      field.value = 'survives the modal'
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    await go('/deep/item/1')
+    await go('/deep')
+
+    const returned = container.querySelector('input[aria-label="/deep"]') as HTMLInputElement
+
+    expect(returned.value).toBe('survives the modal')
+  })
+
+  test('leaving to somewhere else is an ordinary navigation', async () => {
+    // Only the url the modal was opened over is free to return to; anything
+    // else still has to be fetched, and the slot still has to empty.
+    await boot('/deep')
+    await go('/deep/item/1')
+    requests = []
+
+    await go('/other')
+
+    expect(requests.map((r) => r.url)).toEqual(['/other'])
+    expect(container.querySelector('[data-slot="/deep/item/1"]')).toBeNull()
   })
 })

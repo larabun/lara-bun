@@ -408,9 +408,37 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
     const slots = under ? under.route.slots : {}
     const loadings = under ? under.route.loadings : []
 
-    const overrides = under
-      ? { [slot]: { component: intercept.component, props: intercept.params } }
-      : {}
+    // The interceptor alone, when there is a page to open it over and this
+    // build can render a region on its own.
+    //
+    // Re-rendering the page underneath would put the modal on screen at the
+    // cost of rebuilding everything below the layout that declares the slot —
+    // so opening a modal from a half-filled form throws the form away. The
+    // page beneath is already mounted and correct; only the slot is new.
+    if (under && engine.handleRscRevalidate) {
+      const { rscPayload } = await engine.handleRscRevalidate(slot, {
+        component: under.route.component,
+        // The target's params, not the page's: a modal for /posts/hello opened
+        // from /feed is about hello.
+        props: intercept.params,
+        layouts: [],
+        loadings: [],
+        // Named as the slot so the renderer finds it there, but pointing at
+        // the interceptor rather than the default this route would otherwise
+        // fill it with.
+        parallelSlots: { [slot]: intercept.component },
+      })
+
+      return new Response(rscPayload, {
+        headers: withVersion({
+          'Content-Type': FLIGHT_TYPE,
+          // Says what this payload is, so the client puts it in the slot
+          // instead of treating it as a segment of the page.
+          [HEADER.revalidate]: slot,
+          Vary: HEADER.rsc,
+        }),
+      })
+    }
 
     const { stream, segmentDepth } = await engine.handleRscStream(
       component,
@@ -418,7 +446,7 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
       chain.map((layout) => ({ component: layout, props: {} })),
       loadings,
       slots,
-      overrides,
+      {},
       sharedDepth(request.headers.get(HEADER.segments), chain),
       retentionKey(url.pathname, slot),
     )

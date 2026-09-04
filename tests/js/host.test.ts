@@ -380,11 +380,55 @@ describe('route interception', () => {
   const intercepting = (headers: Record<string, string>) =>
     new Request('http://x/posts/hello', { headers: { 'X-RSC': '1', ...headers } })
 
-  test('renders the page you were on, with the interceptor in its slot', async () => {
-    // The modal opens *over* the feed: the component rendered is still the
-    // feed's. Rendering the interceptor instead replaces the page behind it,
-    // which is a navigation, not an interception.
+  test('renders the interceptor alone, not the page it opens over', async () => {
+    // The page underneath is already mounted and still correct. Re-rendering
+    // it to place the modal rebuilds everything below the layout that owns
+    // the slot — so opening a modal from a half-filled form throws the form
+    // away.
     const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      intercepting({ 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' }),
+    )
+
+    expect(engine.calls.rsc).toHaveLength(0)
+    expect(engine.calls.revalidate[0]).toMatchObject({
+      target: 'modal',
+      page: { parallelSlots: { modal: 'app/@modal/(.)posts/[slug]/page' } },
+    })
+  })
+
+  test('the interceptor gets the target url params, not the page it opens over', async () => {
+    // A modal for /posts/hello opened from /feed is about hello.
+    const engine = fakeEngine()
+
+    await createRscHandler({ engine: engine as never, manifest })(
+      intercepting({ 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' }),
+    )
+
+    expect(engine.calls.revalidate[0]).toMatchObject({ page: { props: { slug: 'hello' } } })
+  })
+
+  test('says which region the answer fills', async () => {
+    // Without it the client has no way to tell a region from a segment of the
+    // page, and applying one as the other replaces the page it was meant to
+    // open over.
+    const engine = fakeEngine()
+
+    const res = await createRscHandler({ engine: engine as never, manifest })(
+      intercepting({ 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' }),
+    )
+
+    expect(res?.headers.get('X-RSC-Revalidate')).toBe('modal')
+  })
+
+  test('falls back to rendering the page for a build that cannot render a region', async () => {
+    // An older bundle has no handleRscRevalidate. Refusing would be worse than
+    // the behaviour it replaces, which put the modal on screen at the cost of
+    // the page beneath.
+    const engine = fakeEngine()
+
+    delete (engine as { handleRscRevalidate?: unknown }).handleRscRevalidate
 
     await createRscHandler({ engine: engine as never, manifest })(
       intercepting({ 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' }),
@@ -392,35 +436,8 @@ describe('route interception', () => {
 
     expect(engine.calls.rsc[0]).toMatchObject({
       component: 'app/feed/page',
-      overrides: { modal: { component: 'app/@modal/(.)posts/[slug]/page', props: { slug: 'hello' } } },
+      pageKey: '__intercept:modal:/posts/hello',
     })
-  })
-
-  test('the interceptor gets the target url params, not the page it opens over', async () => {
-    const engine = fakeEngine()
-
-    await createRscHandler({ engine: engine as never, manifest })(
-      intercepting({ 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' }),
-    )
-
-    const call = engine.calls.rsc[0] as { props: unknown; overrides: Record<string, { props: unknown }> }
-
-    expect(call.overrides.modal.props).toEqual({ slug: 'hello' })
-    // The feed has no params of its own.
-    expect(call.props).toEqual({})
-  })
-
-  test('retains under a key of its own', async () => {
-    // /posts/hello intercepted and /posts/hello navigated to are two different
-    // things to go back to. One key for both and returning to the modal
-    // restores the full page, or the other way round.
-    const engine = fakeEngine()
-
-    await createRscHandler({ engine: engine as never, manifest })(
-      intercepting({ 'X-RSC-Intercept': 'modal', 'X-RSC-Referer': '/feed' }),
-    )
-
-    expect(engine.calls.rsc[0]).toMatchObject({ pageKey: '__intercept:modal:/posts/hello' })
   })
 
   test('falls back to the interceptor alone when there is no page to open over', async () => {

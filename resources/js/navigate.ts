@@ -65,6 +65,17 @@ let heldLayouts: string[] = [];
  */
 let interceptedAtDepth: number | null = null;
 
+/**
+ * The url showing underneath an open interception.
+ *
+ * An interception puts something in a slot on a page that stays where it is,
+ * so closing it is not a navigation at all — the page beneath was never
+ * replaced. Remembering which url that is means going back to it costs
+ * nothing, rather than fetching and rebuilding a page that is already on
+ * screen with everything the user typed into it.
+ */
+let interceptedOver: string | null = null;
+
 const DEFAULT_PREFETCH_TTL = 30_000;
 
 /**
@@ -459,6 +470,25 @@ export async function navigate(
   // form you were filling in still filled in. A link is a fresh request: the
   // server may have different data to say, and silently showing a stale page
   // would be the wrong default.
+  // Closing an interception. The page underneath was never replaced, so this
+  // is a matter of emptying the slot — no request, and nothing rebuilt. The
+  // form behind the modal is still the one the user was filling in.
+  if (!interceptSlot && interceptedOver !== null && retentionKey(url) === retentionKey(interceptedOver)) {
+    clearSlots();
+    interceptedOver = null;
+    interceptedAtDepth = null;
+
+    if (opts?.replace) {
+      history.replaceState({ rscUrl: url }, "", url);
+    } else {
+      history.pushState({ rscUrl: url }, "", url);
+    }
+
+    window.dispatchEvent(new CustomEvent("rsc-navigate", { detail: url }));
+
+    return;
+  }
+
   if (opts?.restore && onRestore?.(activityKey)) {
     // A restored tree carries its own slot contents, so the flag only has to
     // reflect whether what is now showing is an intercepted view.
@@ -478,6 +508,9 @@ export async function navigate(
   // A prefetched payload was rendered against the chain held at prefetch time.
   let segmentDepth = 0;
   let nextLayouts: string[] | null = null;
+  /** The slot this answer fills, when it is one region rather than a segment. */
+  let slotPayload: string | null = null;
+  const previousUrl = window.location.pathname + window.location.search;
 
   try {
     const cacheKey = retentionKeyFor(url, interceptSlot);
@@ -522,6 +555,9 @@ export async function navigate(
 
       segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? served?.depth ?? 0) || 0;
 
+      // Named region rather than a segment — see the apply below.
+      slotPayload = response.headers.get("X-RSC-Revalidate");
+
       const servedLayouts = response.headers.get("X-RSC-Layouts");
 
       if (servedLayouts !== null) {
@@ -545,10 +581,23 @@ export async function navigate(
 
     if (nextLayouts !== null) heldLayouts = nextLayouts;
 
+    // The answer is one region, not a piece of the page: the host rendered
+    // only the interceptor because the page underneath is already mounted and
+    // still correct. Putting it in the slot leaves that page — and everything
+    // typed into it — exactly as it was.
+    if (slotPayload !== null) {
+      setSlot(slotPayload, tree as ReactNode);
+      interceptedOver = interceptedOver ?? previousUrl;
+      interceptedAtDepth = null;
+
+      return;
+    }
+
     // A slot rendered for the page being left has no claim on the one being
     // arrived at.
     clearSlots();
 
+    interceptedOver = null;
     interceptedAtDepth = interceptSlot ? segmentDepth : null;
 
     onNavigate?.(tree, activityKey, segmentDepth);

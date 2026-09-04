@@ -199,7 +199,20 @@ DOM, so assert on visibility rather than presence — and happy-dom has no layou
 engine and reports client rects for hidden elements, so read the inline
 `display` Activity sets instead of geometry.
 
-### Leaving an Interception Re-Renders the Slot Owner
+### An Interception Fills a Slot, It Does Not Replace the Page
+A host that can render a region on its own answers an intercepted navigation
+with the interceptor alone, marked `X-RSC-Revalidate: <slot>`, and the client
+puts it in the slot. The page underneath is never touched, so opening a modal
+from a half-filled form keeps the form — and closing costs no request at all,
+because the page beneath never left. `navigate` remembers the url an
+interception was opened over for exactly that.
+
+The JS host does this; Laravel still answers with a re-rendered segment, and
+the client falls back to the section below when no such header arrives. Both
+paths are covered in `navigationJourneys.test.tsx`. The fallback is why that
+older behaviour is still described here.
+
+### Leaving a Re-Rendered Interception Re-Renders the Slot Owner
 An interceptor replaces a slot on the layout that declares it, so leaving the
 intercepted view has to render that layout again for the slot to fall back to
 its default. `navigate` remembers the depth an interception was applied at and
@@ -318,3 +331,6 @@ live.
 - Intercept pages are excluded from normal route registration
 - Prefetch cache uses `__intercept:slot:url` key to separate intercepted vs full-page responses
 - The `X-RSC-Intercept` and `X-RSC-Referer` headers control server-side interception
+- A host that answers with the interceptor alone says so with
+  `X-RSC-Revalidate: <slot>`; without it the client treats the answer as a
+  segment of the page and replaces it

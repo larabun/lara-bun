@@ -30,3 +30,7 @@ switch to navigation api when become stable
 
 add skills/something like laravel boost
 add mcp
+
+announce targetted rerender etc
+
+Does our client library tree shake etc?

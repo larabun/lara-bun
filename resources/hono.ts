@@ -6,12 +6,14 @@
 // signature, not because serving RSC needs a framework.
 //
 //   import { Hono } from 'hono'
-//   import { rsc } from 'rsc-router/hono'
-//   import * as engine from './build/rsc/index.js'
-//   import manifest from './build/routes.json'
+//   import { rsc, assetsFrom } from 'rsc-router/hono'
+//   import * as engine from './build/dist/rsc/index.js'
 //
 //   const app = new Hono()
-//   app.use('*', rsc({ engine, manifest, assets: assetsFrom('./build/public') }))
+//   app.use('*', rsc({ engine, assets: assetsFrom('./build/public') }))
+//
+// The engine carries the route table it was built with, so there is no
+// manifest to pass and no way to pair a fresh bundle with a stale one.
 
 import { createRscHandler } from './host.ts'
 import type { RscHostOptions } from './host.ts'

@@ -506,6 +506,29 @@ describe('exporting the site as files', () => {
     rmSync(to, { recursive: true, force: true })
   })
 
+  test('brings a payload for every depth a client might hold', async () => {
+    // Addressed by name, because a file server cannot vary on a header.
+    // Without them every navigation on the exported site is a whole document,
+    // which replaces the root and unmounts whatever was retained behind it.
+    const from = mkdtempSync(join(tmpdir(), 'rsc-frozen-'))
+
+    writeFileSync(join(from, 'docs.html'), '<html></html>')
+    writeFileSync(join(from, 'docs.flight'), 'whole')
+    writeFileSync(join(from, 'docs.seg1.flight'), 'from depth 1')
+    writeFileSync(join(from, 'docs.seg2.flight'), 'from depth 2')
+
+    const to = mkdtempSync(join(tmpdir(), 'rsc-site-'))
+
+    await exportSite({ results: exportable.slice(1), from, to, manifest: forExport() })
+
+    expect(readFileSync(join(to, 'docs/index.rsc'), 'utf-8')).toBe('whole')
+    expect(readFileSync(join(to, 'docs/index.seg1.rsc'), 'utf-8')).toBe('from depth 1')
+    expect(readFileSync(join(to, 'docs/index.seg2.rsc'), 'utf-8')).toBe('from depth 2')
+
+    rmSync(from, { recursive: true, force: true })
+    rmSync(to, { recursive: true, force: true })
+  })
+
   test('brings the browser bundle the exported html references', async () => {
     const from = frozen(['index'])
     const to = mkdtempSync(join(tmpdir(), 'rsc-site-'))

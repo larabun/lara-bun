@@ -139,5 +139,32 @@ export function sharedDepth(held: string | null, chain: string[]): number {
  * that silently rebuilds a page it was holding.
  */
 export function retentionKey(path: string, interceptSlot?: string | null): string {
-  return interceptSlot ? `__intercept:${interceptSlot}:${path}` : path
+  const normalised = normalisePath(path)
+
+  return interceptSlot ? `__intercept:${interceptSlot}:${normalised}` : normalised
+}
+
+/**
+ * The same page written two ways is one key.
+ *
+ * A static host serves /orders as a directory, so the browser's url ends in a
+ * slash while the build wrote the page down as /orders. Left unequal, the
+ * entry retained for a page is never the one looked up on the way back: it
+ * stays in the document, hidden, while a second copy is fetched and rendered
+ * beside it — so the form you were filling in is there, and not the one you
+ * are looking at.
+ */
+function normalisePath(path: string): string {
+  // Absolute urls reach this from the initial page, which is identified by
+  // href rather than by the path a link would use.
+  const withoutOrigin = path.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, '')
+  const [pathname, rest = ''] = splitQuery(withoutOrigin)
+
+  return (pathname.replace(/\/+$/, '') || '/') + rest
+}
+
+function splitQuery(url: string): [string, string] {
+  const cut = url.search(/[?#]/)
+
+  return cut === -1 ? [url, ''] : [url.slice(0, cut), url.slice(cut)]
 }

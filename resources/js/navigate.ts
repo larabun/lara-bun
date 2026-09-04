@@ -10,7 +10,8 @@ import { reportReachable } from "./onlineStore";
 import { clearSlots, setSlot } from "./slotStore";
 // Shared with the host: it stores a page under this key and the client looks
 // under it, so the format cannot live in two places.
-import { retentionKey as retentionKeyFor } from "../routing";
+import { matchRoute, retentionKey as retentionKeyFor, sharedDepth } from "../routing";
+import type { ManifestRoute } from "../manifest";
 
 type ReactNode = unknown;
 type Deserializer = (stream: ReadableStream, options: Record<string, unknown>) => Promise<ReactNode>;
@@ -76,19 +77,100 @@ const DEFAULT_PREFETCH_TTL = 30_000;
  */
 let staticPayloadSuffix: string | null = null;
 
+/**
+ * The route table, on a static host only.
+ *
+ * A server works out how much of the page to send by comparing the chain the
+ * client sent with the route's own, and says so in a header. A file server
+ * does neither — so on an exported site the client has to know the target's
+ * layout chain before it asks, or every navigation takes the whole document
+ * and replaces the root, which unmounts everything retained behind it.
+ *
+ * Inlined into the browser entry by the build, so it costs no request.
+ */
+let staticRoutes: ManifestRoute[] | null = null;
+
+export function setStaticRoutes(routes: ManifestRoute[]): void {
+  staticRoutes = routes;
+}
+
+/**
+ * The layout chain of the page loaded from a file, since no header said.
+ *
+ * Without this the client believes it holds nothing, every navigation asks
+ * for a whole document, and the depth variants sitting beside it are never
+ * requested — the export looks correct and retention silently never happens.
+ */
+export function seedStaticChain(url: string): boolean {
+  const segments = staticSegments(url);
+
+  if (!segments) return false;
+
+  heldLayouts = segments.chain;
+
+  return true;
+}
+
+/**
+ * The depth an exported payload should be asked for, and the chain it leaves
+ * mounted — the two things a header would otherwise have carried.
+ */
+function staticSegments(
+  url: string,
+  held: string[] = heldLayouts,
+): { depth: number; chain: string[] } | null {
+  if (staticRoutes === null) return null;
+
+  const path = new URL(url, window.location.origin).pathname;
+  const match = matchRoute({ routes: staticRoutes } as never, path);
+
+  if (!match) return null;
+
+  return {
+    // Against the chain the request is made with, never against whatever is
+    // mounted by the time the answer arrives. A prefetch is fetched against
+    // one chain and applied later, and reading live state here labels its
+    // payload with a depth it was not rendered for.
+    depth: sharedDepth(held.join(","), match.route.layouts),
+    // Copied: this is the build's table, and the caller assigns it to the
+    // chain it holds — handing out the array itself makes the two the same
+    // object.
+    chain: [...match.route.layouts],
+  };
+}
+
 export function setStaticPayloads(suffix: string | null): void {
   staticPayloadSuffix = suffix;
 }
 
 /** The url to request a payload from, which is the page's own unless exported. */
-export function payloadUrl(url: string): string {
+export function payloadUrl(url: string, held: string[] = heldLayouts): string {
   if (staticPayloadSuffix === null) return url;
 
   const parsed = new URL(url, window.location.origin);
-  const path = parsed.pathname.replace(/\/+$/, '');
+  const path = parsed.pathname.replace(/\/+$/, "");
+  const segments = staticSegments(url, held);
 
-  return `${path}/${staticPayloadSuffix}${parsed.search}`;
+  // The variant for exactly the depth this client shares. Asking for the whole
+  // document when a segment would do is not merely wasteful: it replaces the
+  // root, and replacing the root throws away every page retained behind it.
+  const name =
+    segments && segments.depth > 0
+      ? staticPayloadSuffix.replace(/^index\./, `index.seg${segments.depth}.`)
+      : staticPayloadSuffix;
+
+  return `${path}/${name}${parsed.search}`;
 }
+
+/**
+ * What a static payload was fetched as, recorded against its own response.
+ *
+ * The depth asked for and the depth applied have to be the same number. Worked
+ * out separately at the two call sites they can disagree — and a payload
+ * rendered whole but applied as a segment nests a boundary inside itself,
+ * which does not error, it recurses until the renderer stops responding.
+ */
+const staticFetches = new WeakMap<Response, { depth: number; chain: string[] }>();
 
 export function setVersion(v: string): void {
   version = v;
@@ -227,7 +309,8 @@ function fetchRscPayload(
   }
 
   // `priority` is not in every lib.dom yet; browsers without it ignore it.
-  const request = fetch(payloadUrl(url), { headers, signal, priority } as RequestInit).catch((err: unknown) => {
+  const asked = staticSegments(url, chain);
+  const request = fetch(payloadUrl(url, chain), { headers, signal, priority } as RequestInit).catch((err: unknown) => {
     // Nothing answered at all. An abort is our own doing, not the network's —
     // leaving a link cancels its prefetch, and that must not read as offline.
     if (!(err instanceof DOMException && err.name === "AbortError")) {
@@ -238,6 +321,10 @@ function fetchRscPayload(
   });
 
   return request.then(async (response) => {
+    // What this payload was asked for, so the apply side cannot work out a
+    // different answer from state that has moved on since.
+    if (asked) staticFetches.set(response, asked);
+
     // Something answered, whatever it said. A 500 is a reachable server.
     reportReachable(true);
     // Adopt the server's build version from the first response that carries
@@ -429,10 +516,19 @@ export async function navigate(
         return;
       }
 
-      segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? 0) || 0;
+      // Headers on a server; worked out locally on a static host, where there
+      // is nothing to send them.
+      const served = staticFetches.get(response) ?? null;
+
+      segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? served?.depth ?? 0) || 0;
 
       const servedLayouts = response.headers.get("X-RSC-Layouts");
-      if (servedLayouts !== null) nextLayouts = servedLayouts === "" ? [] : servedLayouts.split(",");
+
+      if (servedLayouts !== null) {
+        nextLayouts = servedLayouts === "" ? [] : servedLayouts.split(",");
+      } else if (served) {
+        nextLayouts = served.chain;
+      }
 
       treePromise = deserializeResponse(response);
     }
@@ -607,10 +703,21 @@ function prefetchUrl(
   // speculative requests instead of serving them in the order they were made.
   entry.tree = fetchRscPayload(url, controller.signal, interceptSlot, refererUrl, chain, "low")
     .then((response) => {
-      entry.segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? 0) || 0;
+      // On a static host there are no headers to read, and dropping the depth
+      // is not a small loss: the entry then claims a segment is a whole
+      // document, and rendering a layout-less page as the document root does
+      // not warn — it hangs the renderer.
+      const local = staticFetches.get(response) ?? null;
+
+      entry.segmentDepth = Number(response.headers.get("X-RSC-Segment-Depth") ?? local?.depth ?? 0) || 0;
 
       const served = response.headers.get("X-RSC-Layouts");
-      if (served !== null) entry.layouts = served === "" ? [] : served.split(",");
+
+      if (served !== null) {
+        entry.layouts = served === "" ? [] : served.split(",");
+      } else if (local) {
+        entry.layouts = local.chain;
+      }
 
       return deserializeResponse(response);
     })

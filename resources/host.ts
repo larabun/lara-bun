@@ -164,11 +164,25 @@ export function createRscHandler(options: RscHostOptions): (request: Request) =>
   // while the page itself looks fine.
   const payloadName = manifest.build?.payloadName || ''
 
-  /** The page a payload url belongs to, if this is one. */
-  function pageForPayload(pathname: string): string | null {
-    if (payloadName === '' || !pathname.endsWith('/' + payloadName)) return null
+  /**
+   * The page a payload url belongs to, if this is one.
+   *
+   * Both the whole-document name and the depth variants beside it: a client
+   * built for export asks for index.seg1.rsc when it already holds a layout,
+   * and matching only the plain name leaves that as a 404 no page reports.
+   */
+  const payloadNames = new RegExp(
+    '/' + payloadName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/^index\\\./, 'index(\\.seg\\d+)?\\.') + '$',
+  )
 
-    return pathname.slice(0, -(payloadName.length + 1)) || '/'
+  function pageForPayload(pathname: string): string | null {
+    if (payloadName === '') return null
+
+    const match = payloadNames.exec(pathname)
+
+    if (!match) return null
+
+    return pathname.slice(0, match.index) || '/'
   }
 
   return async function handle(request: Request): Promise<Response | null> {

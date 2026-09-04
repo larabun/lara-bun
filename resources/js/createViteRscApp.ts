@@ -22,6 +22,8 @@ import {
   setCallServer,
   setHeldLayouts,
   setStaticPayloads,
+  setStaticRoutes,
+  seedStaticChain,
   payloadUrl,
   setDeserializer,
   setInterceptManifest,
@@ -33,11 +35,14 @@ import {
 export async function createViteRscApp(
   container: Document | Element = document,
   interceptEntries: { urlPattern: string; slot: string }[] = [],
-  options: { staticPayloads?: string | null } = {},
+  options: { staticPayloads?: string | null; routes?: unknown[] | null } = {},
 ): Promise<void> {
   // An exported build has no server to negotiate with, so payloads live at
   // their own urls rather than behind a header on the page's url.
   setStaticPayloads(options.staticPayloads ?? null);
+  // Only an exported build ships this: with no server to negotiate with, the
+  // client works out for itself how much of a page it still holds.
+  if (options.routes) setStaticRoutes(options.routes as never);
   // The router has to recognise an intercepted link before it asks the server,
   // so the patterns are baked into the generated browser entry. Without them
   // every intercepted route falls through to a full-page navigation.
@@ -158,8 +163,15 @@ export async function createViteRscApp(
 
   // The chain this page is built from, so the next navigation can say what is
   // already mounted and be sent only what changed.
+  // A server says what this page is built from; a file server says nothing,
+  // so an exported build works it out from the table it was given.
   const servedLayouts = res.headers.get("X-RSC-Layouts");
-  setHeldLayouts(servedLayouts ? servedLayouts.split(",") : []);
+
+  if (servedLayouts !== null) {
+    setHeldLayouts(servedLayouts.split(","));
+  } else if (!seedStaticChain(window.location.href)) {
+    setHeldLayouts([]);
+  }
   const tree = await createFromReadableStream(res.body!, { callServer });
 
   // Retaining the previous page behind <Activity> needs a wrapper above the

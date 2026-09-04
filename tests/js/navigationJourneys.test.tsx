@@ -31,6 +31,8 @@ import {
   setInterceptManifest,
   setNavigateHandler,
   setRestoreHandler,
+  setStaticPayloads,
+  setStaticRoutes,
 } from '../../resources/js/navigate.ts'
 import { SegmentBoundary } from '../../resources/js/SegmentBoundary.tsx'
 import { clearSegments, restoreSegments, setSegment } from '../../resources/js/segmentStore.ts'
@@ -554,5 +556,113 @@ describe('asking for the page again', () => {
     })
 
     expect(window.location.pathname).toBe('/deep')
+  })
+})
+
+// ── The same journeys, on a host that answers no headers ─────────────────────
+
+describe('a site served as files', () => {
+  /**
+   * A file server. It has no idea what the client already holds, so it sends
+   * no X-RSC-Segment-Depth and no X-RSC-Layouts — the client has to work both
+   * out from the table the build inlined, and ask for the right file by name.
+   */
+  function installFileServer() {
+    ;(globalThis as { fetch: unknown }).fetch = async (input: unknown) => {
+      const path = new URL(String(input), 'https://example.test').pathname
+      const match = /^(.*)\/index(?:\.seg(\d+))?\.rsc$/.exec(path)
+
+      if (!match) throw new Error(`not a payload url: ${path}`)
+
+      const url = match[1] || '/'
+      const depth = match[2] ? Number(match[2]) : 0
+
+      if (!ROUTES[url]) throw new Error(`no route for ${url}`)
+
+      requests.push({ url, held: null, depth })
+
+      // Deliberately bare: a file server sets no protocol headers at all.
+      return new Response(`${url}|${depth}`, { headers: { 'Content-Type': 'text/x-component' } })
+    }
+  }
+
+  const table = Object.entries(ROUTES).map(([url, layouts]) => ({
+    segments: url
+      .split('/')
+      .filter(Boolean)
+      .map((value) => ({ type: 'static' as const, value })),
+    layouts,
+  }))
+
+  beforeEach(() => {
+    installFileServer()
+    setStaticPayloads('index.rsc')
+    setStaticRoutes(table as never)
+  })
+
+  afterEach(() => {
+    setStaticPayloads(null)
+    setStaticRoutes([] as never)
+  })
+
+  test('asks for the variant matching what it already holds', async () => {
+    // /a and /b share both layouts, so only the page changed. Asking for the
+    // whole document instead replaces the root — and replacing the root on a
+    // document-rooted app unmounts everything retained behind it.
+    await boot('/a')
+    requests = []
+
+    await go('/b')
+
+    expect(requests).toEqual([{ url: '/b', held: null, depth: 2 }])
+    expect(applied.at(-1)).toMatchObject({ depth: 2 })
+  })
+
+  test('and asks for the whole document when it shares nothing', async () => {
+    await boot('/a')
+    requests = []
+
+    await go('/marketing')
+
+    expect(requests).toEqual([{ url: '/marketing', held: null, depth: 0 }])
+  })
+
+  test('keeps a half-typed page across a navigation and back', async () => {
+    // The whole point of the depth variants: without them every navigation is
+    // a whole document, and going back rebuilds the page instead of revealing
+    // it.
+    await boot('/a')
+
+    const field = container.querySelector('input[aria-label="/a"]') as HTMLInputElement
+
+    await act(async () => {
+      field.value = 'half typed'
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    await go('/b')
+    await back('/a')
+
+    const returned = container.querySelector('input[aria-label="/a"]') as HTMLInputElement
+
+    expect(returned.value).toBe('half typed')
+    expect(hidden(returned)).toBe(false)
+  })
+
+  test('a hovered link does not poison the click that follows', async () => {
+    // A prefetch is fetched against one chain and applied later. With no
+    // headers to read, an entry that forgets which depth it asked for claims
+    // a segment is a whole document — and rendering a layout-less page as the
+    // document root does not warn, it hangs.
+    await boot('/a')
+    requests = []
+
+    await act(async () => {
+      prefetch('/b')
+    })
+
+    await go('/b')
+
+    expect(applied.at(-1)).toMatchObject({ depth: 2 })
   })
 })

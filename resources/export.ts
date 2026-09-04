@@ -99,6 +99,19 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
     await copy(join(from, `${key}.html`), join(dir, 'index.html'))
     await copy(join(from, `${key}.flight`), join(dir, payloadName))
 
+    // One file per depth a client might already hold, addressed by name
+    // because a file server cannot vary on a header. Without these every
+    // navigation is a whole document, which replaces the root and unmounts
+    // the pages retained behind it — so going back does not restore the form
+    // you were filling in.
+    for (let depth = 1; ; depth++) {
+      const variant = join(from, `${key}.seg${depth}.flight`)
+
+      if (!(await exists(variant))) break
+
+      await copy(variant, join(dir, payloadName.replace(/^index\./, `index.seg${depth}.`)))
+    }
+
     pages++
   }
 
@@ -114,6 +127,16 @@ export async function exportSite(options: ExportOptions): Promise<{ pages: numbe
   }
 
   return { pages, refused }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await readFile(path)
+
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function copy(from: string, to: string): Promise<void> {

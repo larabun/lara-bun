@@ -9,6 +9,7 @@
 import { describe, expect, test } from 'bun:test'
 import { createRscHandler, matchRoute, sharedDepth } from '../../resources/host.ts'
 import { revalidate, withRevalidation } from '../../resources/revalidate.ts'
+import { retentionKey } from '../../resources/routing.ts'
 import type { RouteManifest } from '../../resources/manifest.ts'
 
 const segments = (spec: string) =>
@@ -766,5 +767,30 @@ describe('serving a route that ships no client runtime', () => {
     await createRscHandler({ engine: engine as never, manifest: manifest() })(new Request('http://x/'))
 
     expect(engine.calls.html[0]).toMatchObject({ bootstrap: true })
+  })
+})
+
+describe('the key a page is remembered by', () => {
+  test('is the same however the url is written', async () => {
+    // A static host serves /orders as a directory, so the browser's url ends
+    // in a slash while the build wrote the page down as /orders. Unequal keys
+    // mean the retained page is never the one found on the way back: it stays
+    // hidden in the document while a second copy renders beside it.
+    expect(retentionKey('/orders/')).toBe(retentionKey('/orders'))
+    expect(retentionKey('http://x/orders/')).toBe(retentionKey('/orders'))
+  })
+
+  test('keeps the root distinguishable from nothing', () => {
+    expect(retentionKey('/')).toBe('/')
+    expect(retentionKey('http://x/')).toBe('/')
+  })
+
+  test('keeps a query, which is part of what makes the page', () => {
+    expect(retentionKey('/search/?q=a')).toBe('/search?q=a')
+    expect(retentionKey('/search?q=a')).not.toBe(retentionKey('/search?q=b'))
+  })
+
+  test('and an interception is still its own thing', () => {
+    expect(retentionKey('/posts/1/', 'modal')).toBe('__intercept:modal:/posts/1')
   })
 })

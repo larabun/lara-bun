@@ -3,6 +3,7 @@
 import {
   type AnchorHTMLAttributes,
   type MouseEvent,
+  type Ref,
   createContext,
   useCallback,
   useContext,
@@ -15,6 +16,15 @@ type PrefetchStrategy = "hover" | "mount" | "click" | "none" | boolean;
 
 interface LinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
   href: string;
+  /**
+   * The underlying anchor.
+   *
+   * Spread onto it like any other prop — React 19 passes ref through a
+   * function component without forwardRef — but declared here because it is
+   * not part of AnchorHTMLAttributes. A link that cannot be focused is a link
+   * a dialog cannot move focus to when it opens.
+   */
+  ref?: Ref<HTMLAnchorElement>;
   prefetch?: PrefetchStrategy;
   cacheFor?: number;
   replace?: boolean;

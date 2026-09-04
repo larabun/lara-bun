@@ -128,7 +128,8 @@ written and then removed on exactly that evidence.
 Verified on a deployed Worker (`~/Herd/rsc-cf-spike`), not only locally: SSR,
 hydration, a server action, partial navigation, interception with the page
 beneath intact, closing it with no request, and assets from the platform's
-binding. 167 KB gzipped, 21 ms cold start, 88 ms TTFB. Two
+binding. 167 KB gzipped, 21 ms cold start, 88 ms TTFB. The Worker was deleted
+after testing; the spike redeploys with `wrangler deploy --config`. Two
 settings are required and only one of them fails loudly.
 `compatibility_flags = ["nodejs_compat"]`, because @vitejs/plugin-rsc emits a
 static `node:async_hooks` import into both bundles — without it the Worker does

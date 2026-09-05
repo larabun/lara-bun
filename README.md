@@ -1,3 +1,19 @@
+> [!IMPORTANT]
+> **This package has moved to [`rsc-kit/laravel`](https://github.com/rsc-kit/laravel).**
+>
+> ```sh
+> composer remove larabun/lara-bun
+> composer require rsc-kit/laravel
+> ```
+>
+> The namespace changed with it: replace `LaravelRsc\` with `RscKit\` in your
+> imports, and `LaravelRscServiceProvider` with `RscKitServiceProvider` anywhere
+> you reference it directly.
+>
+> Versions here remain installable and nothing breaks if you stay. New work
+> happens in the new repository, which starts again at `0.1.0` so its number
+> matches the engine it drives — `@rsc-kit/core` 0.1.x.
+
 # LaraBun
 
 A bridge between Laravel and Bun for React Server Components, streaming HTML, PHP callables, and server actions — all over Unix sockets.

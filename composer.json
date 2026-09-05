@@ -1,5 +1,6 @@
 {
     "name": "larabun/lara-bun",
+    "abandoned": "rsc-kit/laravel",
     "description": "A Laravel-to-Bun bridge via Unix sockets",
     "type": "library",
     "keywords": [

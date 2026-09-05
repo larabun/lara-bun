@@ -5,7 +5,7 @@ namespace LaravelRsc\Support;
 /**
  * Locates the JavaScript engine — the Vite plugin, the build CLI and the worker.
  *
- * The engine is published to npm as `@rsc-router/core` and is backend-agnostic;
+ * The engine is published to npm as `@rsc-kit/core` and is backend-agnostic;
  * this package is one host for it, and no longer carries a copy of it. An app
  * installs it like any other dependency, which is also the copy its own Vite
  * config resolves against — one engine, not one per install path that can
@@ -17,7 +17,7 @@ namespace LaravelRsc\Support;
  */
 class EnginePath
 {
-    public const PACKAGE = '@rsc-router/core';
+    public const PACKAGE = '@rsc-kit/core';
 
     /**
      * Where the engine's files sit inside the package.

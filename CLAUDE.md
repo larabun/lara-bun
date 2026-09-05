@@ -11,8 +11,8 @@ The package is `larabun/laravel-rsc` (namespace `LaravelRsc\`). The routing laye
 - `src/` — PHP package code (Laravel service provider, RuntimeBridge, RSC pipeline)
 - `tests/` — Pest PHP tests (Unit + Feature)
 
-The JavaScript half is a separate package, `@rsc-router/core`, in its own
-repository (`~/Herd/rsc-router`). This package is one host for it and carries
+The JavaScript half is a separate package, `@rsc-kit/core`, in its own
+repository (`~/Herd/rsc-kit`). This package is one host for it and carries
 no copy: `EnginePath` resolves it from the app's `node_modules`, and the
 commands that need it name the package to install rather than failing on a
 path.
@@ -135,7 +135,7 @@ is what the Hono spike looked like before it read `X-RSC-Segments`, and it read
 as an `<html>` problem when it was a protocol one.
 
 ### The Host Adapter Assumes No Platform, Not Just No Framework
-`rsc-router/host` takes a `Request` and returns a `Response`, so binding it to
+`@rsc-kit/core/host` takes a `Request` and returns a `Response`, so binding it to
 a framework is one line and there is no per-framework module — a `hono.ts`
 existed briefly and earned nothing but two chances to go stale:
 
@@ -150,7 +150,7 @@ the build or ships a shim that returns nothing — which turns every asset into 
 silent 404.
 
 So `assets` and `prerendered` are functions the host supplies rather than
-directories. `rsc-router/files` has the disk versions (`assetsFrom`,
+directories. `@rsc-kit/core/files` has the disk versions (`assetsFrom`,
 `prerenderedFrom`); an edge host passes a KV or static-binding reader and never
 loads that module.
 
@@ -177,7 +177,7 @@ renders, nothing logs, nothing is interactive. The tell is React's debug rows
 in the payload — `grep -c ':D{'` returns 0 on a production build.
 
 `prerender` and `exportSite` take a `write` sink and a `read` source too, and
-`rsc-router/files` holds every disk version — `assetsFrom`, `prerenderedFrom`,
+`@rsc-kit/core/files` holds every disk version — `assetsFrom`, `prerenderedFrom`,
 `writeTo`, `copyAssets`. That is not load-bearing for portability: a build runs
 where there is a filesystem, always. It is here because the read side was
 already a function and the write side being a directory was an odd seam, and
@@ -191,14 +191,14 @@ entire page inside the region, and answering an interception with it replaces
 the page the modal was opening over. Both are silent.
 
 ### The Engine Ships Compiled, Because Node Refuses Source
-`@rsc-router/core` publishes `dist/` — JavaScript and `.d.ts` emitted by `tsc`
+`@rsc-kit/core` publishes `dist/` — JavaScript and `.d.ts` emitted by `tsc`
 — not the TypeScript under `src/`. Node will not strip types for anything
 inside `node_modules`, and no flag lifts it:
 
-    node -e "import('@rsc-router/core/host')"
+    node -e "import('@rsc-kit/core/host')"
     ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING
 
-**The monorepo cannot show this.** `node_modules/@rsc-router/core` is a
+**The monorepo cannot show this.** `node_modules/@rsc-kit/core` is a
 workspace symlink resolving *outside* `node_modules`, so type stripping applies
 and everything works from source. Shipping source therefore looked fine for as
 long as nobody installed the package — while `RSC_RUNTIME=node` was broken for
@@ -258,7 +258,7 @@ An app that needs a cookie readable by browser JavaScript uses its own
 ### Typed Routes Are One Generated Union, and `export {}` Carries Them
 
 The build writes `rsc-routes.d.ts` beside the app's source with the routes it
-just walked, and `@rsc-router/core/routes` derives everything from that union —
+just walked, and `@rsc-kit/core/routes` derives everything from that union —
 `Href` for `Link`/`visit`/`prefetch`/`Form`. So the generated file stays one
 union and all the logic lives in core.
 
@@ -286,7 +286,7 @@ left in the main one it checks the whole repo against five fixture routes, and
 the errors land in unrelated files.
 
 **`export {}` in that file is load-bearing.** In a file with no import or
-export, `declare module '@rsc-router/core/routes'` is an *ambient module
+export, `declare module '@rsc-kit/core/routes'` is an *ambient module
 declaration* that replaces the real module rather than augmenting it: `Href`
 and `route` vanish from it and the error says only "has no exported member",
 which reads like a broken build rather than a shadowed module.
@@ -501,11 +501,13 @@ believing a browser result about timing.
 
 ### The Engine Is a Separate npm Package
 The JavaScript half — plugin, build CLI, worker, client runtime — publishes as
-`rsc-router` and is backend-agnostic; this Composer package is one host for it.
-PHP locates it through `LaravelRsc\\Support\\EnginePath`, which prefers the app's
-`node_modules/rsc-router` and falls back to the copy bundled here. Never
-reconstruct that path at a call site: three commands used to and two still
-pointed at `larabun/lara-bun`, a package name that no longer exists.
+`@rsc-kit/core` and is backend-agnostic; this Composer package is one host for
+it and carries no copy. PHP locates it through `LaravelRsc\\Support\\EnginePath`,
+which resolves it from the app's `node_modules`. Never reconstruct that path at
+a call site, and never write the package name at one either: three commands
+used to rebuild the path and two still pointed at `larabun/lara-bun`, a package
+name that no longer exists. `EnginePath::PACKAGE` being the only place the name
+is written is what made the rename to `rsc-kit` a one-line change here.
 
 Ambient types are split by owner. `rsc-types.d.ts` is the engine's
 (`Metadata`, `GenerateMetadata`), copied into the app verbatim. `rsc-env.d.ts`

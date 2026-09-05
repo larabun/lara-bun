@@ -51,9 +51,10 @@ i18n translation support
 have ai conduct a serious security test on the package
 
 useSearchParams feature
-- `rsc-router init` for an existing Laravel app — the JS hosts have it; Laravel still needs one (install the package, write vite.config, resources/js/rsc, config/rsc.php, the serve command).
+- `rsc-kit init` for an existing Laravel app — the JS hosts have it; Laravel still needs one (install the package, write vite.config, resources/js/rsc, config/rsc.php, the serve command).
 
 
 support proper end to end testing which currently not supported in next jd
+support csp 
 
 seek sponsorship from render, laravel cloud, cloudflare, vercel and netlify 

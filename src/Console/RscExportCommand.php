@@ -1,10 +1,10 @@
 <?php
 
-namespace LaravelRsc\Console;
+namespace RscKit\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
-use LaravelRsc\RouteManifest;
+use RscKit\RouteManifest;
 
 /**
  * Write the prerendered site out as files a static host can serve.

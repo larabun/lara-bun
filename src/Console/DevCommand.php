@@ -1,11 +1,11 @@
 <?php
 
-namespace LaravelRsc\Console;
+namespace RscKit\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\Support\BuildEnvironment;
-use LaravelRsc\Support\DevServer;
-use LaravelRsc\Support\RuntimeBinary;
+use RscKit\Support\BuildEnvironment;
+use RscKit\Support\DevServer;
+use RscKit\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
 /**

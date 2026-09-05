@@ -10,8 +10,8 @@
  * socket path scheme, which is the invariant these tests hold.
  */
 
-use LaravelRsc\PrerenderService;
-use LaravelRsc\RuntimeBridge;
+use RscKit\PrerenderService;
+use RscKit\RuntimeBridge;
 
 test('a responding worker is reused rather than restarted', function () {
     $bridge = Mockery::mock(RuntimeBridge::class);

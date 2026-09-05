@@ -1,6 +1,6 @@
 <?php
 
-use LaravelRsc\RscRedirectException;
+use RscKit\RscRedirectException;
 
 test('stores location and default status', function () {
     $exception = new RscRedirectException('/posts/123');

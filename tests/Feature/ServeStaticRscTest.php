@@ -2,10 +2,10 @@
 
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Route;
-use LaravelRsc\Header;
-use LaravelRsc\Http\Middleware\ServeStaticRsc;
-use LaravelRsc\PrerenderService;
-use LaravelRsc\RuntimeBridge;
+use RscKit\Header;
+use RscKit\Http\Middleware\ServeStaticRsc;
+use RscKit\PrerenderService;
+use RscKit\RuntimeBridge;
 
 beforeEach(function () {
     $this->staticDir = sys_get_temp_dir().'/rsc-static-test-'.uniqid();

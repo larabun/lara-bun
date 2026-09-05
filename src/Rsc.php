@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc;
+namespace RscKit;
 
 /**
  * The entry point an action reaches for.

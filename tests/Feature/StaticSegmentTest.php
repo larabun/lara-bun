@@ -13,8 +13,8 @@
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Route;
-use LaravelRsc\Header;
-use LaravelRsc\Http\Middleware\ServeStaticRsc;
+use RscKit\Header;
+use RscKit\Http\Middleware\ServeStaticRsc;
 
 beforeEach(function () {
     $this->staticDir = sys_get_temp_dir().'/rsc-segment-'.uniqid();

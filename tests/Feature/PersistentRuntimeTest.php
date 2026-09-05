@@ -12,7 +12,7 @@
  * its own request.
  */
 
-use LaravelRsc\CallableRegistry;
+use RscKit\CallableRegistry;
 
 /** Something request-shaped: resolved per request, different every time. */
 class CurrentVisitor

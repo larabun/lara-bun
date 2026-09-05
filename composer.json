@@ -1,7 +1,6 @@
 {
-    "name": "larabun/laravel-rsc",
+    "name": "rsc-kit/laravel",
     "description": "React Server Components for Laravel, rendered by a JavaScript runtime over a local socket",
-    "version": "0.9.0",
     "type": "library",
     "keywords": [
         "laravel",
@@ -11,7 +10,7 @@
         "ssr",
         "streaming"
     ],
-    "homepage": "https://github.com/larabun/laravel-rsc",
+    "homepage": "https://github.com/rsc-kit/laravel",
     "authors": [
         {
             "name": "Ramon Malcolm",
@@ -33,7 +32,7 @@
     },
     "autoload": {
         "psr-4": {
-            "LaravelRsc\\": "src/"
+            "RscKit\\": "src/"
         },
         "files": [
             "src/helpers.php"
@@ -52,10 +51,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "LaravelRsc\\LaravelRscServiceProvider"
+                "RscKit\\RscKitServiceProvider"
             ],
             "aliases": {
-                "Rsc": "LaravelRsc\\Facades\\Rsc"
+                "Rsc": "RscKit\\Facades\\Rsc"
             }
         }
     },

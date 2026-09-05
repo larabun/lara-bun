@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc;
+namespace RscKit;
 
 /**
  * What a server action invalidated.

@@ -6,7 +6,7 @@ Can we generate a full static site if all pages are static?
 Update the docs instruction
 Document ppr cache at edge
 
-Why page import have LaravelRsc\PageRoute;, can't these be used outside of laravel?
+Why page import have RscKit\PageRoute;, can't these be used outside of laravel?
 docs is now stale
 
 support view transition when stable in react

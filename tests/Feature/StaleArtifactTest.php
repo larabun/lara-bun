@@ -10,7 +10,7 @@
  * nothing to say so. `--clean` fixed it, once you knew to suspect it.
  */
 
-use LaravelRsc\PrerenderService;
+use RscKit\PrerenderService;
 
 function artifactDir(): string
 {

@@ -8,8 +8,8 @@
  * browser being told what went stale and asking for it in a second request.
  */
 
-use LaravelRsc\Revalidation;
-use LaravelRsc\Rsc;
+use RscKit\Revalidation;
+use RscKit\Rsc;
 
 test('nothing is marked until something marks it', function () {
     // The right default: most actions return what changed and the caller sets

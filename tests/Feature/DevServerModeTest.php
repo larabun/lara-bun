@@ -10,9 +10,9 @@
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Config;
-use LaravelRsc\Http\Middleware\ServeStaticRsc;
-use LaravelRsc\Support\DevServer;
-use LaravelRsc\Support\EnginePath;
+use RscKit\Http\Middleware\ServeStaticRsc;
+use RscKit\Support\DevServer;
+use RscKit\Support\EnginePath;
 
 afterEach(function () {
     DevServer::stop();

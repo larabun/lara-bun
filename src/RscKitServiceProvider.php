@@ -1,20 +1,20 @@
 <?php
 
-namespace LaravelRsc;
+namespace RscKit;
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\ServiceProvider;
-use LaravelRsc\Console\DevCommand;
-use LaravelRsc\Console\InstallRuntimeCommand;
-use LaravelRsc\Console\RscActionManifestCommand;
-use LaravelRsc\Console\RscBuildCommand;
-use LaravelRsc\Console\RscExportCommand;
-use LaravelRsc\Console\RscPagesCommand;
-use LaravelRsc\Console\RscRouteManifestCommand;
-use LaravelRsc\Console\ServeCommand;
+use RscKit\Console\DevCommand;
+use RscKit\Console\InstallRuntimeCommand;
+use RscKit\Console\RscActionManifestCommand;
+use RscKit\Console\RscBuildCommand;
+use RscKit\Console\RscExportCommand;
+use RscKit\Console\RscPagesCommand;
+use RscKit\Console\RscRouteManifestCommand;
+use RscKit\Console\ServeCommand;
 
-class LaravelRscServiceProvider extends ServiceProvider
+class RscKitServiceProvider extends ServiceProvider
 {
     /**
      * Get the CSP nonce for inline script tags.

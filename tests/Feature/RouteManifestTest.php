@@ -11,7 +11,7 @@
  */
 
 use Illuminate\Support\Collection;
-use LaravelRsc\RouteManifest;
+use RscKit\RouteManifest;
 
 /**
  * A real manifest, checked in.

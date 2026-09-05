@@ -1,10 +1,10 @@
 <?php
 
-namespace LaravelRsc\Console;
+namespace RscKit\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\PageRoute;
-use LaravelRsc\RouteManifest;
+use RscKit\PageRoute;
+use RscKit\RouteManifest;
 
 class RscRouteManifestCommand extends Command
 {

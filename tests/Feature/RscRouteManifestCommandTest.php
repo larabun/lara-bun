@@ -148,7 +148,7 @@ test('includes staticPaths from a route.php simple list', function () {
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
-        "<?php\n\nreturn LaravelRsc\\PageRoute::make()->staticPaths(['installation', 'configuration']);\n",
+        "<?php\n\nreturn RscKit\\PageRoute::make()->staticPaths(['installation', 'configuration']);\n",
     );
     writeManifest(['app/docs/[slug]/page'], $this->sourceDir);
 
@@ -163,7 +163,7 @@ test('groups and deduplicates staticPaths given multi-param combinations', funct
     writeRouteFile(
         $this->sourceDir,
         'app/posts/[year]/[slug]/route.php',
-        "<?php\n\nreturn LaravelRsc\\PageRoute::make()->staticPaths([\n".
+        "<?php\n\nreturn RscKit\\PageRoute::make()->staticPaths([\n".
         "    ['year' => '2026', 'slug' => 'a'],\n".
         "    ['year' => '2026', 'slug' => 'b'],\n".
         "]);\n",
@@ -181,7 +181,7 @@ test('extracts literal alternations from where constraints', function () {
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
-        "<?php\n\nreturn LaravelRsc\\PageRoute::make()->where('slug', 'alpha|beta');\n",
+        "<?php\n\nreturn RscKit\\PageRoute::make()->where('slug', 'alpha|beta');\n",
     );
     writeManifest(['app/docs/[slug]/page'], $this->sourceDir);
 
@@ -195,7 +195,7 @@ test('skips where constraints that are not simple alternations', function () {
     writeRouteFile(
         $this->sourceDir,
         'app/docs/[slug]/route.php',
-        "<?php\n\nreturn LaravelRsc\\PageRoute::make()->where('slug', '[0-9]+');\n",
+        "<?php\n\nreturn RscKit\\PageRoute::make()->where('slug', '[0-9]+');\n",
     );
     writeManifest(['app/docs/[slug]/page'], $this->sourceDir);
 

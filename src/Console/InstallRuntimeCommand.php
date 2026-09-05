@@ -1,9 +1,9 @@
 <?php
 
-namespace LaravelRsc\Console;
+namespace RscKit\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\Support\RuntimeBinary;
+use RscKit\Support\RuntimeBinary;
 use RuntimeException;
 use ZipArchive;
 
@@ -134,8 +134,8 @@ class InstallRuntimeCommand extends Command
         }
 
         $context = stream_context_create([
-            'http' => ['header' => "User-Agent: LaravelRsc\r\n", 'follow_location' => 1, 'timeout' => 300],
-            'https' => ['header' => "User-Agent: LaravelRsc\r\n", 'follow_location' => 1, 'timeout' => 300],
+            'http' => ['header' => "User-Agent: RscKit\r\n", 'follow_location' => 1, 'timeout' => 300],
+            'https' => ['header' => "User-Agent: RscKit\r\n", 'follow_location' => 1, 'timeout' => 300],
         ]);
 
         return @copy($url, $dest, $context) && is_file($dest) && filesize($dest) > 0;

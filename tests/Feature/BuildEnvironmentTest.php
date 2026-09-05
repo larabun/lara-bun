@@ -11,8 +11,8 @@
  */
 
 use Illuminate\Support\Facades\Config;
-use LaravelRsc\Support\BuildEnvironment;
-use LaravelRsc\Support\EnginePath;
+use RscKit\Support\BuildEnvironment;
+use RscKit\Support\EnginePath;
 
 test('passes every convention the plugin will not assume', function () {
     $env = BuildEnvironment::forVite();

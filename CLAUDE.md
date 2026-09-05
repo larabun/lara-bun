@@ -4,7 +4,7 @@
 
 React Server Components for Laravel. PHP drives a JavaScript runtime over a local socket to render RSC, stream HTML, call back into PHP, and run server actions.
 
-The package is `larabun/laravel-rsc` (namespace `LaravelRsc\`). The routing layer is a host-agnostic Vite plugin (`rscRoutes()`); Bun is the runtime today but the engine also runs on Node.
+The package is `rsc-kit/laravel` (namespace `RscKit\`). The routing layer is a host-agnostic Vite plugin (`rscRoutes()`); Bun is the runtime today but the engine also runs on Node.
 
 ## Architecture
 
@@ -48,8 +48,8 @@ catch a rendering regression.
 ## Development Setup
 
 - Package source: `/Users/ramonmalcolm/Herd/lara-bun` (git repo, branch: `main`) — run the unit/feature suite here
-- Integration app: `/Users/ramonmalcolm/Herd/larabun-docs` (git repo, branch: `main`) — real consuming app for end-to-end/manual testing; requires the published `larabun/laravel-rsc` package and ships a Dockerfile
-- After package changes: `composer update larabun/laravel-rsc` in consuming apps
+- Integration app: `/Users/ramonmalcolm/Herd/larabun-docs` (git repo, branch: `main`) — real consuming app for end-to-end/manual testing; requires the published `rsc-kit/laravel` package and ships a Dockerfile
+- After package changes: `composer update rsc-kit/laravel` in consuming apps
 - After TS changes: `php artisan rsc:build` to rebuild bundles
 - Runtime is `RSC_RUNTIME=bun|node`; the worker and build run on either
 
@@ -502,10 +502,10 @@ believing a browser result about timing.
 ### The Engine Is a Separate npm Package
 The JavaScript half — plugin, build CLI, worker, client runtime — publishes as
 `@rsc-kit/core` and is backend-agnostic; this Composer package is one host for
-it and carries no copy. PHP locates it through `LaravelRsc\\Support\\EnginePath`,
+it and carries no copy. PHP locates it through `RscKit\\Support\\EnginePath`,
 which resolves it from the app's `node_modules`. Never reconstruct that path at
 a call site, and never write the package name at one either: three commands
-used to rebuild the path and two still pointed at `larabun/lara-bun`, a package
+used to rebuild the path and two still pointed at `rsc-kit/laravel`, a package
 name that no longer exists. `EnginePath::PACKAGE` being the only place the name
 is written is what made the rename to `rsc-kit` a one-line change here.
 

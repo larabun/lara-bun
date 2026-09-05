@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc;
+namespace RscKit;
 
 final class Header
 {

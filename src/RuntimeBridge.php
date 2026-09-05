@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc;
+namespace RscKit;
 
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;

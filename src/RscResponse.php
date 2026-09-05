@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc;
+namespace RscKit;
 
 use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Http\Request;
@@ -257,7 +257,7 @@ class RscResponse implements Responsable
     protected function toStreamedHtmlResponse(string $version, Request $request): Response
     {
         $bridge = app(RuntimeBridge::class);
-        $nonce = LaravelRscServiceProvider::cspNonce();
+        $nonce = RscKitServiceProvider::cspNonce();
         $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $nonce, self::pageKey(request()));
 
         // First yield: {clientChunks, metadata}

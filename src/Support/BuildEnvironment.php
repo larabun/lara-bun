@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc\Support;
+namespace RscKit\Support;
 
 /**
  * The environment the Vite build runs under.

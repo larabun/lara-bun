@@ -1,8 +1,8 @@
 <?php
 
-use LaravelRsc\Header;
-use LaravelRsc\RscRedirectException;
-use LaravelRsc\RuntimeBridge;
+use RscKit\Header;
+use RscKit\RscRedirectException;
+use RscKit\RuntimeBridge;
 
 /**
  * A redirect decided during a render.

@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc;
+namespace RscKit;
 
 use Closure;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -13,11 +13,11 @@ use Illuminate\Routing\Attributes\Controllers\Middleware;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
-use LaravelRsc\Attributes\Authenticated;
-use LaravelRsc\Attributes\Can;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
+use RscKit\Attributes\Authenticated;
+use RscKit\Attributes\Can;
 use RuntimeException;
 
 class CallableRegistry

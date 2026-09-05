@@ -2,15 +2,15 @@
 
 namespace Tests;
 
-use LaravelRsc\LaravelRscServiceProvider;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
+use RscKit\RscKitServiceProvider;
 
 abstract class TestCase extends OrchestraTestCase
 {
     protected function getPackageProviders($app): array
     {
         return [
-            LaravelRscServiceProvider::class,
+            RscKitServiceProvider::class,
         ];
     }
 

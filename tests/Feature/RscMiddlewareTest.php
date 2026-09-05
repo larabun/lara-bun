@@ -1,8 +1,8 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use LaravelRsc\Header;
-use LaravelRsc\RscMiddleware;
+use RscKit\Header;
+use RscKit\RscMiddleware;
 
 test('returns 409 on version mismatch for GET RSC request', function () {
     Route::get('/test-version', fn () => 'ok')

@@ -1,9 +1,9 @@
 <?php
 
-namespace LaravelRsc\Console;
+namespace RscKit\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\Support\ActionManifest;
+use RscKit\Support\ActionManifest;
 
 class RscActionManifestCommand extends Command
 {

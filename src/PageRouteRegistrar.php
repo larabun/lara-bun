@@ -1,9 +1,9 @@
 <?php
 
-namespace LaravelRsc;
+namespace RscKit;
 
 use Illuminate\Routing\Router;
-use LaravelRsc\Http\Middleware\ServeStaticRsc;
+use RscKit\Http\Middleware\ServeStaticRsc;
 use RuntimeException;
 
 class PageRouteRegistrar

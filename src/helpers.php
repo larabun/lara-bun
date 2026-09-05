@@ -1,6 +1,6 @@
 <?php
 
-use LaravelRsc\RscResponse;
+use RscKit\RscResponse;
 
 if (! function_exists('rsc')) {
     /**

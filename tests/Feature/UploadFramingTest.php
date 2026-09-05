@@ -10,7 +10,7 @@
  * the encoded length rather than the file.
  */
 
-use LaravelRsc\RuntimeBridge;
+use RscKit\RuntimeBridge;
 
 /** Write through a real socket pair and read back what arrived. */
 function writtenFrame(string $payload): string

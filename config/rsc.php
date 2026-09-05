@@ -1,6 +1,6 @@
 <?php
 
-use LaravelRsc\Support\System;
+use RscKit\Support\System;
 
 return [
     // JavaScript runtime that renders RSC. 'bun' (default) or 'node' — the

@@ -1,16 +1,16 @@
 <?php
 
-namespace LaravelRsc\Http\Middleware;
+namespace RscKit\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use LaravelRsc\Header;
-use LaravelRsc\LaravelRscServiceProvider;
-use LaravelRsc\PrerenderService;
-use LaravelRsc\RscResponse;
-use LaravelRsc\RuntimeBridge;
-use LaravelRsc\Support\DevServer;
+use RscKit\Header;
+use RscKit\PrerenderService;
+use RscKit\RscKitServiceProvider;
+use RscKit\RscResponse;
+use RscKit\RuntimeBridge;
+use RscKit\Support\DevServer;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -137,7 +137,7 @@ class ServeStaticRsc
             return null;
         }
 
-        $nonce = LaravelRscServiceProvider::cspNonce();
+        $nonce = RscKitServiceProvider::cspNonce();
 
         if ($nonce) {
             $shell = str_replace(PrerenderService::NONCE_PLACEHOLDER, $nonce, $shell);
@@ -207,7 +207,7 @@ class ServeStaticRsc
     {
         // Replace the build-time nonce placeholder with the real per-request
         // CSP nonce so inline scripts pass CSP checks.
-        $nonce = LaravelRscServiceProvider::cspNonce();
+        $nonce = RscKitServiceProvider::cspNonce();
 
         if ($nonce) {
             $html = str_replace(PrerenderService::NONCE_PLACEHOLDER, $nonce, $html);

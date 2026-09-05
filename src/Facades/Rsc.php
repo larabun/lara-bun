@@ -1,9 +1,9 @@
 <?php
 
-namespace LaravelRsc\Facades;
+namespace RscKit\Facades;
 
 use Illuminate\Support\Facades\Facade;
-use LaravelRsc\RuntimeBridge;
+use RscKit\RuntimeBridge;
 
 /**
  * @method static mixed call(string $function, array $args = [])

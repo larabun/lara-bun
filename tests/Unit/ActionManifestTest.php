@@ -10,7 +10,7 @@
  */
 
 use Illuminate\Support\Facades\Config;
-use LaravelRsc\Support\ActionManifest;
+use RscKit\Support\ActionManifest;
 
 test('generated actions call the configured host global', function () {
     $source = ActionManifest::render(['todosAdd' => 'Todos.add'], 'rpc');

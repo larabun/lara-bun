@@ -1,11 +1,11 @@
 <?php
 
-namespace LaravelRsc\Console;
+namespace RscKit\Console;
 
 use Illuminate\Console\Command;
-use LaravelRsc\RuntimeBridge;
-use LaravelRsc\Support\EnginePath;
-use LaravelRsc\Support\RuntimeBinary;
+use RscKit\RuntimeBridge;
+use RscKit\Support\EnginePath;
+use RscKit\Support\RuntimeBinary;
 
 class ServeCommand extends Command
 {

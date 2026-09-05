@@ -1,8 +1,8 @@
 <?php
 
-use LaravelRsc\Header;
-use LaravelRsc\RscResponse;
-use LaravelRsc\RuntimeBridge;
+use RscKit\Header;
+use RscKit\RscResponse;
+use RscKit\RuntimeBridge;
 
 beforeEach(function () {
     $this->bridgeMock = Mockery::mock(RuntimeBridge::class);

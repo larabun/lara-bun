@@ -1,9 +1,9 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use LaravelRsc\Header;
-use LaravelRsc\RscRedirectException;
-use LaravelRsc\RuntimeBridge;
+use RscKit\Header;
+use RscKit\RscRedirectException;
+use RscKit\RuntimeBridge;
 
 beforeEach(function () {
     $this->bridgeMock = Mockery::mock(RuntimeBridge::class);

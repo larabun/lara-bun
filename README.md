@@ -19,7 +19,7 @@ A bridge between Laravel and Bun for React Server Components, streaming HTML, PH
 ## Quick Start
 
 ```bash
-composer require larabun/lara-bun
+composer require rsc-kit/laravel
 bun add react react-dom react-server-dom-webpack
 ```
 

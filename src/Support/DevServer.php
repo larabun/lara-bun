@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc\Support;
+namespace RscKit\Support;
 
 /**
  * Whether `rsc:dev` is running, and where its Vite server is.

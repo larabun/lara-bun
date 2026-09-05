@@ -1,6 +1,6 @@
 <?php
 
-use LaravelRsc\RuntimeBridge;
+use RscKit\RuntimeBridge;
 
 it('parses megabytes', function () {
     expect(RuntimeBridge::parseSize('25mb'))->toBe(25 * 1024 * 1024);

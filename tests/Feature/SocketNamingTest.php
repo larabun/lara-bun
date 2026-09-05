@@ -13,7 +13,7 @@
  */
 
 use Illuminate\Support\Facades\Config;
-use LaravelRsc\RuntimeBridge;
+use RscKit\RuntimeBridge;
 
 function socketPathsFor(int $workers): array
 {

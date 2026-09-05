@@ -1,6 +1,6 @@
 <?php
 
-use LaravelRsc\RscResponse;
+use RscKit\RscResponse;
 
 test('rsc helper creates RscResponse', function () {
     $response = rsc('Dashboard');

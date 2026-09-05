@@ -2,8 +2,8 @@
 
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Http\Request;
-use LaravelRsc\ResponseHeaders;
-use LaravelRsc\RuntimeBridge;
+use RscKit\ResponseHeaders;
+use RscKit\RuntimeBridge;
 use Symfony\Component\HttpFoundation\Response;
 
 /**

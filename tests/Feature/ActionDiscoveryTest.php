@@ -7,7 +7,7 @@
  */
 
 use Illuminate\Support\Facades\Config;
-use LaravelRsc\Support\ActionManifest;
+use RscKit\Support\ActionManifest;
 
 test('discovery maps class methods to camelCase JS names', function () {
     $dir = sys_get_temp_dir().'/rsc-actions-'.uniqid();

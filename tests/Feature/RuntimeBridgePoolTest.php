@@ -9,7 +9,7 @@
  * These drive the real (unmocked) RuntimeBridge against in-process socket pairs.
  */
 
-use LaravelRsc\RuntimeBridge;
+use RscKit\RuntimeBridge;
 
 function bridgeFrame(string $json): string
 {

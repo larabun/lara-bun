@@ -1,16 +1,16 @@
 <?php
 
-namespace LaravelRsc\Console;
+namespace RscKit\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
-use LaravelRsc\PrerenderService;
-use LaravelRsc\RouteManifest;
-use LaravelRsc\Support\BuildEnvironment;
-use LaravelRsc\Support\EnginePath;
-use LaravelRsc\Support\RuntimeBinary;
+use RscKit\PrerenderService;
+use RscKit\RouteManifest;
+use RscKit\Support\BuildEnvironment;
+use RscKit\Support\EnginePath;
+use RscKit\Support\RuntimeBinary;
 use Symfony\Component\Process\Process;
 
 class RscBuildCommand extends Command

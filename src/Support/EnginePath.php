@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc\Support;
+namespace RscKit\Support;
 
 /**
  * Locates the JavaScript engine — the Vite plugin, the build CLI and the worker.
@@ -12,7 +12,7 @@ namespace LaravelRsc\Support;
  * drift from the other.
  *
  * Every caller resolves through here. Three commands used to rebuild the path
- * themselves and had already drifted — two still pointed at `larabun/lara-bun`,
+ * themselves and had already drifted — two still pointed at `rsc-kit/laravel`,
  * a package name that no longer exists.
  */
 class EnginePath

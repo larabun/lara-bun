@@ -1,6 +1,6 @@
 <?php
 
-namespace LaravelRsc;
+namespace RscKit;
 
 use Illuminate\Routing\Route;
 use Illuminate\Support\Collection;
@@ -290,7 +290,7 @@ class PrerenderService
 
         $version = $rscResponse->getVersion();
 
-        if (LaravelRscServiceProvider::cspNonce() !== null) {
+        if (RscKitServiceProvider::cspNonce() !== null) {
             app()->instance('csp-nonce', self::NONCE_PLACEHOLDER);
         }
 
@@ -504,7 +504,7 @@ class PrerenderService
     {
         // Use a placeholder nonce during prerender so the cached HTML can be
         // patched with the real per-request nonce at serve time.
-        if (LaravelRscServiceProvider::cspNonce() !== null) {
+        if (RscKitServiceProvider::cspNonce() !== null) {
             app()->instance('csp-nonce', self::NONCE_PLACEHOLDER);
         }
 

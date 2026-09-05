@@ -9,7 +9,7 @@
  * the client never had, too low and the navigation resends chrome for nothing.
  */
 
-use LaravelRsc\RscResponse;
+use RscKit\RscResponse;
 
 $chain = ['app/layout', 'app/docs/layout', 'app/docs/guides/layout'];
 

@@ -1,6 +1,40 @@
-# LaraBun
+# rsc-kit for Laravel
 
-A bridge between Laravel and Bun for React Server Components, streaming HTML, PHP callables, and server actions — all over Unix sockets.
+React Server Components in Laravel: server-rendered React, streamed HTML, PHP
+callables and server actions, over a local socket.
+
+This is the Laravel host for [rsc-kit](https://github.com/rsc-kit/rsc-kit). The
+engine is `@rsc-kit/core` on npm and is backend-agnostic; this package drives it
+from PHP.
+
+```sh
+composer require rsc-kit/laravel
+```
+
+## Moving from larabun/lara-bun
+
+This package was `larabun/lara-bun`, in the `LaravelRsc\` namespace. Both
+changed at `v0.1.0`:
+
+| | before | now |
+| --- | --- | --- |
+| package | `larabun/lara-bun` | `rsc-kit/laravel` |
+| namespace | `LaravelRsc\` | `RscKit\` |
+| provider | `LaravelRscServiceProvider` | `RscKitServiceProvider` |
+
+```sh
+composer remove larabun/lara-bun
+composer require rsc-kit/laravel
+```
+
+then replace `LaravelRsc\` with `RscKit\` throughout — imports, any
+`config/app.php` provider entry, and any class reference in config.
+
+**The version went backwards on purpose.** `larabun/lara-bun` reached `v0.8.3`;
+this starts again at `0.1.0`, because the number now says which engine it
+expects — `rsc-kit/laravel` 0.1.x pairs with `@rsc-kit/core` 0.1.x. It is a new
+package name on Packagist, so nothing is overwritten and the old versions stay
+installable.
 
 ## Features
 

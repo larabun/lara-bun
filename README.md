@@ -11,31 +11,6 @@ from PHP.
 composer require rsc-kit/laravel
 ```
 
-## Moving from larabun/lara-bun
-
-This package was `larabun/lara-bun`, in the `LaravelRsc\` namespace. Both
-changed at `v0.1.0`:
-
-| | before | now |
-| --- | --- | --- |
-| package | `larabun/lara-bun` | `rsc-kit/laravel` |
-| namespace | `LaravelRsc\` | `RscKit\` |
-| provider | `LaravelRscServiceProvider` | `RscKitServiceProvider` |
-
-```sh
-composer remove larabun/lara-bun
-composer require rsc-kit/laravel
-```
-
-then replace `LaravelRsc\` with `RscKit\` throughout — imports, any
-`config/app.php` provider entry, and any class reference in config.
-
-**The version went backwards on purpose.** `larabun/lara-bun` reached `v0.8.3`;
-this starts again at `0.1.0`, because the number now says which engine it
-expects — `rsc-kit/laravel` 0.1.x pairs with `@rsc-kit/core` 0.1.x. It is a new
-package name on Packagist, so nothing is overwritten and the old versions stay
-installable.
-
 ## Features
 
 - **React Server Components** — Server-rendered React with zero client JS for server components
@@ -82,18 +57,18 @@ php artisan bun:dev
 
 - PHP 8.2+ with the `sockets` extension
 - Laravel 11+
-- [Bun](https://bun.sh) 1.0+
+- [Bun](https://bun.sh) 1.0+, or Node 24+
 - React 19
 
 ## Documentation
 
-Full documentation, guides, and live demos at **[larabun.dev](https://larabun.dev)**
+Full documentation, guides, and live demos at **[rsc-kit.dev](https://rsc-kit.dev)**
 
 ## Performance
 
 | | Avg | Min | Max |
 |---|---|---|---|
-| **LaraBun (Unix Socket)** | **2.39ms** | **1.73ms** | **4.75ms** |
+| **rsc-kit (Unix socket)** | **2.39ms** | **1.73ms** | **4.75ms** |
 | Inertia HTTP SSR (Bun) | 3.36ms | 2.32ms | 19.47ms |
 
 ~30% faster with zero additional PHP memory overhead. Unix sockets skip the TCP stack entirely.

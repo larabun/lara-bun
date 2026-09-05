@@ -42,7 +42,7 @@ class RscBuildCommand extends Command
             }
 
             $bundleProcess = new Process(
-                [$runtime, $this->getBuildScript('build-rsc-vite.ts')],
+                [$runtime, $this->getBuildScript('build-rsc-vite.js')],
                 base_path(),
                 BuildEnvironment::forVite($this->option('dev') ? ['RSC_DEV' => '1'] : []),
             );
@@ -377,7 +377,7 @@ class RscBuildCommand extends Command
         $this->info(implode(', ', $parts));
     }
 
-    private function getBuildScript(string $file = 'build-rsc-vite.ts'): string
+    private function getBuildScript(string $file = 'build-rsc-vite.js'): string
     {
         return EnginePath::script($file) ?? $file;
     }

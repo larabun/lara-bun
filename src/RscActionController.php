@@ -85,8 +85,11 @@ class RscActionController
             return response('', 401)
                 ->header('X-RSC-Redirect', route('login'));
         } catch (RscRedirectException $e) {
-            return response('', $e->getStatus())
-                ->header('X-RSC-Redirect', $e->getLocation());
+            return ResponseHeaders::applyTo(
+                response('', $e->getStatus())
+                    ->header('X-RSC-Redirect', $e->getLocation()),
+                $e->getHeaders(),
+            );
         } catch (ValidationException $e) {
             return response()->json([
                 'message' => $e->getMessage(),
@@ -94,7 +97,11 @@ class RscActionController
             ], 422);
         }
 
-        return new StreamedResponse(function () use ($generator, $first): void {
+        // Read now: the action set them before its first chunk, and this is
+        // the last moment before the response exists.
+        $setByAction = $bridge->actionHeaders();
+
+        return ResponseHeaders::applyTo(new StreamedResponse(function () use ($generator, $first): void {
             while (ob_get_level() > 0) {
                 ob_end_flush();
             }
@@ -114,6 +121,6 @@ class RscActionController
         }, 200, [
             'Content-Type' => 'text/x-component',
             'X-Accel-Buffering' => 'no',
-        ]);
+        ]), $setByAction);
     }
 }

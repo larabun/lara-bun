@@ -10,6 +10,17 @@ use Socket;
 
 class RuntimeBridge
 {
+    /**
+     * Response headers the action currently being streamed asked for.
+     *
+     * Reset when one starts and read by the controller as soon as the first
+     * chunk arrives, which is before it can build its response — the window is
+     * one action, on one bridge, within one request.
+     *
+     * @var list<array{0: string, 1: string}>
+     */
+    private array $actionHeaders = [];
+
     /** @var string[] */
     private array $socketPaths = [];
 
@@ -142,13 +153,29 @@ class RuntimeBridge
      * @param  list<array{component: string, props: array<string, mixed>}>  $layouts
      * @return array{shellHtml: string, clientChunks: string[], timedOut: bool, usedDynamicApis: bool}
      */
-    public function rscPprShell(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = []): array
+    /**
+     * Render the static shell of a page, to decide what can be frozen.
+     *
+     * `$pageKey` is the url this shell will be served for, when it is served
+     * for exactly one — and it decides whether the page's params settle. A
+     * route that listed its urls is being rendered for one of them, so the
+     * page can read them and be frozen whole; a route that listed none is
+     * being rendered for the pattern, where any value would be an invention,
+     * and its params never settle so the page suspends where it reads them.
+     *
+     * Omitting it made every shell a pattern shell. A page that awaits its
+     * params then suspends immediately, and what gets frozen is its loading
+     * fallback with no document around it and no bootstrap inside it — so
+     * nothing hydrates, nothing fills, and the page is blank forever.
+     */
+    public function rscPprShell(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], string $pageKey = ''): array
     {
         $response = $this->send(json_encode([
             'type' => 'rsc-ppr-shell',
             'component' => $component,
             'props' => $props,
             'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
+            'pageKey' => $pageKey,
         ], JSON_THROW_ON_ERROR));
 
         if (isset($response['error'])) {
@@ -265,6 +292,13 @@ class RuntimeBridge
 
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc',
+                // The url and headers, like every other render path sends. Left
+                // out, the worker opens no request scope, and the searchParams
+                // every page and slot is handed rejects instead of resolving —
+                // React never finishes serializing it, the worker never
+                // answers, and PHP reports a callback timeout five seconds
+                // later with nothing in either log to say why.
+                ...$this->requestEnvelope(),
                 'component' => $component,
                 'props' => $props,
                 'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
@@ -362,6 +396,7 @@ class RuntimeBridge
 
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc-stream',
+                ...$this->requestEnvelope(),
                 'component' => $component,
                 'props' => $props,
                 'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
@@ -377,6 +412,7 @@ class RuntimeBridge
             // otherwise deadlock against a bare readFrame() here.
             $startFrame = $this->readStartFrame($mainSocket, $callbackSocket, $registry, $callbackBuffer);
             $this->throwIfAuthError($startFrame);
+            $this->throwIfRedirect($startFrame);
 
             if (isset($startFrame['error'])) {
                 throw new RuntimeException("Bun RSC stream error: {$startFrame['error']}");
@@ -385,6 +421,11 @@ class RuntimeBridge
             yield [
                 'clientChunks' => $startFrame['clientChunks'] ?? [],
                 'metadata' => $startFrame['metadata'] ?? null,
+                // Headers a middleware set. They arrive on the start frame
+                // because that is the last thing the worker sends before the
+                // body — PHP has not written its status line yet, so there is
+                // still an answer to put them on.
+                'headers' => $this->frameHeaders($startFrame),
                 // What the worker actually rendered, which is not always what
                 // was asked: an interceptor can force a wider render.
                 'segmentDepth' => $startFrame['segmentDepth'] ?? 0,
@@ -417,6 +458,7 @@ class RuntimeBridge
                     $frame = $this->readFrame($mainSocket);
 
                     $this->throwIfAuthError($frame);
+                    $this->throwIfRedirect($frame);
 
                     if (isset($frame['error'])) {
                         throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
@@ -448,6 +490,7 @@ class RuntimeBridge
                     while (socket_select($mainCheck, $w, $e, 0) > 0) {
                         $frame = $this->readFrame($mainSocket);
                         $this->throwIfAuthError($frame);
+                        $this->throwIfRedirect($frame);
 
                         if (isset($frame['error'])) {
                             throw new RuntimeException("Bun RSC stream error: {$frame['error']}");
@@ -524,6 +567,7 @@ class RuntimeBridge
 
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc-html-stream',
+                ...$this->requestEnvelope(),
                 'component' => $component,
                 'props' => $props,
                 'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
@@ -539,12 +583,17 @@ class RuntimeBridge
             // otherwise deadlock against a bare readFrame() here.
             $startFrame = $this->readStartFrame($mainSocket, $callbackSocket, $registry, $callbackBuffer);
             $this->throwIfAuthError($startFrame);
+            $this->throwIfRedirect($startFrame);
 
             if (isset($startFrame['error'])) {
                 throw new RuntimeException("Bun RSC HTML stream error: {$startFrame['error']}");
             }
 
-            yield ['clientChunks' => $startFrame['clientChunks'] ?? [], 'metadata' => $startFrame['metadata'] ?? null];
+            yield [
+                'clientChunks' => $startFrame['clientChunks'] ?? [],
+                'metadata' => $startFrame['metadata'] ?? null,
+                'headers' => $this->frameHeaders($startFrame),
+            ];
 
             $idleTimeout = $this->streamIdleTimeout();
 
@@ -571,6 +620,7 @@ class RuntimeBridge
                     $frame = $this->readFrame($mainSocket);
 
                     $this->throwIfAuthError($frame);
+                    $this->throwIfRedirect($frame);
 
                     if (isset($frame['error'])) {
                         throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
@@ -604,6 +654,7 @@ class RuntimeBridge
                     while (socket_select($mainCheck, $w, $e, 0) > 0) {
                         $frame = $this->readFrame($mainSocket);
                         $this->throwIfAuthError($frame);
+                        $this->throwIfRedirect($frame);
 
                         if (isset($frame['error'])) {
                             throw new RuntimeException("Bun RSC HTML stream error: {$frame['error']}");
@@ -658,6 +709,8 @@ class RuntimeBridge
      */
     public function rscAction(string $actionId, string $body, string $contentType = 'text/plain', ?array $page = null): \Generator
     {
+        $this->actionHeaders = [];
+
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
         $index = $this->currentWorker++ % $this->workerCount;
@@ -680,6 +733,7 @@ class RuntimeBridge
             // length — so a 900kB upload failed a 1MB limit.
             $this->writeFrame($mainSocket, json_encode([
                 'type' => 'rsc-action',
+                ...$this->requestEnvelope(),
                 'actionId' => $actionId,
                 'bodyEncoding' => 'binary',
                 'bodyLength' => strlen($body),
@@ -718,9 +772,14 @@ class RuntimeBridge
                     $frame = $this->readFrame($mainSocket);
 
                     if (isset($frame['redirect'])) {
-                        throw new RscRedirectException($frame['redirect']);
+                        throw new RscRedirectException(
+                            $frame['redirect'],
+                            (int) ($frame['redirectStatus'] ?? 302),
+                            $this->frameHeaders($frame),
+                        );
                     }
                     $this->throwIfAuthError($frame);
+                    $this->throwIfRedirect($frame);
                     $this->throwIfValidationError($frame);
 
                     if (isset($frame['error'])) {
@@ -729,6 +788,13 @@ class RuntimeBridge
 
                     $type = $frame['type'] ?? '';
                     if ($type === 'action-start') {
+                        // An action's whole point may be the cookie it leaves
+                        // behind. Held rather than yielded: this generator
+                        // yields body chunks, and the controller reads them
+                        // straight after the first one, before anything else
+                        // on this bridge can run.
+                        $this->actionHeaders = $this->frameHeaders($frame);
+
                         continue;
                     }
                     if ($type === 'action-chunk') {
@@ -905,6 +971,126 @@ class RuntimeBridge
 
             $this->writeFrame($socket, $response);
         }
+    }
+
+    /**
+     * The request, as the worker can rebuild it.
+     *
+     * headers() and cookies() run inside the JavaScript render, which has a
+     * socket rather than a request — so what it needs travels on the message.
+     * Sent for every render, because whether a page reads a header is the
+     * page's business and not something this can know in advance.
+     *
+     * @return array{url: string, headers: array<string, string>}
+     */
+    private function requestEnvelope(): array
+    {
+        $request = request();
+
+        $headers = [];
+
+        foreach ($request->headers->all() as $name => $values) {
+            $headers[$name] = implode(', ', $values);
+        }
+
+        // The decrypted jar, not the raw header. EncryptCookies has already run
+        // by the time a route renders, so $request->cookies holds plaintext
+        // while the Cookie header still holds what the browser sent — which is
+        // ciphertext for every cookie Laravel wrote. Forwarding the raw header
+        // meant cookies()->get() returned an encrypted blob for any app cookie,
+        // and the engine could not read what it had itself set on the previous
+        // response.
+        $cookies = $request->cookies->all();
+
+        if ($cookies !== []) {
+            $headers['cookie'] = self::cookieHeader($cookies);
+        } else {
+            unset($headers['cookie']);
+        }
+
+        return ['url' => $request->fullUrl(), 'headers' => $headers];
+    }
+
+    /**
+     * A Cookie header the engine can parse, from Laravel's decrypted values.
+     *
+     * @param  array<string, mixed>  $cookies
+     */
+    private static function cookieHeader(array $cookies): string
+    {
+        $pairs = [];
+
+        foreach ($cookies as $name => $value) {
+            // An array-valued cookie has no single wire form; the engine asks
+            // for cookies by name and gets strings, so anything else is skipped
+            // rather than serialized into something it would misread.
+            if (! is_scalar($value)) {
+                continue;
+            }
+
+            $pairs[] = $name.'='.rawurlencode((string) $value);
+        }
+
+        return implode('; ', $pairs);
+    }
+
+    /**
+     * What the action just streamed asked to put on the response.
+     *
+     * @return list<array{0: string, 1: string}>
+     */
+    public function actionHeaders(): array
+    {
+        return $this->actionHeaders;
+    }
+
+    /**
+     * Response headers the worker put on a frame, if any.
+     *
+     * A list of pairs rather than a map, because Set-Cookie legitimately
+     * repeats — several cookies are several headers, and a map would keep the
+     * last one.
+     *
+     * @param  array<string, mixed>  $frame
+     * @return list<array{0: string, 1: string}>
+     */
+    private function frameHeaders(array $frame): array
+    {
+        $headers = $frame['headers'] ?? null;
+
+        if (! is_array($headers)) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $headers,
+            fn ($pair): bool => is_array($pair) && count($pair) === 2,
+        ));
+    }
+
+    /**
+     * Where the render says to go instead.
+     *
+     * Told apart from a failure because the two become different responses: a
+     * redirect is a Location header and a 3xx, an error is a 500. On the
+     * start frame this arrives before anything has been written, which is what
+     * leaves a status line available to use.
+     *
+     * @param  array<string, mixed>  $frame
+     *
+     * @throws RscRedirectException
+     */
+    private function throwIfRedirect(array $frame): void
+    {
+        if (! isset($frame['redirect'])) {
+            return;
+        }
+
+        throw new RscRedirectException(
+            $frame['redirect'],
+            (int) ($frame['redirectStatus'] ?? 307),
+            $this->frameHeaders($frame),
+        );
     }
 
     /**

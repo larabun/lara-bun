@@ -188,7 +188,7 @@ class RscResponse implements Responsable
      * the response carries no asset or metadata headers — only the version,
      * which RscMiddleware uses to force a reload after a redeploy.
      */
-    protected function toStreamedRscResponse(string $version): StreamedResponse
+    protected function toStreamedRscResponse(string $version): Response
     {
         $bridge = app(RuntimeBridge::class);
         $chain = array_column($this->layouts, 'component');
@@ -200,7 +200,24 @@ class RscResponse implements Responsable
         // are settled before the body starts streaming. Page metadata lands in
         // viewData as defaults (route.php viewData takes precedence) for
         // prerendered HTML, which builds its own <head>.
-        $meta = $generator->current();
+        //
+        // A render that redirected above every Suspense boundary reports it
+        // here, before a byte has gone out, which is what leaves the answer
+        // free to be something other than the page.
+        try {
+            $meta = $generator->current();
+        } catch (RscRedirectException $e) {
+            // Deliberately not a 3xx: fetch() follows those transparently, so
+            // the client would receive the destination's HTML and hand it to
+            // the Flight decoder, which reports its own confusion instead of
+            // the redirect. The client navigates on the header.
+            return ResponseHeaders::applyTo(new Response('', 204, [
+                Header::X_RSC_REDIRECT => $e->getLocation(),
+                Header::X_RSC_VERSION => $version,
+                'Vary' => Header::X_RSC,
+            ]), $e->getHeaders());
+        }
+
         $this->applyMetadataDefaults($meta['metadata'] ?? null);
 
         $headers = [
@@ -214,7 +231,7 @@ class RscResponse implements Responsable
             Header::X_RSC_LAYOUTS => implode(',', $chain),
         ];
 
-        return new StreamedResponse(function () use ($generator): void {
+        return ResponseHeaders::applyTo(new StreamedResponse(function () use ($generator): void {
             while (ob_get_level() > 0) {
                 ob_end_flush();
             }
@@ -226,7 +243,7 @@ class RscResponse implements Responsable
                 flush();
                 $generator->next();
             }
-        }, $this->statusCode, $headers);
+        }, $this->statusCode, $headers), $meta['headers'] ?? []);
     }
 
     /**
@@ -237,17 +254,27 @@ class RscResponse implements Responsable
      * <link>s into the streamed markup, with Suspense completions streaming as
      * async content resolves. We stream it straight through.
      */
-    protected function toStreamedHtmlResponse(string $version, Request $request): StreamedResponse
+    protected function toStreamedHtmlResponse(string $version, Request $request): Response
     {
         $bridge = app(RuntimeBridge::class);
         $nonce = LaravelRscServiceProvider::cspNonce();
         $generator = $bridge->rscHtmlStream($this->component, $this->props, $this->layouts, $this->loadingComponents, $this->parallelSlotComponents, $this->slotOverrides, $nonce, self::pageKey(request()));
 
         // First yield: {clientChunks, metadata}
-        $meta = $generator->current();
+        try {
+            $meta = $generator->current();
+        } catch (RscRedirectException $e) {
+            // A document still has its status line here, so this is an
+            // ordinary redirect and the browser never sees the page.
+            return ResponseHeaders::applyTo(new Response('', $e->getStatus(), [
+                'Location' => $e->getLocation(),
+                'Vary' => Header::X_RSC,
+            ]), $e->getHeaders());
+        }
+
         $this->applyMetadataDefaults($meta['metadata'] ?? null);
 
-        return new StreamedResponse(function () use ($generator): void {
+        return ResponseHeaders::applyTo(new StreamedResponse(function () use ($generator): void {
             while (ob_get_level() > 0) {
                 ob_end_flush();
             }
@@ -269,7 +296,7 @@ class RscResponse implements Responsable
         }, $this->statusCode, [
             'Content-Type' => 'text/html; charset=utf-8',
             'X-Accel-Buffering' => 'no',
-        ]);
+        ]), $meta['headers'] ?? []);
     }
 
     /**

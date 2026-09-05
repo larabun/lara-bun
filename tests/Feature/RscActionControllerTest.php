@@ -11,6 +11,8 @@ use LaravelRsc\RuntimeBridge;
 
 beforeEach(function () {
     $this->bridgeMock = Mockery::mock(RuntimeBridge::class);
+    // Read on every action, so the tests that care about it override this.
+    $this->bridgeMock->shouldReceive('actionHeaders')->andReturn([])->byDefault();
     $this->app->instance(RuntimeBridge::class, $this->bridgeMock);
 });
 
@@ -226,4 +228,81 @@ test('passes the real content type through the opaque header', function () {
     ], 'body');
 
     expect($seen)->toBe('multipart/form-data; boundary=xyz');
+});
+
+// ─── Cookies an action leaves behind ─────────────────────────────────────────
+//
+// Signing someone in is a mutation whose whole result is a cookie. The action
+// runs in the worker, so what it sets has to travel back over the socket and
+// land on the response PHP builds.
+
+test('puts headers an action set onto the response', function () {
+    $this->bridgeMock
+        ->shouldReceive('rscAction')
+        ->once()
+        ->andReturnUsing(fn () => (function () {
+            yield 'chunk';
+        })());
+
+    $this->bridgeMock
+        ->shouldReceive('actionHeaders')
+        ->andReturn([['Set-Cookie', 'session=abc; Path=/; HttpOnly']]);
+
+    $response = postAction($this)->assertStatus(200);
+    $cookie = $response->headers->get('set-cookie');
+
+    // Encrypted like every other cookie Laravel writes, and that is the point:
+    // its encryption is authenticated, so leaving it out would make the cookie
+    // forgeable rather than merely readable.
+    expect($cookie)->not->toContain('session=abc');
+
+    // And it is still the value the engine set — Laravel decrypts it on the
+    // way back in, which is what RuntimeBridge forwards to the worker.
+    preg_match('/session=([^;]+)/', (string) $cookie, $m);
+
+    expect(app('encrypter')->decrypt(urldecode($m[1]), false))->toContain('abc');
+});
+
+test('keeps several cookies rather than the last one', function () {
+    // Set-Cookie repeats legitimately: replacing would sign someone in and
+    // immediately forget their locale.
+    $this->bridgeMock
+        ->shouldReceive('rscAction')
+        ->once()
+        ->andReturnUsing(fn () => (function () {
+            yield 'chunk';
+        })());
+
+    $this->bridgeMock
+        ->shouldReceive('actionHeaders')
+        ->andReturn([['Set-Cookie', 'session=abc'], ['Set-Cookie', 'locale=fr']]);
+
+    $ours = array_filter(
+        postAction($this)->headers->all('set-cookie'),
+        fn (string $cookie): bool => str_starts_with($cookie, 'session=') || str_starts_with($cookie, 'locale='),
+    );
+
+    expect($ours)->toHaveCount(2);
+});
+
+test('carries them even when the action redirected', function () {
+    // The login case: set the session, then send them where they were going.
+    $this->bridgeMock
+        ->shouldReceive('rscAction')
+        ->once()
+        ->andReturnUsing(function () {
+            throw new RscRedirectException('/dashboard', 303, [['Set-Cookie', 'session=abc']]);
+            yield; // @phpstan-ignore deadCode.unreachable
+        });
+
+    $response = postAction($this);
+
+    $response->assertStatus(303)->assertHeader('X-RSC-Redirect', '/dashboard');
+
+    // Encrypted here too: a redirect is still a response, and the cookie that
+    // remembers where someone was going is exactly the kind a forged one
+    // would matter for.
+    preg_match('/session=([^;]+)/', (string) $response->headers->get('set-cookie'), $m);
+
+    expect(app('encrypter')->decrypt(urldecode($m[1]), false))->toContain('abc');
 });

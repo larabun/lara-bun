@@ -22,11 +22,17 @@ class EnginePath
     /**
      * Where the engine's files sit inside the package.
      *
-     * The npm package publishes its source under src/, so the directory
-     * holding vite.ts and js/ is not the package root. Pointing at the root
-     * finds nothing, and finding nothing reads as "not installed".
+     * The npm package publishes compiled JavaScript under dist/, so the
+     * directory holding vite.js and js/ is not the package root. Pointing at
+     * the root finds nothing, and finding nothing reads as "not installed".
+     *
+     * dist rather than src because Node refuses to strip types under
+     * node_modules: `node .../src/worker.ts` fails outright with
+     * ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING, and no flag lifts it. That
+     * only ever worked in the engine's own repo, where a workspace symlink
+     * resolves the package outside node_modules.
      */
-    public const SOURCE_DIR = 'src';
+    public const SOURCE_DIR = 'dist';
 
     /**
      * Absolute path to an engine script, or null when it cannot be found.
@@ -45,7 +51,7 @@ class EnginePath
     }
 
     /**
-     * The engine's directory — the one holding vite.ts, worker.ts and js/.
+     * The engine's directory — the one holding vite.js, worker.js and js/.
      *
      * This is what the Vite plugin means by its package dir, and it is a
      * directory rather than the Composer package root: `js/Link.tsx` is

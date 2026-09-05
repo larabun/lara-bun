@@ -10,6 +10,16 @@ final class Header
 
     public const X_RSC_LOCATION = 'X-RSC-Location';
 
+    /**
+     * Go here instead.
+     *
+     * Carries a redirect the client has to perform itself — a failed action,
+     * and a navigation whose render redirected. Never a 3xx for either: fetch()
+     * follows one transparently, so the client would get the destination's HTML
+     * where it expected a Flight payload and decode it as one.
+     */
+    public const X_RSC_REDIRECT = 'X-RSC-Redirect';
+
     public const X_RSC_ACTION = 'X-RSC-Action';
 
     public const X_RSC_CONTENT_TYPE = 'X-RSC-Content-Type';

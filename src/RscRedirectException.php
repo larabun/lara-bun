@@ -4,9 +4,15 @@ namespace LaravelRsc;
 
 class RscRedirectException extends \RuntimeException
 {
+    /**
+     * @param  list<array{0: string, 1: string}>  $headers  Set by middleware
+     *                                                      before it redirected — remembering where someone was
+     *                                                      going is the usual one, and it has to survive the trip.
+     */
     public function __construct(
         private string $location,
         private int $status = 302,
+        private array $headers = [],
     ) {
         parent::__construct("Redirect to {$location}");
     }
@@ -19,5 +25,13 @@ class RscRedirectException extends \RuntimeException
     public function getStatus(): int
     {
         return $this->status;
+    }
+
+    /**
+     * @return list<array{0: string, 1: string}>
+     */
+    public function getHeaders(): array
+    {
+        return $this->headers;
     }
 }

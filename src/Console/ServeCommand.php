@@ -38,7 +38,7 @@ class ServeCommand extends Command
         $baseSocketPath = $this->option('socket') ?? config('rsc.socket_path', '/tmp/bun-bridge.sock');
         $functionsDir = config('rsc.functions_dir', resource_path('rsc-functions'));
         $workerCount = max(1, (int) config('rsc.workers', 1));
-        $workerPath = EnginePath::script('worker.ts');
+        $workerPath = EnginePath::script('worker.js');
 
         $this->workerCount = $workerCount;
         $this->transport = config('rsc.transport', 'unix') === 'tcp' ? 'tcp' : 'unix';

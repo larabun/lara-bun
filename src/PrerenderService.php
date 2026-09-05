@@ -83,6 +83,8 @@ class PrerenderService
             $rscResponse->getLayouts(),
             $rscResponse->getLoadings(),
             $rscResponse->getParallelSlots(),
+            // One url, so the page's params settle and it can render itself.
+            $url,
         );
 
         if ($shell['timedOut']) {
@@ -340,6 +342,9 @@ class PrerenderService
             $rscResponse->getLayouts(),
             $rscResponse->getLoadings(),
             $rscResponse->getParallelSlots(),
+            // One url. The page's params settle; only what genuinely needs the
+            // request — a php() call — stays suspended for the client to fill.
+            $url,
         );
 
         // A timeout is the normal path for a PPR page: the shell render is

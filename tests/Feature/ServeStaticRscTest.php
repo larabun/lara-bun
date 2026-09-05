@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use LaravelRsc\Header;
 use LaravelRsc\Http\Middleware\ServeStaticRsc;
 use LaravelRsc\PrerenderService;
+use LaravelRsc\RuntimeBridge;
 
 beforeEach(function () {
     $this->staticDir = sys_get_temp_dir().'/rsc-static-test-'.uniqid();
@@ -210,4 +211,85 @@ test('keeps a nonce-bearing shell out of shared caches', function () {
 
     expect($response->headers->get('Cache-Control'))->toContain('no-store')
         ->and($response->getContent())->toContain('test-nonce-123');
+});
+
+test('a shell with resumable state is finished in the same response', function () {
+    // The shell is served, and the boundaries it left open are rendered now and
+    // written behind it — one response, rather than a shell the browser has to
+    // go back and fill.
+    file_put_contents($this->staticDir.'/test-page.ppr.html', '<html><body>chrome');
+    file_put_contents($this->staticDir.'/test-page.postponed.json', json_encode(['resumableState' => []]));
+    file_put_contents($this->staticDir.'/test-page.ppr-meta.json', json_encode([
+        'clientChunks' => [],
+        'version' => 'v1',
+        'component' => 'app/page',
+        'layouts' => [['component' => 'app/layout', 'props' => []]],
+        'renderedWith' => [
+            'props' => ['slug' => 'a'],
+            'loadings' => [],
+            'parallelSlots' => [],
+            'pageKey' => '/test-page',
+        ],
+    ]));
+
+    $bridge = Mockery::mock(RuntimeBridge::class);
+
+    $bridge->shouldReceive('rscResume')
+        ->once()
+        ->andReturnUsing(function (...$args) use (&$seen) {
+            $seen = $args;
+
+            yield ['clientChunks' => [], 'metadata' => null, 'headers' => []];
+            yield '<!--holes-->';
+        });
+
+    app()->instance(RuntimeBridge::class, $bridge);
+
+    $response = $this->get('/test-page');
+
+    expect($response->streamedContent())->toBe('<html><body>chrome<!--holes-->');
+
+    // Replayed from what the build recorded, not rebuilt from this request. A
+    // resume matches React's slots by key, so any argument that differs from
+    // the frozen render gives a tree that "doesn't match" — and every boundary
+    // then falls back to client rendering, silently.
+    expect($seen[0])->toBe('app/page');
+    expect($seen[1])->toBe(['slug' => 'a']);
+    expect($seen[7])->toBe('/test-page');
+
+    // Carries the holes, which were rendered for whoever asked.
+    expect($response->headers->get('Cache-Control'))->toContain('no-store');
+});
+
+test('a shell with no resumable state is served on its own', function () {
+    // What every build before this produced. Serving the shell and letting the
+    // client fill it is still correct, so an older artifact keeps working.
+    file_put_contents($this->staticDir.'/test-page.ppr.html', '<html><body>chrome</body></html>');
+
+    $bridge = Mockery::mock(RuntimeBridge::class);
+    $bridge->shouldNotReceive('rscResume');
+    app()->instance(RuntimeBridge::class, $bridge);
+
+    $response = $this->get('/test-page');
+
+    expect($response->getContent())->toBe('<html><body>chrome</body></html>');
+});
+
+test('a shell whose build recorded no arguments is served on its own', function () {
+    // State without the call that produced it cannot be replayed. Guessing the
+    // arguments is exactly the mistake this avoids.
+    file_put_contents($this->staticDir.'/test-page.ppr.html', '<html><body>chrome</body></html>');
+    file_put_contents($this->staticDir.'/test-page.postponed.json', json_encode(['resumableState' => []]));
+    file_put_contents($this->staticDir.'/test-page.ppr-meta.json', json_encode([
+        'component' => 'app/page',
+        'layouts' => [],
+    ]));
+
+    $bridge = Mockery::mock(RuntimeBridge::class);
+    $bridge->shouldNotReceive('rscResume');
+    app()->instance(RuntimeBridge::class, $bridge);
+
+    $response = $this->get('/test-page');
+
+    expect($response->getContent())->toBe('<html><body>chrome</body></html>');
 });

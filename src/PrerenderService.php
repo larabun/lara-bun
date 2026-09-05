@@ -203,7 +203,7 @@ class PrerenderService
         $path = trim($url, '/') ?: 'index';
         $base = "{$outputPath}/{$path}";
 
-        foreach (['.html', '.flight', '.meta.json', '.ppr.html', '.ppr-meta.json'] as $suffix) {
+        foreach (['.html', '.flight', '.meta.json', '.ppr.html', '.ppr-meta.json', '.postponed.json'] as $suffix) {
             File::delete($base.$suffix);
         }
 
@@ -311,9 +311,25 @@ class PrerenderService
             'layouts' => $rscResponse->getLayouts(),
             'parameterized' => true,
             'uriPattern' => $uri,
+            // Everything the render was given, so finishing it later can replay
+            // the same call rather than reconstruct one. A resume matches React's
+            // slots by key, so an argument that differs from the frozen render at
+            // all is a tree that "doesn't match" — and the failure is silent:
+            // every boundary falls back to client rendering and the page still
+            // looks right.
+            'renderedWith' => [
+                'props' => $rscResponse->getProps(),
+                'loadings' => $rscResponse->getLoadings(),
+                'parallelSlots' => $rscResponse->getParallelSlots(),
+                // A pattern shell stands for every url its route matches, so it
+                // was rendered for none of them.
+                'pageKey' => '',
+            ],
         ];
 
         File::put("{$outputPath}/{$path}.ppr-meta.json", json_encode($meta, JSON_THROW_ON_ERROR));
+
+        $this->writePostponed($outputPath, $path, $result);
 
         return ['type' => 'ppr', 'reason' => null];
     }
@@ -372,7 +388,16 @@ class PrerenderService
             'version' => $version,
             'component' => $rscResponse->getComponent(),
             'layouts' => $rscResponse->getLayouts(),
+            // See the note on the parameterised path: replayed, not rebuilt.
+            'renderedWith' => [
+                'props' => $rscResponse->getProps(),
+                'loadings' => $rscResponse->getLoadings(),
+                'parallelSlots' => $rscResponse->getParallelSlots(),
+                'pageKey' => $url,
+            ],
         ];
+
+        $this->writePostponed($outputPath, $path, $result);
 
         $viewData = $rscResponse->getViewData();
 
@@ -388,6 +413,25 @@ class PrerenderService
     /**
      * Close a document left unterminated by an aborted shell render.
      */
+    /**
+     * Store where the build-time render stopped, beside the shell it produced.
+     *
+     * Only written when there is something to resume from. Its absence is
+     * meaningful rather than incidental: a host that finds no state serves the
+     * shell and lets the client fill it, which is what every build before this
+     * one did.
+     */
+    protected function writePostponed(string $outputPath, string $path, array $result): void
+    {
+        $postponed = $result['postponed'] ?? null;
+
+        if ($postponed === null) {
+            return;
+        }
+
+        File::put("{$outputPath}/{$path}.postponed.json", json_encode($postponed, JSON_THROW_ON_ERROR));
+    }
+
     protected function closeDocument(string $html): string
     {
         if (stripos($html, '</body>') === false && stripos($html, '<body') !== false) {

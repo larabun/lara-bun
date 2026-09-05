@@ -550,6 +550,42 @@ class RuntimeBridge
      */
     public function rscHtmlStream(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = [], ?string $nonce = null, string $pageKey = ''): \Generator
     {
+        return yield from $this->streamHtmlFrames('rsc-html-stream', $component, $props, $layouts, $loadings, $parallelSlots, $slotOverrides, $nonce, $pageKey);
+    }
+
+    /**
+     * Finish a shell frozen at build time, against data that exists now.
+     *
+     * Yields the same frames as rscHtmlStream — a start array, then chunk
+     * strings — but what comes back is only the boundaries the shell left
+     * open. It is written straight after the shell, on the same response.
+     *
+     * `$postponed` is React's own record of where the build-time render
+     * stopped, read by the caller from the artifact beside the shell. It is
+     * opaque and is passed through untouched; nothing here parses it, and it
+     * never comes from a request.
+     *
+     * @return \Generator<int, array<string, mixed>|string, void, void>
+     */
+    public function rscResume(string $component, array $props, array $layouts, array $loadings, array $parallelSlots, mixed $postponed, ?string $nonce = null, string $pageKey = ''): \Generator
+    {
+        return yield from $this->streamHtmlFrames('rsc-resume', $component, $props, $layouts, $loadings, $parallelSlots, [], $nonce, $pageKey, ['postponed' => $postponed]);
+    }
+
+    /**
+     * The socket loop both HTML paths share.
+     *
+     * One copy deliberately: the ordering rules here are subtle and were each
+     * arrived at by a deadlock. html-start is read before the main loop so
+     * headers flush early, that read services callbacks because metadata
+     * resolution can itself call php(), and the callback branch drains the main
+     * socket first so chunks reach the browser rather than waiting behind a
+     * blocking host call. A second copy would drift from all three.
+     *
+     * @return \Generator<int, array<string, mixed>|string, void, void>
+     */
+    private function streamHtmlFrames(string $messageType, string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], array $slotOverrides = [], ?string $nonce = null, string $pageKey = '', array $extra = []): \Generator
+    {
         $registry = app(CallableRegistry::class);
         $hasCallbacks = $registry->hasCallables();
 
@@ -566,7 +602,7 @@ class RuntimeBridge
             }
 
             $this->writeFrame($mainSocket, json_encode([
-                'type' => 'rsc-html-stream',
+                'type' => $messageType,
                 ...$this->requestEnvelope(),
                 'component' => $component,
                 'props' => $props,
@@ -575,6 +611,7 @@ class RuntimeBridge
                 'callbackId' => $callbackId,
                 'nonce' => $nonce,
                 'pageKey' => $pageKey,
+                ...$extra,
             ], JSON_THROW_ON_ERROR));
 
             // Read html-start before the main loop so HTTP headers flush

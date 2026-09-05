@@ -9,8 +9,10 @@ use LaravelRsc\Header;
 use LaravelRsc\LaravelRscServiceProvider;
 use LaravelRsc\PrerenderService;
 use LaravelRsc\RscResponse;
+use LaravelRsc\RuntimeBridge;
 use LaravelRsc\Support\DevServer;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ServeStaticRsc
 {
@@ -77,6 +79,27 @@ class ServeStaticRsc
             $shellFile = "{$basePath}/{$path}.ppr.html";
 
             if (file_exists($shellFile)) {
+                $stateFile = "{$basePath}/{$path}.postponed.json";
+                $shellMetaFile = "{$basePath}/{$path}.ppr-meta.json";
+
+                // Finish the shell here rather than leaving its holes to the
+                // browser. The client still hydrates and still fetches its own
+                // payload, so this is an addition rather than a replacement: the
+                // content is simply in the first response instead of arriving a
+                // round trip later.
+                if (file_exists($stateFile) && file_exists($shellMetaFile)) {
+                    $resumed = $this->resume(
+                        $request,
+                        file_get_contents($shellFile),
+                        json_decode(file_get_contents($shellMetaFile), true) ?: [],
+                        json_decode(file_get_contents($stateFile), true)
+                    );
+
+                    if ($resumed !== null) {
+                        return $resumed;
+                    }
+                }
+
                 return $this->serveHtml($request, file_get_contents($shellFile), true);
             }
         }
@@ -84,6 +107,95 @@ class ServeStaticRsc
         // Pages with no prerendered artifact fall through to the normal
         // rendering path, which handles Suspense streaming natively.
         return $next($request);
+    }
+
+    /**
+     * Serve a frozen shell and finish it in the same response.
+     *
+     * The shell goes out first — that is the byte the browser was waiting for —
+     * and the boundaries it left open are rendered now and written behind it.
+     * React emits a small script beside each resumed segment that moves it into
+     * place as the HTML parses, so the content appears without waiting for the
+     * app bundle or for hydration.
+     *
+     * The call is REPLAYED from what the build recorded, never rebuilt from
+     * this request. A resume matches React's slots by key, so an argument that
+     * differs from the frozen render at all produces a tree that "doesn't
+     * match" — and that fails silently: every boundary falls back to client
+     * rendering and the page still looks correct.
+     *
+     * Returns null when the build did not record enough to replay, which sends
+     * the caller back to serving the shell alone.
+     */
+    protected function resume(Request $request, string $shell, array $meta, mixed $postponed): ?SymfonyResponse
+    {
+        $component = $meta['component'] ?? null;
+        $rendered = $meta['renderedWith'] ?? null;
+
+        // A shell from a build before this existed. Serving it alone is right.
+        if (! is_string($component) || ! is_array($rendered)) {
+            return null;
+        }
+
+        $nonce = LaravelRscServiceProvider::cspNonce();
+
+        if ($nonce) {
+            $shell = str_replace(PrerenderService::NONCE_PLACEHOLDER, $nonce, $shell);
+        }
+
+        $bridge = app(RuntimeBridge::class);
+
+        $stream = function () use ($bridge, $shell, $component, $meta, $rendered, $postponed, $nonce): void {
+            echo $shell;
+
+            if (ob_get_level() > 0) {
+                ob_flush();
+            }
+
+            flush();
+
+            try {
+                foreach ($bridge->rscResume(
+                    $component,
+                    $rendered['props'] ?? [],
+                    $meta['layouts'] ?? [],
+                    $rendered['loadings'] ?? [],
+                    $rendered['parallelSlots'] ?? [],
+                    $postponed,
+                    $nonce,
+                    $rendered['pageKey'] ?? ''
+                ) as $chunk) {
+                    // The first yield is the start frame; only the chunk
+                    // strings after it are HTML.
+                    if (! is_string($chunk)) {
+                        continue;
+                    }
+
+                    echo $chunk;
+
+                    if (ob_get_level() > 0) {
+                        ob_flush();
+                    }
+
+                    flush();
+                }
+            } catch (\Throwable $e) {
+                // The shell is already on the wire, so there is no status line
+                // left to change and nothing useful to say in the body. The
+                // client fetches its own payload when it hydrates and fills the
+                // boundaries itself, which is what happened before any of this
+                // existed — a slower hole, never a wrong page.
+                report($e);
+            }
+        };
+
+        return new StreamedResponse($stream, 200, [
+            'Content-Type' => 'text/html; charset=UTF-8',
+            // The shell is cacheable on its own; this response is not. It
+            // carries the holes, which were rendered for whoever asked.
+            'Cache-Control' => 'private, no-store',
+            'X-Accel-Buffering' => 'no',
+        ]);
     }
 
     /**

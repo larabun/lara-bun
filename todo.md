@@ -108,3 +108,5 @@ seek sponsorship from render, laravel cloud, cloudflare, vercel and netlify
   are excluded from every cache decision. Documented in `edge-caching.mdx`;
   worth a line wherever deployment behind a proxy is described.
 
+
+support mcp and skills  

@@ -279,7 +279,6 @@ class RscBuildCommand extends Command
         $this->line(str_repeat("\u{2500}", 45));
 
         $staticCount = 0;
-        $ssgCount = 0;
         $dynamicCount = 0;
         $pprCount = 0;
 
@@ -299,10 +298,10 @@ class RscBuildCommand extends Command
                     $this->line("<fg=green>{$icon}</>  {$uri}  <fg=gray>{$label} ({$reason})</>");
                 }
             } elseif ($type === 'ssg') {
-                $ssgCount++;
-                $icon = "\u{25CF}";
+                $staticCount++;
+                $icon = "\u{25CB}";
                 $pathCount = count($result['generatedPaths']);
-                $label = "SSG ({$pathCount} ".($pathCount === 1 ? 'path' : 'paths').')';
+                $label = "Static ({$pathCount} ".($pathCount === 1 ? 'path' : 'paths').')';
                 $this->line("<fg=blue>{$icon}</>  {$uri}  <fg=gray>{$label}</>");
 
                 $paths = $result['generatedPaths'];
@@ -314,9 +313,9 @@ class RscBuildCommand extends Command
                 }
             } elseif ($type === 'ppr') {
                 $pprCount++;
-                $icon = "\u{25D4}";
+                $icon = "\u{25D0}";
                 $pathCount = count($result['generatedPaths']);
-                $label = $pathCount > 1 ? "PPR ({$pathCount} paths)" : 'PPR';
+                $label = $pathCount > 1 ? "Partial Prerender ({$pathCount} paths)" : 'Partial Prerender';
 
                 if ($reason !== null) {
                     $this->line("<fg=magenta>{$icon}</>  {$uri}  <fg=gray>{$label} ({$reason})</>");
@@ -335,7 +334,7 @@ class RscBuildCommand extends Command
                 }
             } elseif ($type === 'dynamic') {
                 $dynamicCount++;
-                $icon = "\u{03BB}";
+                $icon = "\u{0192}";
                 $label = 'Dynamic';
 
                 if ($reason !== null) {
@@ -350,10 +349,24 @@ class RscBuildCommand extends Command
         }
 
         $this->newLine();
-        $this->line("<fg=green>\u{25CB}</>  Static    prerendered as static HTML");
-        $this->line("<fg=blue>\u{25CF}</>  SSG       static with generated params");
-        $this->line("<fg=magenta>\u{25D4}</>  PPR       static shell + streamed dynamic");
-        $this->line("<fg=yellow>\u{03BB}</>  Dynamic   server-rendered on demand");
+        // Only the marks that actually appear above. A legend listing every
+        // category the build COULD produce describes the software rather than
+        // the build in front of you.
+        //
+        // The wording follows Next's, deliberately: most people reading this
+        // have read that legend already, and a second vocabulary for the same
+        // three states costs them a translation for nothing.
+        if ($staticCount > 0) {
+            $this->line("<fg=green>\u{25CB}</>  (Static)             prerendered as static content");
+        }
+
+        if ($pprCount > 0) {
+            $this->line("<fg=magenta>\u{25D0}</>  (Partial Prerender)  prerendered as static HTML with dynamic server-streamed content");
+        }
+
+        if ($dynamicCount > 0) {
+            $this->line("<fg=yellow>\u{0192}</>  (Dynamic)            server-rendered on demand");
+        }
         $this->newLine();
 
         $parts = [];
@@ -362,12 +375,8 @@ class RscBuildCommand extends Command
             $parts[] = "{$staticCount} static";
         }
 
-        if ($ssgCount > 0) {
-            $parts[] = "{$ssgCount} SSG";
-        }
-
         if ($pprCount > 0) {
-            $parts[] = "{$pprCount} PPR";
+            $parts[] = "{$pprCount} partial prerender";
         }
 
         if ($dynamicCount > 0) {

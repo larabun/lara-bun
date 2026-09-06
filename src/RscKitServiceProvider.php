@@ -64,6 +64,14 @@ class RscKitServiceProvider extends ServiceProvider
                 $registry->discoverFrom($actionsDir);
             }
 
+            // The reserved name the engine asks route middleware on. Registered
+            // here rather than discovered, because it is the engine's own
+            // question and not one of the application's functions.
+            $registry->register(
+                RouteMiddleware::FUNCTION,
+                fn (array $names = []) => (new RouteMiddleware($app))->run($names),
+            );
+
             return $registry;
         });
 

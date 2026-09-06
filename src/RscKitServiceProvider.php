@@ -128,10 +128,10 @@ class RscKitServiceProvider extends ServiceProvider
      */
     private function registerRendererFallback(): void
     {
-        if (! config('rsc.renderer_url')) {
-            return;
-        }
-
+        // Registered unconditionally, and the handler decides. A dev server
+        // starts and stops long after routes are registered, so a check here
+        // would read whether one was running at boot rather than now — and an
+        // app booted before `vite dev` would serve 404s until it restarted.
         Route::fallback(RendererProxy::class)->middleware('web');
     }
 }

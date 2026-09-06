@@ -3,6 +3,7 @@
 namespace RscKit\Http;
 
 use Illuminate\Http\Request;
+use RscKit\RendererNotRunningException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -37,7 +38,17 @@ class RendererProxy
 
     public function __invoke(Request $request): StreamedResponse
     {
-        $target = rtrim($this->rendererUrl(), '/').$request->getRequestUri();
+        $renderer = $this->rendererUrl();
+
+        // No renderer to hand this to, so this is an ordinary 404 and should
+        // look like one. That is the normal production state: the renderer is
+        // in front, page requests never reach Laravel, and anything that does
+        // arrive here genuinely has no route.
+        if ($renderer === null) {
+            abort(404);
+        }
+
+        $target = rtrim($renderer, '/').$request->getRequestUri();
 
         $status = 200;
         $headers = [];
@@ -124,7 +135,7 @@ class RendererProxy
             curl_multi_remove_handle($multi, $handle);
             curl_multi_close($multi);
 
-            return $this->unreachable($target);
+            throw new RendererNotRunningException($renderer);
         }
 
         // nginx buffers a FastCGI response by default, which holds every chunk
@@ -205,8 +216,16 @@ class RendererProxy
      * free one when another project already holds it. A configured url is the
      * answer for a built deployment, where the port is decided in advance.
      */
-    private function rendererUrl(): string
+    private function rendererUrl(): ?string
     {
+        // The hot file first, and in development it is the only source: a dev
+        // server picks its port at runtime, and when another project already
+        // holds 5173 on IPv4 Vite binds IPv6 and keeps the number — so a url
+        // built from the port looks reachable and answers nothing.
+        //
+        // The file exists only while a dev server is running, which is exactly
+        // when pages should be proxied. Nothing to configure, and nothing left
+        // switched on in production by accident.
         $hot = config('rsc.hot_file');
 
         if ($hot && is_file($hot)) {
@@ -217,15 +236,6 @@ class RendererProxy
             }
         }
 
-        return (string) config('rsc.renderer_url');
-    }
-
-    private function unreachable(string $target): StreamedResponse
-    {
-        $host = parse_url($target, PHP_URL_HOST).':'.parse_url($target, PHP_URL_PORT);
-
-        return new StreamedResponse(function () use ($host) {
-            echo 'The RSC renderer is not answering at '.$host.'. Start it with `bun server.ts`.';
-        }, 502, ['content-type' => 'text/plain; charset=utf-8']);
+        return config('rsc.renderer_url') ?: null;
     }
 }

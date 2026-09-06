@@ -23,10 +23,21 @@ return [
      * fallback only runs when no real route matched, so the endpoint below and
      * the app's own routes always win.
      *
-     * Set to null to turn it off — a deployment that puts the renderer in
-     * front does not need it, and skips a hop.
+     * Null by default, and only in development does that mean "off" — there
+     * the hot file below supplies the url while a dev server is running.
+     *
+     * Setting it in production opts into serving pages THROUGH Laravel, and
+     * costs a worker for the length of every render while the renderer calls
+     * back into this same application for data. With W workers that caps
+     * concurrent renders at W-1, and if every worker is blocked proxying, the
+     * calls have nobody to answer them. Give the host calls their own PHP-FPM
+     * pool if you do it.
+     *
+     * The alternative needs no proxy and no setting: point the domain at the
+     * renderer and let it call back here. A worker is then held for the length
+     * of a host CALL rather than a whole render.
      */
-    'renderer_url' => env('RSC_RENDERER_URL', 'http://127.0.0.1:5173'),
+    'renderer_url' => env('RSC_RENDERER_URL'),
 
     /*
      * Written by the dev server while it runs, and removed when it stops.

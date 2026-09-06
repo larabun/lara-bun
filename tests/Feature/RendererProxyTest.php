@@ -23,13 +23,34 @@ beforeEach(function () {
 
 afterEach(fn () => @unlink(config('rsc.hot_file')));
 
-it('is a plain 404 when no renderer is known', function () {
-    // The normal production state: the renderer is in front, page requests
-    // never reach Laravel, and whatever does arrive genuinely has no route.
+it('says what to run when a developer hits a page and nothing is rendering', function () {
+    // A 404 here would say the route does not exist, which is untrue and the
+    // hardest possible thing to act on: the route is fine, the renderer is not
+    // running.
+    $this->withoutExceptionHandling();
+    config()->set('app.debug', true);
+
+    try {
+        $this->get('/a-page-with-no-route');
+        $this->fail('expected to be told the renderer is not running');
+    } catch (RendererNotRunningException $e) {
+        expect($e->getMessage())->toContain('npm run dev');
+        expect($e->getMessage())->toContain('RSC_RENDERER_URL');
+    }
+});
+
+it('is a plain 404 in production, where the renderer is in front', function () {
+    // Page requests never reach Laravel in that shape, so whatever arrives
+    // here genuinely has no route — a bot, a stale link, a typo. Setup
+    // instructions would be useless to them and would tell a stranger how the
+    // application is wired.
+    config()->set('app.debug', false);
+
     $this->get('/a-page-with-no-route')->assertNotFound();
 });
 
 it('follows the dev server while one is running', function () {
+    config()->set('app.debug', false);
     file_put_contents(config('rsc.hot_file'), 'http://127.0.0.1:65535');
 
     // Nothing is listening there, so this proves only that it TRIED — which is
@@ -38,6 +59,7 @@ it('follows the dev server while one is running', function () {
 });
 
 it('stops following it the moment the dev server goes away', function () {
+    config()->set('app.debug', false);
     file_put_contents(config('rsc.hot_file'), 'http://127.0.0.1:65535');
     $this->get('/a-page-with-no-route')->assertStatus(502);
 
@@ -50,6 +72,7 @@ it('stops following it the moment the dev server goes away', function () {
 });
 
 it('uses a configured url when there is no dev server', function () {
+    config()->set('app.debug', false);
     config()->set('rsc.renderer_url', 'http://127.0.0.1:65535');
 
     $this->get('/a-page-with-no-route')->assertStatus(502);
@@ -73,6 +96,7 @@ it('prefers the dev server over a configured url', function () {
 });
 
 it('never takes a request a real route already answers', function () {
+    config()->set('app.debug', false);
     Route::get('/answered-here', fn () => 'mine');
 
     file_put_contents(config('rsc.hot_file'), 'http://127.0.0.1:65535');
@@ -86,6 +110,7 @@ it('leaves the host-call endpoint alone', function () {
     //
     // Registered here rather than relying on the provider, which reads the
     // secret at boot — by the time a test sets one, that has happened.
+    config()->set('app.debug', false);
     config()->set('rsc.host_call_secret', 'secret');
     Route::post(config('rsc.host_call_path'), HostCallController::class);
 
@@ -96,7 +121,7 @@ it('leaves the host-call endpoint alone', function () {
     $this->post(config('rsc.host_call_path'), [])->assertStatus(403);
 });
 
-it('tells you to start the dev server, and names where it looked', function () {
+it('names the address when one was configured and did not answer', function () {
     // Thrown rather than written into the body, so it renders the way every
     // other Laravel failure does: the debug page while developing, a 502 in
     // production. The message says what to run — the same shape as Laravel's

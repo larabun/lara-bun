@@ -40,11 +40,25 @@ class RendererProxy
     {
         $renderer = $this->rendererUrl();
 
-        // No renderer to hand this to, so this is an ordinary 404 and should
-        // look like one. That is the normal production state: the renderer is
-        // in front, page requests never reach Laravel, and anything that does
-        // arrive here genuinely has no route.
+        // Nothing to hand this to, and what that means depends on who is
+        // looking.
+        //
+        // With debug on, a developer is: they have opened their own app and it
+        // did not render. A 404 would tell them the route does not exist, which
+        // is untrue and the hardest possible thing to act on — the route is
+        // fine, the renderer is not running. Say that, and say what to run.
+        //
+        // With debug off this is an ordinary 404, and has to be. The normal
+        // production shape puts the renderer in front, so page requests never
+        // reach Laravel at all and whatever does arrive here genuinely has no
+        // route — a bot, a stale link, a typo. Answering those with setup
+        // instructions would be useless to them and would tell a stranger how
+        // the application is wired.
         if ($renderer === null) {
+            if (config('app.debug')) {
+                throw new RendererNotRunningException;
+            }
+
             abort(404);
         }
 

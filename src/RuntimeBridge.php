@@ -170,19 +170,69 @@ class RuntimeBridge
      */
     public function rscPprShell(string $component, array $props = [], array $layouts = [], array $loadings = [], array $parallelSlots = [], string $pageKey = ''): array
     {
-        $response = $this->send(json_encode([
-            'type' => 'rsc-ppr-shell',
-            'component' => $component,
-            'props' => $props,
-            'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
-            'pageKey' => $pageKey,
-        ], JSON_THROW_ON_ERROR));
+        // A build that can answer host calls.
+        //
+        // Without one every rpc() suspends, and since a host call is the only
+        // route a Laravel page's data has, no such page could ever be frozen —
+        // it was always a shell, re-rendering content that changes only when
+        // you deploy. With the socket open the call is made and its answer is
+        // stored, and connection() is how a page opts back out.
+        //
+        // The wait has to service that socket rather than block on the main
+        // one. A render that calls rpc() would otherwise sit there while PHP
+        // sits waiting for a frame that cannot arrive until PHP answers.
+        $registry = app(CallableRegistry::class);
+        $hasCallbacks = $registry->hasCallables();
 
-        if (isset($response['error'])) {
-            throw new RuntimeException("Bun PPR shell error: {$response['error']}");
+        $index = $this->currentWorker++ % $this->workerCount;
+        $mainSocket = $this->checkout($index);
+        $callbackId = $hasCallbacks ? $this->nextCallbackId() : null;
+        $callbackSocket = null;
+        $callbackBuffer = '';
+
+        try {
+            if ($hasCallbacks && $callbackId) {
+                $callbackSocket = $this->checkoutCallback($index, $callbackId);
+            }
+
+            $this->writeFrame($mainSocket, json_encode([
+                'type' => 'rsc-ppr-shell',
+                ...$this->requestEnvelope(),
+                'component' => $component,
+                'props' => $props,
+                'layouts' => $layouts, 'loadings' => $loadings ?? [], 'parallelSlots' => $parallelSlots ?? [],
+                'pageKey' => $pageKey,
+                'callbackId' => $callbackId,
+            ], JSON_THROW_ON_ERROR));
+
+            $response = $this->readStartFrame($mainSocket, $callbackSocket, $registry, $callbackBuffer);
+
+            if (isset($response['error'])) {
+                throw new RuntimeException("Bun PPR shell error: {$response['error']}");
+            }
+
+            $this->release($index, $mainSocket);
+            $mainSocket = null;
+
+            return $response['result'];
+        } catch (\Throwable $e) {
+            // Closed rather than pooled: a socket that failed mid-frame has
+            // bytes nobody read, and the next render to check it out would
+            // find them. The established handling everywhere else in this file.
+            if ($mainSocket !== null) {
+                @socket_close($mainSocket);
+            }
+
+            throw $e;
+        } finally {
+            if ($callbackSocket !== null) {
+                // $mainSocket is nulled only on the successful path, so a
+                // non-null one here means the catch above closed it. A
+                // non-empty buffer means a partial callback frame remains, and
+                // either makes the socket unsafe to pool.
+                $this->releaseCallback($index, $callbackSocket, $mainSocket === null && $callbackBuffer === '');
+            }
         }
-
-        return $response['result'];
     }
 
     /**

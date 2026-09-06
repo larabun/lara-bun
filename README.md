@@ -22,7 +22,6 @@ composer require rsc-kit/laravel
 - **Parallel routes** — `@folder` convention for named layout slots
 - **Route interception** — `(.)/(..)/(...)`  convention for modals on SPA navigation
 - **Typed routes** — Auto-generated type-safe `route()` helper
-- **Inertia SSR** — Drop-in replacement for Inertia's Node SSR server
 - **Sub-millisecond IPC** — Binary frame protocol over Unix sockets
 
 ## Quick Start
@@ -66,12 +65,16 @@ Full documentation, guides, and live demos at **[rsc-kit.dev](https://rsc-kit.de
 
 ## Performance
 
+Rendering a page, measured against Inertia's Node SSR server on the same
+machine — a comparison of transports, not a claim to replace it:
+
 | | Avg | Min | Max |
 |---|---|---|---|
 | **rsc-kit (Unix socket)** | **2.39ms** | **1.73ms** | **4.75ms** |
 | Inertia HTTP SSR (Bun) | 3.36ms | 2.32ms | 19.47ms |
 
-~30% faster with zero additional PHP memory overhead. Unix sockets skip the TCP stack entirely.
+A Unix socket skips the TCP stack, which is where most of the difference is.
+No additional PHP memory overhead either way.
 
 ## Support
 

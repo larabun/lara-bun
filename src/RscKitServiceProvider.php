@@ -12,6 +12,7 @@ use Illuminate\View\Middleware\ShareErrorsFromSession;
 use RscKit\Console\RscActionManifestCommand;
 use RscKit\Http\HostCallController;
 use RscKit\Http\HostCallDispatcher;
+use RscKit\Http\RendererProxy;
 
 /**
  * Laravel as the backend of an rsc-kit application.
@@ -67,6 +68,7 @@ class RscKitServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->registerHostCallEndpoint();
+        $this->registerRendererFallback();
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
@@ -111,5 +113,25 @@ class RscKitServiceProvider extends ServiceProvider
                 ShareErrorsFromSession::class,
                 SubstituteBindings::class,
             ]);
+    }
+
+    /**
+     * Everything Laravel does not route goes to the renderer.
+     *
+     * A fallback, so it is genuinely last: real routes, the host-call endpoint
+     * and any package's routes all match first. That is what lets an app parked
+     * in ~/Herd work at its own .test domain with no configuration — which is
+     * what a Laravel developer expects of a Laravel application.
+     *
+     * On the 'web' group, so the session and cookies a page reads are the
+     * ones the framework already resolved.
+     */
+    private function registerRendererFallback(): void
+    {
+        if (! config('rsc.renderer_url')) {
+            return;
+        }
+
+        Route::fallback(RendererProxy::class)->middleware('web');
     }
 }

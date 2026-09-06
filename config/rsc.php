@@ -15,6 +15,30 @@ return [
      * reach. It can serve a unix socket, which HTTP runs over unchanged and
      * which opens no port at all.
      */
+    /*
+     * Where the renderer listens.
+     *
+     * Anything Laravel does not route is handed to it, so an app parked in
+     * ~/Herd works at its own .test domain with nothing else configured. The
+     * fallback only runs when no real route matched, so the endpoint below and
+     * the app's own routes always win.
+     *
+     * Set to null to turn it off — a deployment that puts the renderer in
+     * front does not need it, and skips a hop.
+     */
+    'renderer_url' => env('RSC_RENDERER_URL', 'http://127.0.0.1:5173'),
+
+    /*
+     * Written by the dev server while it runs, and removed when it stops.
+     *
+     * Read before renderer_url, because a dev server chooses its port at
+     * runtime: 5173 is the most contended port on a developer's machine, and
+     * Vite moves to the next free one without saying so. Following the file
+     * means another project running does not silently break this one.
+     */
+    'hot_file' => env('RSC_HOT_FILE', public_path('rsc-hot')),
+    'renderer_timeout' => (float) env('RSC_RENDERER_TIMEOUT', 60),
+
     'host_call_path' => env('RSC_HOST_CALL_PATH', '/__rsc/host-call'),
     'host_call_secret' => env('RSC_HOST_CALL_SECRET'),
 

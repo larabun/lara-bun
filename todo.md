@@ -109,4 +109,7 @@ seek sponsorship from render, laravel cloud, cloudflare, vercel and netlify
   worth a line wherever deployment behind a proxy is described.
 
 
-support mcp and skills  
+support mcp and skills      
+
+
+Action revalidate should be more smoother   

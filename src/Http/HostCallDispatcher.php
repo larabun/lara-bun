@@ -8,6 +8,7 @@ use Illuminate\Validation\ValidationException;
 use RscKit\CallableRegistry;
 use RscKit\Revalidation;
 use RscKit\RscRedirectException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 /**
  * Answers a host call over HTTP.
@@ -115,6 +116,15 @@ class HostCallDispatcher
             return [
                 'status' => 200,
                 'reply' => ['redirect' => $e->getLocation()],
+            ];
+        } catch (HttpExceptionInterface $e) {
+            // A middleware that aborted with a status meant that status.
+            // throttle answers 429, a policy 403, a signed-url check 403 — and
+            // collapsing them all to 500 makes a rate-limited visitor
+            // indistinguishable from a broken server.
+            return [
+                'status' => $e->getStatusCode(),
+                'reply' => ['error' => $e->getMessage() ?: 'Refused.', 'refusalStatus' => $e->getStatusCode()],
             ];
         } catch (\Throwable $e) {
             return $this->fail(500, $e->getMessage());

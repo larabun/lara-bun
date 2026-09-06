@@ -2,9 +2,14 @@
 
 namespace RscKit;
 
+use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
+use Illuminate\Cookie\Middleware\EncryptCookies;
+use Illuminate\Routing\Middleware\SubstituteBindings;
+use Illuminate\Session\Middleware\StartSession;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\View\Middleware\ShareErrorsFromSession;
 use RscKit\Console\DevCommand;
 use RscKit\Console\InstallRuntimeCommand;
 use RscKit\Console\RscActionManifestCommand;
@@ -149,7 +154,32 @@ class RscKitServiceProvider extends ServiceProvider
             return;
         }
 
+        // The 'web' group without CSRF verification, spelled out rather than
+        // named.
+        //
+        // The session parts are needed: the renderer forwards the visitor's
+        // cookie, EncryptCookies decrypts it, StartSession binds their session
+        // to the request, and a function asking auth()->user() finds the
+        // person the page is being rendered for. Without them every call runs
+        // as nobody.
+        //
+        // CSRF verification is not, and including it makes the endpoint answer
+        // 419 to every call. It protects a browser from being tricked into
+        // posting with the user's cookies; the caller here is a renderer
+        // holding a shared secret, which a browser cannot be tricked into
+        // sending. Asking applications to add an exception in bootstrap/app.php
+        // would work and would be one more thing to get wrong.
+        //
+        // AddQueuedCookiesToResponse is what lets a call log someone in: a
+        // cookie queued during it reaches this response, and the renderer puts
+        // it on the page's.
         Route::post(config('rsc.host_call_path'), HostCallController::class)
-            ->middleware('web');
+            ->middleware([
+                EncryptCookies::class,
+                AddQueuedCookiesToResponse::class,
+                StartSession::class,
+                ShareErrorsFromSession::class,
+                SubstituteBindings::class,
+            ]);
     }
 }

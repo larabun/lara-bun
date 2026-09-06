@@ -13,6 +13,8 @@ use RscKit\Console\RscExportCommand;
 use RscKit\Console\RscPagesCommand;
 use RscKit\Console\RscRouteManifestCommand;
 use RscKit\Console\ServeCommand;
+use RscKit\Http\HostCallController;
+use RscKit\Http\HostCallDispatcher;
 
 class RscKitServiceProvider extends ServiceProvider
 {
@@ -64,6 +66,17 @@ class RscKitServiceProvider extends ServiceProvider
 
             return $registry;
         });
+
+        // Scoped rather than singleton, for the same reason Revalidation is:
+        // it holds a per-request Revalidation, and under a persistent runtime
+        // a singleton would carry one call's marks into the next.
+        $this->app->scoped(HostCallDispatcher::class, function ($app) {
+            return new HostCallDispatcher(
+                $app->make(CallableRegistry::class),
+                $app->make(Revalidation::class),
+                (string) config('rsc.host_call_secret'),
+            );
+        });
     }
 
     public function boot(): void
@@ -75,6 +88,8 @@ class RscKitServiceProvider extends ServiceProvider
 
             Route::post('/_rsc/action', RscActionController::class)
                 ->middleware('web');
+
+            $this->registerHostCallEndpoint();
 
             // Read rather than walked: the build already found the route tree
             // and wrote it down. Routing therefore needs a build — which was
@@ -106,5 +121,27 @@ class RscKitServiceProvider extends ServiceProvider
                 RscRouteManifestCommand::class,
             ]);
         }
+    }
+
+    /**
+     * The HTTP endpoint a renderer calls back into.
+     *
+     * Registered only when a secret is configured. Silence rather than an
+     * exception, because this is additive: an application that has not opted
+     * in is not misconfigured, it simply still uses the socket.
+     *
+     * On the 'web' group, so the visitor's forwarded cookie starts a session
+     * and a function reading auth()->user() finds the person the page is being
+     * rendered for. Without it the call runs as nobody and every guard fails
+     * open or closed for the wrong reason.
+     */
+    private function registerHostCallEndpoint(): void
+    {
+        if (! config('rsc.host_call_secret')) {
+            return;
+        }
+
+        Route::post(config('rsc.host_call_path'), HostCallController::class)
+            ->middleware('web');
     }
 }

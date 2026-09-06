@@ -15,13 +15,13 @@ composer require rsc-kit/laravel
 
 - **React Server Components** — Server-rendered React with zero client JS for server components
 - **File-based routing** — Next.js App Router conventions (pages, layouts, route groups, dynamic segments)
-- **PHP callables** — Call Eloquent, auth, sessions directly from server components via `php()`
+- **PHP callables** — Call Eloquent, auth, sessions directly from server components via `rpc()`
 - **Server actions** — `"use server"` functions for form mutations
 - **Streaming HTML** — Suspense boundaries stream progressively over the wire
 - **Partial Prerendering (PPR)** — Static shell cached at build time, dynamic content streamed at runtime
 - **Parallel routes** — `@folder` convention for named layout slots
 - **Route interception** — `(.)/(..)/(...)`  convention for modals on SPA navigation
-- **Typed routes** — Auto-generated type-safe `route()` helper
+- **Typed routes** — The build writes the urls it found, so a link to a page that does not exist fails the typecheck
 - **Sub-millisecond IPC** — Binary frame protocol over Unix sockets
 
 ## Quick Start

@@ -75,8 +75,9 @@ class PrerenderService
         }
 
         // Step 1: Classify using PPR shell render (fast, never hangs).
-        // Mock php() returns never-resolving Promises — if the page uses
-        // php(), it's detected as dynamic. If not, it's static.
+        // The stubbed host call returns a promise that never resolves, so a
+        // page reaching for rpc() suspends and is classified by what it could
+        // still paint. A page that reaches for nothing renders whole.
         $shell = app(RuntimeBridge::class)->rscPprShell(
             $rscResponse->getComponent(),
             $rscResponse->getProps(),
